@@ -1,0 +1,16 @@
+# Python dependencies for the Composer backend (tested versions, Python 3.11, macOS on Apple silicon).
+# The vendored Anticipatory Music Transformer is installed separately, without its own pins:
+#   uv pip install --no-deps -e ./anticipation
+torch==2.14.1
+transformers==5.20.0
+mlx==0.32.4
+mlx-lm==0.32.1
+huggingface-hub==2.2.0
+safetensors==0.8.0
+numpy==2.4.6
+tqdm==4.70.1
+mido==1.2.10
+music21==10.5.0
+verovio==6.3.0
+midi2audio==0.1.1
+matplotlib==3.11.2

@@ -1,0 +1,73 @@
+# ---- Generated music and user work (never commit) ----
+/output/
+*.mid
+*.midi
+*.musicxml
+*.mxl
+*.wav
+*.aiff
+*.mp3
+*.m4a
+*.flac
+*.pdf
+# keep the vendored upstream example file
+!anticipation/examples/*.mid
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+pip-log.txt
+
+# ---- Swift / SwiftPM / Xcode ----
+.build/
+MusicAI/.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+DerivedData/
+
+# ---- Built app (rebuild with MusicAI/build_app.sh) ----
+/Composer.app/
+
+# ---- Models and caches (downloaded from Hugging Face on first use) ----
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.bin
+.cache/
+huggingface/
+
+# ---- Secrets and local config ----
+.env
+.env.*
+*.pem
+*.key
+HF_TOKEN
+
+# ---- macOS / editors / logs ----
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.idea/
+.vscode/
+*.swp
+*~
+*.log
