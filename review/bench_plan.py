@@ -106,8 +106,9 @@ def run(form, prompt, key, bars, sig, tempo, program, seed, count):
     t.new_session("bench", prompt)
     theplan = plan.build_plan(bars, sig, key)
     rows = []
+    # the same plan the melody follows, so the measurement is against the right chords
     for c in t.melody_candidates(prompt, bars, sig, 3, "7B", program, "small", count, "hybrid",
-                                 lambda s: None, tempo, True, key, 1, 1, form):
+                                 lambda s: None, tempo, True, key, 1, 1, form, theplan=theplan):
         m = measure(c["notes"], theplan)
         m["score"] = c["score"]
         motif = [(p, s, d) for p, s, d in c["notes"] if s < 4.0]

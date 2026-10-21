@@ -72,6 +72,9 @@ Requests (one JSON object per line): `melodies`, `import`, `add_part`, `approve_
 `parts_done`, `part_approved`, `notation`, `notation_error`, `session`, `sessions`, `error`. Notes in events are
 `[channel, pitch, start_s, end_s]`. The protocol is untyped on both sides (dict access in Python, hand-decoded in Swift).
 
+Two optional fields ride along on any request: `seed` (an integer, to make the run repeatable) and `knobs` (the
+individual musical settings, see 3.3a). The `ready` event carries `presets`, the tables the app's sliders start from.
+
 ## 3. The parts worth reading closely
 
 ### 3.1 Sampler changes in `anticipation/sample.py` (`review/anticipation_sample.patch`, about 260 added lines)
@@ -141,8 +144,8 @@ chords so the two cannot drift apart. The chord tables and the two scales live i
 | 3 Full | and the opening idea comes back at the start of every phrase | the motif (the LLM's one-bar seed) is transposed onto each phrase's first chord (`fit_motif_to_chord`) and given to the sampler as targets |
 
 Measured over 24 melodies (`review/bench_plan.py`), Free -> Full: the notes that belong to the chord of their bar
-46% -> 70%, phrases that end on their cadence degree 16/24 -> 24/24, notes of the opening idea that come back at the
-start of a later phrase 29% -> 75%, and the phrases differ from each other more (1.2 -> 2.8 distinct interval kinds
+46% -> 80%, phrases that end on their cadence degree 16/24 -> 24/24, notes of the opening idea that come back at the
+start of a later phrase 29% -> 67%, and the phrases differ from each other more (1.2 -> 2.3 distinct interval kinds
 between the most and least varied phrase). The table is in section 5.
 
 Two design decisions worth checking:
@@ -154,6 +157,31 @@ Two design decisions worth checking:
 - **The motif comes back as a paraphrase.** The sampler is pulled towards the motif's *shape* (a note landing between two
   anchors is pulled towards the line between them), not forced onto its exact notes, so the idea returns with the
   model's own rhythm. Measured with `review/bench_plan.py`; see section 5.
+
+### 3.3a The knobs, and the sliders
+
+Every number behind the two presets is a knob the app can turn (`plan.DEFAULT_KNOBS`):
+
+| Knob | Default | What it does |
+|---|---|---|
+| `chord` | 2.2 | how strongly the melody prefers the notes of the bar's chord |
+| `cadence` | 5.0 | how strongly a phrase is pulled towards the note it ends on |
+| `motif` | 8.0 | how strongly the opening idea is pulled back at each phrase's start |
+| `sigma` | 1.0 | how wide that pull is, in semitones |
+| `tol` | 1.0 | how near a note has to land to be pulled, in beats |
+| `run`, `leap`, `repeat`, `variety` | from the shape preset | the melodic bias: scale runs, leaps, repeated notes, shuffling among a few pitches |
+| `beat` | 0.5 | how strongly the melody's onsets prefer the beat |
+
+They travel in one request field, `"knobs": {...}`, and only the ones that are set are sent. **Form** and **Melodic
+shape** are presets: picking one *sets* the sliders, and moving a slider afterwards keeps that one value when the next
+preset is chosen. The tables stay in `plan.py`; the backend sends them to the app in the `ready` event
+(`plan.presets()`), so the app does not keep a second copy of them.
+
+Two rules keep this honest:
+- **The Form setting decides *whether* a part of the plan is used; the knobs decide *how strongly*.** A knob cannot
+  switch on something the setting does not use, so "Free" really is free even though the app always sends every knob.
+- **The defaults reproduce the old behaviour exactly** (`tests/test_plan.py` checks this), so nothing changes for
+  anyone who does not touch the sliders.
 
 The plan is kept in `session.json` (`plan_json`), so the accompaniment is harmonised *with* the melody instead of
 separately: the model-generated parts get the same chord regions, and the rule-based `texture` patterns take the
@@ -286,9 +314,14 @@ Another: the motif was first snapped to the chord of the first bar, which remove
 worth coming back to (the motif `(G, A, B, C)` became `(G, G, B, B)`). The motif is now kept as the language model wrote
 it, in key; the chord preference is a bonus, so it does not have to be one of the chord's notes.
 
+And a bug in the measurement script itself: `bench_plan.py` built a plan to measure against and the melody built
+another one, so the chords it scored the melody on were not the chords the melody had followed (the two disagreed
+because the plan was built from an unseeded `random.Random()`). Both now use the seeded global random module, the
+script passes its plan to the melody, and the numbers are reproducible: running it twice gives the same table.
+
 ## 5. Verification: what was done and what was not
 
-**Automated (`make test`; `make test-full` adds the exhaustive sweep).** 75 tests, about 3 seconds, no model downloads:
+**Automated (`make test`; `make test-full` adds the exhaustive sweep).** 84 tests, about 3 seconds, no model downloads:
 - `test_invariants.py`: theory-composer melodies, run through the same fold / snap / resolve steps as the app, with the
   instrument's real range. Asserts: no overlaps, MIDI range, instrument range, in key, on the sixteenth grid, fills
   the bars, ends on the tonic. Default 600 random settings; `--full` runs about 138,600 (7 time signatures x 5 levels x
@@ -298,8 +331,11 @@ it, in key; the chord preference is a bonus, so it does not have to be one of th
 - `test_sampler.py`: synthetic-logit tests of the grid, tiered fallbacks, steering, mask invalidation, `count_simultaneous`
   and `melodic_bias`. No model is loaded, so this checks the rules, not how they interact with the real model.
 - `test_plan.py`: the plan (the phrases tile the piece, every chord is inside the key, the minor dominant is a major
-  triad), the Form slider's weights, transposing a motif, resolving a phrase's cadence, and the sampler's two new
+  triad), the Form slider's weights, the knobs (the defaults, an override, an unknown or unset one, and that the
+  defaults reproduce the old behaviour), transposing a motif, resolving a phrase's cadence, and the sampler's two new
   controls: the chord bonus (`_chord_bonus`) and the target pull (`_target_bias`).
+- `test_protocol.py` also checks that the `ready` event carries the presets and that a request carrying knobs (or a
+  nonsense one) is accepted.
 - `test_sessions.py`: containment, rename, duplicate names, approved pieces numbered and restored.
 - `test_protocol.py`: the real `backend.py` process over JSON lines (theory engine): melodies, repeatability under a seed,
   a bad path is an error not a crash, create -> approve -> rename -> new -> reopen round trip.
@@ -320,10 +356,11 @@ Measured effect of the Melodic shape setting (n=24 Hybrid, fixed seeds, shape 0 
 Theory composer, level 4, 60 melodies: scalar runs 15% -> 8% -> 8%. Through the backend (4 melodies each): theory 13% ->
 2%, Hybrid 19% -> 5%.
 Measured effect of the Form setting (n=24 Hybrid, six seeds, fixed seed bars; Free -> Harmony -> Cadences -> Full):
-notes that belong to the chord of their bar 46% -> 74% -> 62% -> 70%; phrases that end on their cadence degree
-16/24 -> 18/24 -> 24/24 -> 24/24; notes of the opening idea that come back at the start of a later phrase
-14/48 -> 20/60 -> 25/60 -> 36/48; how much the phrases differ from each other (the spread of their interval
-vocabularies) 1.2 -> 1.3 -> 1.0 -> 2.8; the heuristic score 9.2 -> 9.8 -> 9.8 -> 11.0.
+notes that belong to the chord of their bar 46% -> 84% -> 72% -> 80%; phrases that end on their cadence degree
+16/24 -> 20/24 -> 24/24 -> 24/24; notes of the opening idea that come back at the start of a later phrase
+14/48 -> 19/60 -> 21/60 -> 32/48; how much the phrases differ from each other (the spread of their interval
+vocabularies) 1.2 -> 1.0 -> 1.5 -> 2.3; the heuristic score 9.2 -> 9.7 -> 9.9 -> 10.9.
+(The numbers are stable: running the script twice gives the same table.)
 
 The motif comes back as a **paraphrase**, not a literal repeat: the same opening gesture (in the example, G-A-B) with
 the model's own rhythm, because the sampler is pulled towards the idea's shape rather than forced onto its notes. The

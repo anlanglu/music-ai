@@ -219,6 +219,26 @@ def plan_regions(plan, tempo, start_tick=0):
 # How much of the plan a melody follows, from free (0) to the whole plan (3). The weights are in logit units: the
 # model's own preferences are worth a few, so these are a firm but not absolute hand.
 FORM_LABELS = ["Free", "Harmony", "Cadences", "Full"]
+
+# The knobs the app can turn. Each is a number the user can move; the shape and form presets below are just
+# starting points for them. The defaults are what the app used before the knobs existed.
+DEFAULT_KNOBS = {
+    # the plan
+    "chord": 2.2,        # how strongly the melody prefers the chord of the bar it is in
+    "cadence": 5.0,      # how strongly it is pulled towards the note a phrase cadences on
+    "motif": 8.0,        # how strongly it is pulled towards the opening idea at each phrase's start
+    "sigma": 1.0,        # how wide that pull is, in semitones (narrow = the idea comes back more exactly)
+    "tol": 1.0,          # how near a note has to land to be pulled, in beats
+    # the melodic shape: how much the line avoids runs, repeats and shuffling
+    "run": None,
+    "leap": None,
+    "repeat": None,
+    "variety": None,
+    # the metrical grid
+    "beat": 0.5,         # how strongly onsets prefer the beat (and the barline twice as much)
+}
+
+# The plan's presets: what the Form slider sets the knobs to.
 FORM_WEIGHTS = {
     0: {},
     1: {"chord": 2.2},
@@ -226,12 +246,68 @@ FORM_WEIGHTS = {
     3: {"chord": 2.2, "cadence": 5.0, "motif": 8.0},
 }
 
+# The melodic shape's presets: what the Melodic shape picker sets the knobs to. 0 means "no bias at all".
+SHAPE_BIAS = {0: None,
+              1: {"run": 1.5, "leap": 0.5, "repeat": 0.7, "variety": 0.7},
+              2: {"run": 2.5, "leap": 1.0, "repeat": 1.2, "variety": 1.2}}
 
-def form_weights(form):
+
+def knobs(over=None):
+    """The knobs to use: the defaults, with whatever the caller asked to change on top."""
+    out = dict(DEFAULT_KNOBS)
+    for k, v in (over or {}).items():
+        if k in out and v is not None:
+            out[k] = v
+    return out
+
+
+def form_knobs(form):
+    """The knob values the Form slider sets."""
+    base = dict(DEFAULT_KNOBS)
+    base.update(FORM_WEIGHTS.get(max(0, min(3, int(form))), {}))
+    return base
+
+
+def shape_knobs(shape):
+    """The knob values the Melodic shape picker sets."""
+    base = dict(DEFAULT_KNOBS)
+    bias = SHAPE_BIAS.get(max(0, min(3, int(shape))), None)
+    if bias:
+        base.update(bias)
+    return base
+
+
+def form_weights(form, k=None):
     """What a melody is told to do at each setting of the 'form' slider:
     0 free (no plan at all), 1 the harmony of every bar, 2 plus a cadence at the end of every phrase,
-    3 plus the motif coming back at the start of every phrase."""
-    return dict(FORM_WEIGHTS.get(max(0, min(3, int(form))), {}))
+    3 plus the motif coming back at the start of every phrase.
+    The knobs decide *how strongly* each of those is applied; they cannot switch one on that the setting does not
+    use, so 'Free' really is free."""
+    k = k or {}
+    base = dict(FORM_WEIGHTS.get(max(0, min(3, int(form))), {}))
+    for name in list(base):
+        if k.get(name) is not None:
+            base[name] = k[name]
+    return base
+
+
+def shape_weights(shape, k=None):
+    """The melodic bias the sampler applies: the shape's preset, with any of its numbers overridden."""
+    k = k or {}
+    bias = dict(SHAPE_BIAS.get(max(0, min(3, int(shape))), None) or {})
+    for name in ("run", "leap", "repeat", "variety"):
+        if name in k and k[name] is not None:
+            bias[name] = k[name]
+    return bias or None
+
+
+def presets():
+    """Everything the app needs to show the sliders: the defaults, and what each preset sets them to."""
+    return {"defaults": dict(DEFAULT_KNOBS),
+            "form": {str(f): form_knobs(f) for f in range(4)},
+            "shape": {str(s): shape_knobs(s) for s in range(3)},
+            "labels": {"form": list(FORM_LABELS),
+                       "shape": ["Stepwise", "Balanced", "Angular"]}}
 
 
 def form_label(form):

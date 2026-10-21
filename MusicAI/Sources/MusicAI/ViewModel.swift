@@ -91,6 +91,22 @@ final class ViewModel: ObservableObject {
     @Published var shape = 1      // 0 stepwise, 1 balanced, 2 angular: leaps, turns and phrase contour vs scale runs
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
     @Published var form = 2.0     // how much of the piece's plan the melody follows: 0 free .. 3 the whole plan
+
+    // The musical settings behind the shape and form controls. The shape and form controls are presets that set
+    // these; moving one of them on its own overrides that number until the next preset is chosen.
+    @Published var knobChord = 2.2      // how strongly the melody prefers the chord of the bar it is in
+    @Published var knobCadence = 5.0    // how strongly it is pulled towards the note a phrase cadences on
+    @Published var knobMotif = 8.0      // how strongly it is pulled towards the opening idea at each phrase's start
+    @Published var knobSigma = 1.0      // how wide that pull is, in semitones
+    @Published var knobTol = 1.0        // how near a note has to land to be pulled, in beats
+    @Published var knobRun = 1.5        // how much the line avoids running up and down the scale
+    @Published var knobLeap = 0.5       // how much it likes to leap
+    @Published var knobRepeat = 0.7     // how much it avoids repeating a note
+    @Published var knobVariety = 0.7    // how much it avoids sticking to a few pitches
+    @Published var knobBeat = 0.5       // how strongly onsets prefer the beat
+
+    private var presets: Presets?
+    private var overridden: Set<String> = []
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
     /// Which generator writes the melody: "hybrid" (LLM seed + Anticipation, the default), "llm", or "theory".
@@ -228,6 +244,57 @@ final class ViewModel: ObservableObject {
 
     func shutdown() { watchdog?.invalidate(); backend.stop() }
 
+    // MARK: The musical knobs
+
+    /// Take the presets the backend sent (plan.py owns the tables) and set the sliders from them.
+    private func applyPresets(_ p: Presets) {
+        presets = p
+        applyShape(Int(shape))
+        applyForm(Int(form))
+    }
+
+    /// The values the backend is sent. Only the ones that are set.
+    var knobValues: [String: Double] {
+        ["chord": knobChord, "cadence": knobCadence, "motif": knobMotif, "sigma": knobSigma, "tol": knobTol,
+         "run": knobRun, "leap": knobLeap, "repeat": knobRepeat, "variety": knobVariety, "beat": knobBeat]
+    }
+
+    /// The shape control is a preset: it sets the sliders, except the ones the user has moved.
+    func applyShape(_ which: Int) {
+        guard let preset = presets?.shape[String(which)] else { return }
+        set(knob: preset, names: ["run", "leap", "repeat", "variety"])
+    }
+
+    /// The form control is a preset too.
+    func applyForm(_ which: Int) {
+        guard let preset = presets?.form[String(which)] else { return }
+        set(knob: preset, names: ["chord", "cadence", "motif", "sigma", "tol"])
+    }
+
+    private func set(knob preset: Knobs, names: [String]) {
+        let values: [String: Double?] = ["chord": preset.chord, "cadence": preset.cadence, "motif": preset.motif,
+                                         "sigma": preset.sigma, "tol": preset.tol, "run": preset.run,
+                                         "leap": preset.leap, "repeat": preset.repeatAvoid, "variety": preset.variety]
+        for name in names where !overridden.contains(name) {
+            guard let value = values[name] ?? nil else { continue }
+            switch name {
+            case "chord": knobChord = value
+            case "cadence": knobCadence = value
+            case "motif": knobMotif = value
+            case "sigma": knobSigma = value
+            case "tol": knobTol = value
+            case "run": knobRun = value
+            case "leap": knobLeap = value
+            case "repeat": knobRepeat = value
+            case "variety": knobVariety = value
+            default: break
+            }
+        }
+    }
+
+    /// The user moved a slider: remember that, so the next preset does not undo it.
+    func markOverridden(_ name: String) { overridden.insert(name) }
+
     private func handle(_ ev: BackendEvent) {
         lastEvent = Date()
         stalled = false
@@ -238,9 +305,10 @@ final class ViewModel: ObservableObject {
             sessionName = name
         case .sessions(let items):
             sessions = items
-        case .ready:
+        case .ready(let presets):
             ready = true
             backendDown = false
+            if let presets { applyPresets(presets) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a melody and press Generate melodies."
         case .log(let text):
@@ -399,6 +467,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing, "shape": shape,
             "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm, "melody_engine": engine,
             "count": Int(optionCount), "size": size, "session_name": sessionName, "form": Int(form),
+            "knobs": knobValues,
         ])
     }
 

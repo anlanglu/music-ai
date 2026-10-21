@@ -290,7 +290,8 @@ struct ContentView: View {
                     Text("Angular").tag(2)
                 }
                 .pickerStyle(.segmented).labelsHidden()
-                .help("How much the line moves by leaps and changes direction instead of running up and down the scale. Applies to Hybrid and Theory composer. Stepwise: as before.")
+                .onChange(of: Int(vm.shape)) { _, new in vm.applyShape(new) }
+                .help("How much the line moves by leaps and changes direction instead of running up and down the scale. Applies to Hybrid and Theory composer. Stepwise: as before. Choosing a shape sets the sliders under Advanced; moving one of them on its own keeps your change.")
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Phrasing").font(.callout)
@@ -308,7 +309,8 @@ struct ContentView: View {
                     Text(["Free", "Harmony", "Cadences", "Full"][Int(vm.form)]).foregroundStyle(.secondary)
                 }
                 Slider(value: $vm.form, in: 0...3, step: 1)
-                .help("How much of a written plan the melody follows. Free: the melody wanders. Harmony: every bar has a chord, and the melody prefers its notes. Cadences: each phrase ends on a chord tone. Full: the opening idea comes back at the start of every phrase.")
+                .onChange(of: Int(vm.form)) { _, new in vm.applyForm(new) }
+                .help("How much of a written plan the melody follows. Free: the melody wanders. Harmony: every bar has a chord, and the melody prefers its notes. Cadences: each phrase ends on a chord tone. Full: the opening idea comes back at the start of every phrase. Choosing one sets the sliders under Advanced.")
             }
             Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
                 .help("Changes only the final note, so the melody ends on the tonic")
@@ -340,7 +342,64 @@ struct ContentView: View {
             LabeledContent("Min notes/s \(vm.minDensity, specifier: "%.1f")") {
                 Slider(value: $vm.minDensity, in: 0...5, step: 0.5)
             }
+
+            Divider()
+            Text("The melody's shape, in numbers").font(.callout)
+            Text("These are the settings behind Melodic shape and Form. Move one and it stays moved; choosing a shape or a form again puts the others back.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            LabeledContent("Avoid scale runs") {
+                knobSlider($vm.knobRun, "run", 0...5)
+            }
+            .help("How much the melody is discouraged from running up and down the scale in one direction.")
+            LabeledContent("Like leaps") {
+                knobSlider($vm.knobLeap, "leap", 0...4)
+            }
+            .help("How much the melody likes to jump by a third or more instead of stepping.")
+            LabeledContent("Avoid repeats") {
+                knobSlider($vm.knobRepeat, "repeat", 0...4)
+            }
+            .help("How much the melody is discouraged from repeating the same note.")
+            LabeledContent("Like varied pitches") {
+                knobSlider($vm.knobVariety, "variety", 0...4)
+            }
+            .help("How much the melody is discouraged from sticking to a handful of pitches.")
+            LabeledContent("Sit on the beat") {
+                knobSlider($vm.knobBeat, "beat", 0...3)
+            }
+            .help("How strongly the melody's note beginnings prefer the beat, and the barline twice as much.")
+
+            Divider()
+            Text("The plan, in numbers").font(.callout)
+            Text("These three only do anything once Form is set far enough: Follow the chords from Harmony on, Land on the cadence from Cadences on, Bring the idea back from Full on.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            LabeledContent("Follow the chords") {
+                knobSlider($vm.knobChord, "chord", 0...8)
+            }
+            .help("How strongly the melody prefers the notes of the chord of the bar it is in. Zero ignores the harmony.")
+            LabeledContent("Land on the cadence") {
+                knobSlider($vm.knobCadence, "cadence", 0...15)
+            }
+            .help("How strongly each phrase is pulled towards the note it ends on, so the phrase arrives somewhere.")
+            LabeledContent("Bring the idea back") {
+                knobSlider($vm.knobMotif, "motif", 0...20)
+            }
+            .help("How strongly the opening idea is pulled back at the start of each later phrase. Higher means closer to a literal repeat.")
+            LabeledContent("How exact the idea is") {
+                knobSlider($vm.knobSigma, "sigma", 0.4...3)
+            }
+            .help("How wide the pull is, in semitones. Narrow keeps the idea's notes; wide lets the melody paraphrase it.")
+            LabeledContent("How near it must land") {
+                knobSlider($vm.knobTol, "tol", 0.25...4)
+            }
+            .help("How near a note has to land to the target, in beats. Wider catches more notes but also reaches further from the idea.")
         }
+    }
+
+    /// A slider for one musical setting, which remembers that the user moved it.
+    private func knobSlider(_ value: Binding<Double>, _ name: String, _ range: ClosedRange<Double>) -> some View {
+        Slider(value: value, in: range)
+            .onChange(of: value.wrappedValue) { _, _ in vm.markOverridden(name) }
     }
 
     // MARK: Right column

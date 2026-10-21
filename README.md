@@ -36,6 +36,26 @@ A melody with no shape behind it wanders. The **Form** slider puts one there, in
 The same plan is kept with the session, so the accompaniment is harmonised with the melody instead of separately.
 `plan.py` holds the plan: the phrases, the chord of every bar, where each phrase cadences, and the motif.
 
+### Turning the knobs yourself
+
+**Form** and **Melodic shape** are presets. Under **Advanced** every number behind them is a slider of its own:
+
+| Slider | What it does |
+|---|---|
+| Avoid scale runs | how much the line is discouraged from running up and down the scale in one direction |
+| Like leaps | how much it prefers jumping a third or more to stepping |
+| Avoid repeats | how much it is discouraged from repeating a note |
+| Like varied pitches | how much it is discouraged from sticking to a handful of pitches |
+| Sit on the beat | how strongly the note beginnings prefer the beat (and the barline twice as much) |
+| Follow the chords | how strongly the melody prefers the chord of the bar it is in |
+| Land on the cadence | how strongly each phrase is pulled towards the note it ends on |
+| Bring the idea back | how strongly the opening idea is pulled back at the start of each later phrase |
+| How exact the idea is | how wide that pull is: narrow keeps the idea's notes, wide lets it paraphrase them |
+| How near it must land | how near a note has to land to be pulled, in beats |
+
+Moving a slider keeps your change; choosing a shape or a form again puts the other sliders back. The tables live in
+`plan.py` and the app fetches them from the backend at startup, so there is only one copy of them.
+
 ## Requirements and install
 
 Apple-silicon Mac, macOS 14+, 16 GB RAM, about 15 GB of disk (models download once from Hugging Face), Python 3.11 and the
@@ -95,9 +115,9 @@ the full log is at `~/Library/Logs/Composer/backend.log`.
 ## Status and limitations
 
 - Nobody has formally evaluated how the output sounds; quality measures in the repo are statistical proxies.
-- The **Form** slider is new: the plan it follows was measured with `review/bench_plan.py` (harmonic fit, cadences and
-  motif recurrence over 24 melodies), not by ear. The motif comes back as a *paraphrase* — the shape of the opening idea
-  with the model's own rhythm — not as a literal repeat.
+- The **Form** slider and the knobs under **Advanced** are new: the plan the melody follows was measured with
+  `review/bench_plan.py` (harmonic fit, cadences and motif recurrence over 24 melodies), not by ear. The motif comes back
+  as a *paraphrase* — the shape of the opening idea with the model's own rhythm — not as a literal repeat.
 - The plan's harmony is diatonic and functional (the same progressions the theory composer uses). It cannot express
   a modal progression, a borrowed chord or a key change.
 - The app is not self-contained: it needs the project folder, its `.venv` and the Hugging Face model cache. It is

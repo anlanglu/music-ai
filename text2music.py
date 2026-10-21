@@ -649,26 +649,26 @@ def apply_breaths(notes, bars, sig, phrasing):
 
 # Melodic shape (0 stepwise, 1 balanced, 2 angular): how hard the Anticipation sampler is nudged away from scale runs,
 # repeated notes and shuffling among a few pitches, and towards leaps that are answered by a step back.
-SHAPE_BIAS = {0: None,
-              1: {"run": 1.5, "leap": 0.5, "repeat": 0.7, "variety": 0.7},
-              2: {"run": 2.5, "leap": 1.0, "repeat": 1.2, "variety": 1.2}}
+# The presets live in plan.py, together with the rest of the knobs the app can turn.
 
 
 def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engine, log, bpm=None, resolve=True, key=None,
-                      phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None):
+                      phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None, knobs=None):
     """Yield up to `count` distinct melodies as dicts {notes, tempo, score}.
 
     hybrid: the LLM writes an opening bar (a fresh one for every two candidates, so the options differ in
     character, not just in detail) and Anticipation, trained on real MIDI so its rhythms are natural, develops
     it into the full melody on the metrical grid.  llm: the LLM writes each whole melody.
-    `form` is how much of the piece's plan the melody follows (0 free ... 3 the whole plan)."""
+    `form` is how much of the piece's plan the melody follows (0 free ... 3 the whole plan); `knobs` are the
+    individual numbers behind it (see plan.knobs)."""
     bb = bar_beats(sig)
     total_beats = bars * bb
     target = COMPLEXITY[level][1]
     made = 0
     enforce = key or parse_key(prompt)   # a key picked in the app wins over one mentioned in the prompt
     pcs = scale_pcs(enforce) if enforce else None
-    weights = plan.form_weights(form)
+    knobs = plan.knobs(knobs)
+    weights = plan.form_weights(form, knobs)
     if engine == "theory":   # rule-based composer: no LLM, no model (see composer.py)
         import random
 
@@ -700,9 +700,8 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
         import random
 
         for _ in range(count):
-            rng = random.Random()
             thekey = enforce or parse_key(prompt) or (0, "major")
-            theplan = theplan or plan.build_plan(bars, sig, thekey, rng)
+            theplan = theplan or plan.build_plan(bars, sig, thekey)
             notes, tempo, _plans, declared = compose(prompt, bars, sig, level, llm, log, bpm, enforce, harmony=theplan)
             notes, _ = conform_melody(notes, bars, sig)
             notes = [(fold_pitch(p, program), s_, d) for p, s_, d in notes]
@@ -730,10 +729,11 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
     import random
 
     thekey = enforce or parse_key(prompt) or (0, "major")
-    theplan = theplan or plan.build_plan(bars, sig, thekey, random.Random())
+    theplan = theplan or plan.build_plan(bars, sig, thekey)
     pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}}
-    if SHAPE_BIAS.get(shape):
-        pool["melodic"] = dict(SHAPE_BIAS[shape], instrument=program)
+    bias = plan.shape_weights(shape, knobs)
+    if bias:
+        pool["melodic"] = dict(bias, instrument=program)
     if pcs:
         pool["pitch_classes"] = pcs  # the sampler may only choose notes of the scale
     tries = 0
@@ -758,7 +758,7 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
         q = 6000.0 / tempo
         grid = {
             "step": q / 4, "beat": q * 1.5 if den == 8 and num % 3 == 0 else q, "bar": q * bb,
-            "max_gap": q * 2, "max_chord": 1, "beat_boost": 0.5, "bar_boost": 1.0,
+            "max_gap": q * 2, "max_chord": 1, "beat_boost": knobs["beat"], "bar_boost": knobs["beat"] * 2,
         }
         # the harmony: each bar's chord is what the melody prefers, but passing notes are still allowed
         if weights.get("chord"):
@@ -775,7 +775,7 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
         if targets:
             pool.setdefault("melodic", {}).update({
                 "targets": targets, "target_weight": max(weights.get("motif", 0), weights.get("cadence", 0)),
-                "target_tol": q * PLAN_TARGET_TOL, "target_sigma": PLAN_TARGET_SIGMA,
+                "target_tol": q * knobs["tol"], "target_sigma": knobs["sigma"],
             })
         for _ in range(2):
             if made >= count:
@@ -801,11 +801,11 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
 
 
 def hybrid_melody(prompt, bars, sig, level, llm, program, size, top_p, candidates, tempo_hint, log, resolve=True, key=None,
-                  engine="hybrid", phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None):
+                  engine="hybrid", phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None, knobs=None):
     """Best-scoring melody out of `candidates` (used by the command-line one-shot mode; any engine)."""
     best = None
     for k, c in enumerate(melody_candidates(prompt, bars, sig, level, llm, program, size, candidates, engine, log, tempo_hint,
-                                            resolve, key, phrasing, shape, form, theplan), 1):
+                                            resolve, key, phrasing, shape, form, theplan, knobs), 1):
         log(f"      melody candidate {k}/{candidates}: {len(c['notes'])} notes, score {c['score']:.1f}")
         if best is None or c["score"] > best["score"]:
             best = c
@@ -816,7 +816,7 @@ def hybrid_melody(prompt, bars, sig, level, llm, program, size, top_p, candidate
 
 def make_melodies(prompt, bars=8, program=0, size="small", sig="4/4", complexity=3, llm="7B", count=4,
                   engine="hybrid", name=None, log=print, on_candidate=None, bpm=None, resolve=True, key=None, phrasing=1,
-                  shape=1, form=DEFAULT_FORM):
+                  shape=1, form=DEFAULT_FORM, knobs=None):
     """Stage 1: write `count` melody options to output/<name>-optN.mid. Returns a list of dicts
     {index, path, tempo, sig, score}; on_candidate(dict) is called as each one is ready."""
     folder = ensure_session(prompt)
@@ -829,7 +829,7 @@ def make_melodies(prompt, bars=8, program=0, size="small", sig="4/4", complexity
 
         import composer
 
-        enforce = composer.auto_key(prompt, random.Random())
+        enforce = composer.auto_key(prompt, random)   # the global rng, so a seeded run is repeatable
         key = enforce
     _write_meta(folder, key=list(enforce) if enforce else None)   # accompaniment and sheet music follow this key
     theplan = None
@@ -839,7 +839,7 @@ def make_melodies(prompt, bars=8, program=0, size="small", sig="4/4", complexity
         _write_meta(folder, plan=plan_json(theplan, form), form=int(form))
     log(f"Composing {count} melody options" + (f" in {key_label(enforce)}" if enforce else "") + "...")
     for c in melody_candidates(prompt, bars, sig, complexity, llm, program, size, count, engine, log, bpm, resolve, key, phrasing, shape,
-                               form=form, theplan=theplan):
+                               form=form, theplan=theplan, knobs=knobs):
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         write_melody_midi(path, c["tempo"], c["notes"], program, sig, total_beats)
@@ -1187,6 +1187,7 @@ def make_music(
     phrasing=1,
     shape=1,
     form=DEFAULT_FORM,
+    knobs=None,
 ):
     """Run the whole pipeline. Returns (melody_path, full_path or None).
 
@@ -1232,7 +1233,7 @@ def make_music(
             _write_meta(folder, key=list(thekey))     # the accompaniment and the sheet music follow this key
         notes, tempo = hybrid_melody(prompt, bars, sig, complexity, llm, program, size, top_p,
                                      candidates if melody_engine != "llm" else 1, bpm, log, resolve, key,
-                                     melody_engine, phrasing, shape, form, theplan)
+                                     melody_engine, phrasing, shape, form, theplan, knobs)
         if theplan is not None:
             _write_meta(folder, plan=plan_json(theplan, form), form=int(form))
         length = write_melody_midi(melody_path, tempo, notes, program, sig, total_beats)

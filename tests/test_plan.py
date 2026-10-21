@@ -64,6 +64,57 @@ def test_the_form_label_names_the_setting():
     assert [plan.form_label(i) for i in range(4)] == ["Free", "Harmony", "Cadences", "Full"]
 
 
+# ---- the knobs the app can turn
+def test_the_knobs_start_at_the_defaults():
+    k = plan.knobs()
+    assert k["chord"] == plan.DEFAULT_KNOBS["chord"]
+    assert k["motif"] == plan.DEFAULT_KNOBS["motif"]
+    assert k["run"] is None, "the shape's numbers come from the shape preset"
+
+
+def test_a_knob_overrides_the_default():
+    assert plan.knobs({"motif": 12.0})["motif"] == 12.0
+
+
+def test_an_unknown_or_unset_knob_is_ignored():
+    k = plan.knobs({"nonsense": 5.0, "motif": None})
+    assert "nonsense" not in k
+    assert k["motif"] == plan.DEFAULT_KNOBS["motif"]
+
+
+def test_a_knob_overrides_the_form_preset():
+    assert plan.form_weights(3)["motif"] == plan.DEFAULT_KNOBS["motif"]
+    assert plan.form_weights(3, {"motif": 19.0})["motif"] == 19.0
+    # a knob cannot switch a component on that the preset does not use
+    assert "motif" not in plan.form_weights(1, {"motif": 19.0})
+
+
+def test_a_knob_overrides_the_shape_preset():
+    assert plan.shape_weights(2)["run"] == plan.SHAPE_BIAS[2]["run"]
+    assert plan.shape_weights(2, {"run": 0.0})["run"] == 0.0
+    assert plan.shape_weights(0) is None, "stepwise means no bias at all"
+    assert plan.shape_weights(0, {"run": 1.0})["run"] == 1.0, "but an explicit knob turns it on"
+
+
+def test_the_presets_the_app_starts_from():
+    p = plan.presets()
+    assert set(p["form"]) == {"0", "1", "2", "3"}
+    assert set(p["shape"]) == {"0", "1", "2"}
+    assert p["form"]["3"]["motif"] == plan.DEFAULT_KNOBS["motif"]
+    assert p["shape"]["2"]["run"] == plan.SHAPE_BIAS[2]["run"]
+    assert p["labels"]["form"] == plan.FORM_LABELS
+
+
+def test_a_seeded_run_gives_the_same_plan():
+    """The plan's chords must not wander: they come from the seeded random module, not a fresh one."""
+    import random
+
+    random.seed(7)
+    first = plan.build_plan(8, "4/4", (7, "major"))["chords"]
+    random.seed(7)
+    assert plan.build_plan(8, "4/4", (7, "major"))["chords"] == first
+
+
 # ---- moving a motif
 def test_a_transposed_motif_keeps_its_intervals():
     motif = [(67, 0, 1), (69, 1, 1), (72, 2, 1)]

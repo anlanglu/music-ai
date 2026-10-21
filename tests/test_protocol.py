@@ -15,7 +15,7 @@ class Backend:
         env = dict(os.environ, MUSIC_AI_OUT=str(out))
         self.p = subprocess.Popen([sys.executable, "-u", "backend.py"], cwd=ROOT, env=env, text=True,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        self.until({"ready"})
+        self.ready = self.until({"ready"})[0]
 
     def send(self, **req):
         self.p.stdin.write(json.dumps(req) + "\n")
@@ -70,6 +70,29 @@ def test_unknown_session_path_is_an_error_not_a_crash(backend, tmp_path):
     assert backend.until({"error"})[-1]["type"] == "error"
     backend.send(cmd="session_list")                        # and the backend is still alive
     assert backend.until({"sessions"})[-1]["type"] == "sessions"
+
+
+def test_the_ready_event_carries_the_presets_the_sliders_start_from(backend):
+    presets = backend.ready["presets"]
+    assert set(presets["form"]) == {"0", "1", "2", "3"}
+    assert set(presets["shape"]) == {"0", "1", "2"}
+    assert presets["defaults"]["chord"] > 0
+    assert presets["labels"]["form"][0] == "Free"
+
+
+def test_a_request_can_turn_the_knobs(backend):
+    backend.send(**MELODY, form=3, knobs={"motif": 0.0, "cadence": 0.0})
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "melodies_done", ev[-1]
+    backend.send(**MELODY, form=3, knobs={"motif": 20.0, "cadence": 15.0})
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "melodies_done", ev[-1]
+
+
+def test_a_nonsense_knob_is_ignored_rather_than_crashing(backend):
+    backend.send(**MELODY, form=3, knobs={"nonsense": 5, "motif": None})
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "melodies_done", ev[-1]
 
 
 def test_round_trip_create_approve_rename_reopen(backend):
