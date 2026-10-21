@@ -38,17 +38,37 @@ final class PDFExporter: NSObject, WKNavigationDelegate {
         webView.frame = NSRect(x: 0, y: 0, width: Self.pageW, height: total)
         try await Task.sleep(nanoseconds: 400_000_000)  // let layout settle
 
-        let pdf = PDFDocument()
+        var pages: [Data] = []
         for i in 0..<count {
             let config = WKPDFConfiguration()
             config.rect = CGRect(x: 0, y: CGFloat(i) * Self.pageH, width: Self.pageW, height: Self.pageH)
-            let data = try await webView.pdf(configuration: config)
-            guard let page = PDFDocument(data: data)?.page(at: 0) else {
+            pages.append(try await webView.pdf(configuration: config))
+        }
+        try Self.writeA4(pages: pages, to: destination)
+    }
+
+    /// WebKit makes each captured page as many points wide as the web page has CSS pixels (794 x 1123 pt, about
+    /// 28 x 40 cm). Redraw every page, still as vectors, onto a real A4 sheet (595.28 x 841.89 pt).
+    static func writeA4(pages: [Data], to destination: URL) throws {
+        var box = CGRect(x: 0, y: 0, width: 595.2756, height: 841.8898)
+        guard let consumer = CGDataConsumer(url: destination as CFURL),
+              let ctx = CGContext(consumer: consumer, mediaBox: &box, nil) else {
+            throw PDFExportError(message: "Could not write the PDF file.")
+        }
+        for (i, data) in pages.enumerated() {
+            guard let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider),
+                  let page = doc.page(at: 1) else {
                 throw PDFExportError(message: "Could not render page \(i + 1).")
             }
-            pdf.insert(page, at: pdf.pageCount)
+            let src = page.getBoxRect(.mediaBox)
+            let scale = min(box.width / src.width, box.height / src.height)
+            ctx.beginPDFPage(nil)
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -src.minX, y: -src.minY)
+            ctx.drawPDFPage(page)
+            ctx.endPDFPage()
         }
-        guard pdf.write(to: destination) else { throw PDFExportError(message: "Could not write the PDF file.") }
+        ctx.closePDF()
     }
 
     private func load(_ url: URL) async throws {

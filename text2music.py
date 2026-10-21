@@ -7,6 +7,7 @@ GUI:
 """
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -15,13 +16,23 @@ import mido
 import numpy as np
 import torch
 
+import plan
 import variety
+from llmjson import extract_json
 from playable import DRUMS, fold_pitch, limits, sampler_pool
+from plan import SCALE_MAJOR as _SCALE_MAJOR, SCALE_MINOR as _SCALE_MINOR
 
 from anticipation.vocab import NOTE_OFFSET
 
-OUT_DIR = Path(__file__).parent / "output"   # root that holds one folder per session
+OUT_DIR = Path(os.environ.get("MUSIC_AI_OUT") or Path(__file__).parent / "output")   # holds one folder per session
 TMP_DIR = OUT_DIR / ".tmp"                    # scratch files (seed melodies, notation intermediates)
+
+# How much of the piece's plan the melody follows (see plan.py): the harmony of every bar, the motif restated at
+# each phrase, and a cadence at the end of every phrase. The "Form" slider in the app sets this.
+DEFAULT_FORM = 2               # 0 free, 1 harmony, 2 cadences, 3 the whole plan
+PLAN_TARGET_TOL = 1.0          # how far (in beats) a note may land from a target and still be pulled
+PLAN_TARGET_SIGMA = 1.0        # how wide the pull is, in semitones (measured: a narrow pull brings the idea back,
+                               # a wide one lets the model's own preferences win)
 
 LLMS = {
     "7B": "mlx-community/Qwen2.5-7B-Instruct-4bit",
@@ -152,6 +163,22 @@ def new_session(name=None, prompt=""):
     return path
 
 
+def seed_everything(seed):
+    """Make a run repeatable: seed every random number generator the pipeline draws from (Python, NumPy, PyTorch for
+    the music model, MLX for the language model)."""
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
+    torch.manual_seed(seed)
+    try:
+        import mlx.core as mx
+
+        mx.random.seed(seed)
+    except ImportError:
+        pass
+
+
 def current_session():
     return _session
 
@@ -202,6 +229,8 @@ def list_sessions():
 def open_session(path):
     global _session
     path = Path(path)
+    if OUT_DIR.resolve() not in path.resolve().parents:   # only folders inside the output directory are sessions
+        raise ValueError(f"{path} is not inside the output folder")
     if not (path / "session.json").exists():
         raise FileNotFoundError(f"{path} is not a session folder")
     if _session != path:
@@ -233,7 +262,7 @@ def _get_ant(size):
     return _ant[size]
 
 
-def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(1, 1), tempo=None, key=None):
+def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(1, 1), tempo=None, key=None, chords=None):
     from mlx_lm import generate
     from mlx_lm.sample_utils import make_sampler
 
@@ -247,6 +276,10 @@ def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(
     user = f"{prompt}\nTime signature: {sig}. Length: {bars} bars ({bars * bb:g} quarter-note beats)."
     if key:
         user += f"\nKey: {key_label(key)}. Every note must belong to the {key_label(key)} scale."
+    if chords:
+        names = ", ".join(chords)
+        user += (f"\nThe harmony, one chord per bar: {names}. Start and end the phrase on a chord tone of the chord "
+                 f"in that bar, and end on the tonic of the key.")
     if tempo and not before:
         user += f"\nTempo: {tempo} bpm (use exactly this tempo in the JSON)."
     if phrase[1] > 1:
@@ -282,17 +315,9 @@ def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(
 
 
 def _json_with_notes(raw):
-    """The first JSON object in the LLM's reply that has a "notes" list. Small models wrap the answer in prose or code
-    fences, or trail off after it, so try a parse at every '{' instead of assuming first-brace-to-last-brace is valid."""
-    dec = json.JSONDecoder()
-    for m in re.finditer(r"\{", raw or ""):
-        try:
-            obj, _ = dec.raw_decode(raw[m.start():])
-        except ValueError:
-            continue
-        if isinstance(obj, dict) and isinstance(obj.get("notes"), list):
-            return obj
-    return None
+    """The first JSON object in the LLM's reply that has a "notes" list (see llmjson.extract_json)."""
+    obj = extract_json(raw, "notes")
+    return obj if obj is not None and isinstance(obj["notes"], list) else None
 
 
 def _clean_notes(items):
@@ -339,8 +364,8 @@ def conform_melody(notes, bars, sig):
 
 
 # Krumhansl-Kessler key profiles (how well each pitch class fits a major / minor key built on C)
-_MAJOR = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
-_MINOR = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+_KK_MAJOR = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+_KK_MINOR = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 
 
 _PC = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
@@ -363,8 +388,6 @@ def parse_key(prompt):
 
 
 PC_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
-_SCALE_MAJOR = [0, 2, 4, 5, 7, 9, 11]
-_SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10, 11]  # natural minor plus the raised 7th (the leading tone)
 
 
 def key_label(key):
@@ -376,13 +399,18 @@ def scale_pcs(key):
     return {(key[0] + x) % 12 for x in (_SCALE_MAJOR if key[1] == "major" else _SCALE_MINOR)}
 
 
-def snap_to_key(notes, key):
-    """Move every out-of-key note to the nearest note of the scale (the lower one on a tie)."""
+def snap_to_key(notes, key, span=(0, 127)):
+    """Move every out-of-key note to the nearest note of the scale (the lower one on a tie), staying inside `span`
+    (the instrument's playable range; always inside MIDI's 0..127)."""
     pcs = scale_pcs(key)
+    lo, hi = max(span[0], 0), min(span[1], 127)
     out = []
     for p, s_, d in notes:
         if p % 12 not in pcs:
-            p = min((x for x in range(p - 2, p + 3) if x % 12 in pcs), key=lambda x: (abs(x - p), x))
+            near = [x for x in range(p - 2, p + 3) if lo <= x <= hi and x % 12 in pcs] or \
+                   [x for x in range(p - 6, p + 7) if lo <= x <= hi and x % 12 in pcs]
+            if near:
+                p = min(near, key=lambda x: (abs(x - p), x))
         out.append((p, s_, d))
     return out
 
@@ -398,10 +426,43 @@ def key_for_file(path):
         meta = folder / "session.json"
         if meta.exists():
             try:
-                key = json.loads(meta.read_text()).get("key")
-                return (int(key[0]), key[1]) if key else None
-            except (ValueError, TypeError, IndexError):
+                data = json.loads(meta.read_text())
+            except (OSError, ValueError):
                 return None
+            key = data.get("key")
+            if key:
+                return (int(key[0]), key[1])
+            # older sessions, or the command line, may only have the plan: it carries the key too
+            plan_data = data.get("plan")
+            if plan_data and plan_data.get("key"):
+                return (int(plan_data["key"][0]), plan_data["key"][1])
+            return None
+    return None
+
+
+def plan_json(theplan, form=DEFAULT_FORM):
+    """The plan in a form that can be written to session.json."""
+    return {"key": list(theplan["key"]), "bars": theplan["bars"], "sig": theplan["sig"], "bb": theplan["bb"],
+            "level": theplan["level"], "form": int(form), "chords": list(theplan["chords"]),
+            "phrases": theplan["phrases"], "cadences": theplan["cadences"],
+            "boundaries": [list(b) for b in theplan["boundaries"]]}
+
+
+def plan_for_file(path):
+    """The plan of the piece `path` belongs to (see plan.py), or None if it has none."""
+    for folder in (Path(path).parent, Path(path).parent.parent):
+        meta = folder / "session.json"
+        if meta.exists():
+            try:
+                data = json.loads(meta.read_text()).get("plan")
+            except (OSError, ValueError):
+                return None
+            if not data:
+                return None
+            data = dict(data)
+            data["key"] = tuple(data["key"])
+            data["boundaries"] = [tuple(b) for b in data.get("boundaries", [])]
+            return data
     return None
 
 
@@ -415,7 +476,7 @@ def estimate_key(notes):
     hist[notes[-1][0] % 12] += 3
     best = None
     for tonic in range(12):
-        for mode, profile in (("major", _MAJOR), ("minor", _MINOR)):
+        for mode, profile in (("major", _KK_MAJOR), ("minor", _KK_MINOR)):
             rotated = [profile[(pc - tonic) % 12] for pc in range(12)]
             mh, mr = sum(hist) / 12, sum(rotated) / 12
             num = sum((h - mh) * (r - mr) for h, r in zip(hist, rotated))
@@ -425,9 +486,10 @@ def estimate_key(notes):
     return best[1], best[2]
 
 
-def resolve_ending(notes, bars, sig, key_hint=None):
+def resolve_ending(notes, bars, sig, key_hint=None, span=(0, 127)):
     """Make the melody end on its tonic. Only the final note changes: it moves to the nearest tonic (nearest to the
-    note before it, so the approach stays smooth); its timing and every other note are left exactly as they were."""
+    note before it, so the approach stays smooth) that the instrument can play (`span`); its timing and every other
+    note are left exactly as they were. If the range holds no tonic at all, the note is left alone."""
     if not notes:
         return notes
     tonic_pc = key_hint[0] if key_hint else estimate_key(notes)[0]
@@ -435,7 +497,12 @@ def resolve_ending(notes, bars, sig, key_hint=None):
     if p % 12 == tonic_pc:
         return notes  # already home
     anchor = notes[-2][0] if len(notes) > 1 else p
-    tonic = min((x for x in range(anchor - 7, anchor + 8) if x % 12 == tonic_pc), key=lambda x: (abs(x - anchor), abs(x - p)))
+    lo, hi = max(span[0], 0), min(span[1], 127)
+    options = [x for x in range(anchor - 7, anchor + 8) if x % 12 == tonic_pc and lo <= x <= hi] or \
+              [x for x in range(lo, hi + 1) if x % 12 == tonic_pc]
+    if not options:
+        return notes
+    tonic = min(options, key=lambda x: (abs(x - anchor), abs(x - p)))
     return notes[:-1] + [(tonic, s, d)]
 
 
@@ -487,20 +554,26 @@ def retime(path, tempo, sig):
     out.save(str(path))
 
 
-def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None):
+def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None):
     """Write the melody a short phrase at a time: small LLMs lose the plot (and stop early) over long
-    spans, and each phrase can then answer / develop the one before it."""
+    spans, and each phrase can then answer / develop the one before it.
+    `harmony` is the piece's plan (see plan.py); the chords of the bars this phrase covers are given to the LLM."""
     bb = bar_beats(sig)
     chunk = 2 if level >= 4 else 4
     n_chunks = -(-bars // chunk)
     all_notes, plans, tempo, prev, declared = [], [], bpm, None, ""
+    chord_names = None
+    if harmony:
+        tonic, mode = harmony["key"]
+        chord_names = [plan.chord_name(tonic, mode, deg) for deg in harmony["chords"]]
     for c in range(n_chunks):
         n_bars = min(chunk, bars - c * chunk)
         target = COMPLEXITY[level][1] * n_bars * bb
+        here = chord_names[c * chunk: c * chunk + n_bars] if chord_names else None
         best = None
         for attempt in range(1, 4):
             try:
-                t, raw, plan, said_key = llm_melody(prompt, n_bars, sig, level, llm, prev, (c + 1, n_chunks), tempo, key)
+                t, raw, idea, said_key = llm_melody(prompt, n_bars, sig, level, llm, prev, (c + 1, n_chunks), tempo, key, here)
             except ValueError as e:   # unusable reply: ask again instead of failing the whole melody
                 log(f"      phrase {c + 1}/{n_chunks} attempt {attempt}: unusable reply ({str(e).splitlines()[0][:50]}), retrying")
                 continue
@@ -508,20 +581,20 @@ def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None):
             richness = min(len(notes) / target, 1.0)
             score = 2 * coverage + richness + min(len({d for _, _, d in notes}) / (level + 1), 1.0)
             if best is None or score > best[0]:
-                best = (score, t, notes, plan, said_key)
+                best = (score, t, notes, idea, said_key)
             if coverage >= 0.95 and richness >= 0.7:
                 break
             log(f"      phrase {c + 1}/{n_chunks} attempt {attempt}: {len(notes)} notes (want ~{target:.0f}), "
                 f"fills {coverage:.0%}, retrying")
         if best is None:
             raise RuntimeError("The LLM did not produce a usable melody; try again or reword the prompt")
-        _, t, notes, plan, said_key = best
+        _, t, notes, idea, said_key = best
         declared = declared or said_key  # the key the LLM says it wrote the opening phrase in
         if not notes:
             raise RuntimeError("The LLM did not produce a usable melody; try again or reword the prompt")
         tempo = tempo or max(40, min(t, 220))  # a requested bpm wins over whatever the LLM wrote
-        if plan:
-            plans.append(plan)
+        if idea:
+            plans.append(idea)
         shift = c * chunk * bb
         all_notes += [(p, s + shift, d) for p, s, d in notes]
         prev = notes
@@ -582,18 +655,20 @@ SHAPE_BIAS = {0: None,
 
 
 def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engine, log, bpm=None, resolve=True, key=None,
-                      phrasing=1, shape=1):
+                      phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None):
     """Yield up to `count` distinct melodies as dicts {notes, tempo, score}.
 
     hybrid: the LLM writes an opening bar (a fresh one for every two candidates, so the options differ in
     character, not just in detail) and Anticipation, trained on real MIDI so its rhythms are natural, develops
-    it into the full melody on the metrical grid.  llm: the LLM writes each whole melody."""
+    it into the full melody on the metrical grid.  llm: the LLM writes each whole melody.
+    `form` is how much of the piece's plan the melody follows (0 free ... 3 the whole plan)."""
     bb = bar_beats(sig)
     total_beats = bars * bb
     target = COMPLEXITY[level][1]
     made = 0
     enforce = key or parse_key(prompt)   # a key picked in the app wins over one mentioned in the prompt
     pcs = scale_pcs(enforce) if enforce else None
+    weights = plan.form_weights(form)
     if engine == "theory":   # rule-based composer: no LLM, no model (see composer.py)
         import random
 
@@ -606,26 +681,39 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
         tempo = bpm or 90
         for k in range(count):
             rng = random.Random(base + 7919 * k)
-            notes, info = composer.compose(bars, sig, enforce or composer.auto_key(prompt, rng), level, rng, lo, hi, phrasing, shape)
+            thekey = enforce or composer.auto_key(prompt, rng)
+            theplan = theplan or plan.build_plan(bars, sig, thekey, rng)
+            notes, info = composer.compose(bars, sig, thekey, level, rng, lo, hi, phrasing, shape,
+                                           chords=theplan["chords"])
             notes, _ = conform_melody(notes, bars, sig)
             notes = [(fold_pitch(p, program), s_, d) for p, s_, d in notes]
             if enforce:
-                notes = snap_to_key(notes, enforce)
+                notes = snap_to_key(notes, enforce, limits(program)[:2])
+            # the theory composer builds its own cadences (a stepwise approach onto the target), so the plan's
+            # phrase endings are not forced on top of it
             if resolve:
-                notes = resolve_ending(notes, bars, sig, enforce)
+                notes = resolve_ending(notes, bars, sig, enforce, limits(program)[:2])
             log(f"      option {k + 1}: form {info['form']}, chords {' '.join(map(str, [c + 1 for c in info['chords']]))}")
             yield {"notes": notes, "tempo": tempo, "score": melody_score(notes, bars * bar_beats(sig), COMPLEXITY[level][1])[0]}
         return
     if engine == "llm":
+        import random
+
         for _ in range(count):
-            notes, tempo, _plans, declared = compose(prompt, bars, sig, level, llm, log, bpm, enforce)
+            rng = random.Random()
+            thekey = enforce or parse_key(prompt) or (0, "major")
+            theplan = theplan or plan.build_plan(bars, sig, thekey, rng)
+            notes, tempo, _plans, declared = compose(prompt, bars, sig, level, llm, log, bpm, enforce, harmony=theplan)
             notes, _ = conform_melody(notes, bars, sig)
             notes = [(fold_pitch(p, program), s_, d) for p, s_, d in notes]
             if enforce:
-                notes = snap_to_key(notes, enforce)
+                notes = snap_to_key(notes, enforce, limits(program)[:2])
             notes = apply_breaths(notes, bars, sig, phrasing)
+            if weights.get("cadence"):
+                notes = plan.resolve_phrase_endings(notes, theplan, enforce or parse_key(declared) or thekey,
+                                                    limits(program)[:2])
             if resolve:
-                notes = resolve_ending(notes, bars, sig, enforce or parse_key(declared))
+                notes = resolve_ending(notes, bars, sig, enforce or parse_key(declared), limits(program)[:2])
             made += 1
             yield {"notes": notes, "tempo": tempo, "score": melody_score(notes, total_beats, target)[0]}
         return
@@ -639,6 +727,10 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
     lo, hi = COMPLEXITY[level][2]
     plo, phi = limits(program)[:2]
     lo, hi = (max(lo, plo), min(hi, phi)) if max(lo, plo) <= min(hi, phi) else (plo, phi)  # stay inside the instrument
+    import random
+
+    thekey = enforce or parse_key(prompt) or (0, "major")
+    theplan = theplan or plan.build_plan(bars, sig, thekey, random.Random())
     pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}}
     if SHAPE_BIAS.get(shape):
         pool["melodic"] = dict(SHAPE_BIAS[shape], instrument=program)
@@ -654,10 +746,13 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
             continue
         seed = [(fold_pitch(p, program), s_, d) for p, s_, d in seed]
         if enforce:
-            seed = snap_to_key(seed, enforce)
+            seed = snap_to_key(seed, enforce, limits(program)[:2])
+        # the opening bar is the piece's motif: it is kept as the language model wrote it (in key), because snapping
+        # it to the chord would take away the passing notes that make an idea worth coming back to
+        motif = [(fold_pitch(p, program), s_, d) for p, s_, d in seed]
         TMP_DIR.mkdir(parents=True, exist_ok=True)
         seed_path = TMP_DIR / "_seed.mid"
-        seed_sec = write_melody_midi(seed_path, tempo, seed, program, sig, bb)
+        seed_sec = write_melody_midi(seed_path, tempo, motif, program, sig, bb)
         seed_events, _ = extract_instruments(midi_to_events(str(seed_path)), [])  # whole seed is the prompt
         length = total_beats * 60 / tempo
         q = 6000.0 / tempo
@@ -665,6 +760,23 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
             "step": q / 4, "beat": q * 1.5 if den == 8 and num % 3 == 0 else q, "bar": q * bb,
             "max_gap": q * 2, "max_chord": 1, "beat_boost": 0.5, "bar_boost": 1.0,
         }
+        # the harmony: each bar's chord is what the melody prefers, but passing notes are still allowed
+        if weights.get("chord"):
+            pool["regions"] = plan.plan_regions(theplan, tempo)
+            pool["chord_weight"] = weights["chord"]
+        targets = []
+        near = sum(p for p, _, _ in motif) / max(len(motif), 1)
+        if weights.get("motif"):
+            # the motif is what the first phrase already says, so only the later phrases restate it
+            for i in range(1, len(theplan["phrases"])):
+                targets += plan.motif_targets(motif, theplan, tempo, i)
+        if weights.get("cadence"):
+            targets += plan.cadence_targets(theplan, near, tempo)
+        if targets:
+            pool.setdefault("melodic", {}).update({
+                "targets": targets, "target_weight": max(weights.get("motif", 0), weights.get("cadence", 0)),
+                "target_tol": q * PLAN_TARGET_TOL, "target_sigma": PLAN_TARGET_SIGMA,
+            })
         for _ in range(2):
             if made >= count:
                 break
@@ -677,20 +789,23 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
             if len(notes) < 4:
                 continue
             if enforce:
-                notes = snap_to_key(notes, enforce)
+                notes = snap_to_key(notes, enforce, limits(program)[:2])
             notes = apply_breaths(notes, bars, sig, phrasing)
+            if weights.get("cadence"):
+                notes = plan.resolve_phrase_endings(notes, theplan, enforce or parse_key(declared) or thekey,
+                                                    limits(program)[:2])
             if resolve:
-                notes = resolve_ending(notes, bars, sig, enforce or parse_key(declared))
+                notes = resolve_ending(notes, bars, sig, enforce or parse_key(declared), limits(program)[:2])
             made += 1
             yield {"notes": notes, "tempo": tempo, "score": melody_score(notes, total_beats, target)[0]}
 
 
 def hybrid_melody(prompt, bars, sig, level, llm, program, size, top_p, candidates, tempo_hint, log, resolve=True, key=None,
-                  engine="hybrid", phrasing=1, shape=1):
+                  engine="hybrid", phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None):
     """Best-scoring melody out of `candidates` (used by the command-line one-shot mode; any engine)."""
     best = None
     for k, c in enumerate(melody_candidates(prompt, bars, sig, level, llm, program, size, candidates, engine, log, tempo_hint,
-                                            resolve, key, phrasing, shape), 1):
+                                            resolve, key, phrasing, shape, form, theplan), 1):
         log(f"      melody candidate {k}/{candidates}: {len(c['notes'])} notes, score {c['score']:.1f}")
         if best is None or c["score"] > best["score"]:
             best = c
@@ -701,7 +816,7 @@ def hybrid_melody(prompt, bars, sig, level, llm, program, size, top_p, candidate
 
 def make_melodies(prompt, bars=8, program=0, size="small", sig="4/4", complexity=3, llm="7B", count=4,
                   engine="hybrid", name=None, log=print, on_candidate=None, bpm=None, resolve=True, key=None, phrasing=1,
-                  shape=1):
+                  shape=1, form=DEFAULT_FORM):
     """Stage 1: write `count` melody options to output/<name>-optN.mid. Returns a list of dicts
     {index, path, tempo, sig, score}; on_candidate(dict) is called as each one is ready."""
     folder = ensure_session(prompt)
@@ -717,8 +832,14 @@ def make_melodies(prompt, bars=8, program=0, size="small", sig="4/4", complexity
         enforce = composer.auto_key(prompt, random.Random())
         key = enforce
     _write_meta(folder, key=list(enforce) if enforce else None)   # accompaniment and sheet music follow this key
+    theplan = None
+    if enforce and plan.form_weights(form):
+        theplan = plan.build_plan(bars, sig, enforce)
+        # the accompaniment and the sheet music follow the same plan
+        _write_meta(folder, plan=plan_json(theplan, form), form=int(form))
     log(f"Composing {count} melody options" + (f" in {key_label(enforce)}" if enforce else "") + "...")
-    for c in melody_candidates(prompt, bars, sig, complexity, llm, program, size, count, engine, log, bpm, resolve, key, phrasing, shape):
+    for c in melody_candidates(prompt, bars, sig, complexity, llm, program, size, count, engine, log, bpm, resolve, key, phrasing, shape,
+                               form=form, theplan=theplan):
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         write_melody_midi(path, c["tempo"], c["notes"], program, sig, total_beats)
@@ -883,6 +1004,13 @@ def add_part_options(source_midi, program, count=3, size="small", top_p=0.98, at
     if skey and program != DRUMS:
         pool["pitch_classes"] = scale_pcs(skey)
         log(f"      keeping the part in {key_label(skey)}")
+    theplan = plan_for_file(source_midi)
+    if theplan is not None and program != DRUMS:
+        w = plan.form_weights(theplan.get("form", DEFAULT_FORM))
+        if w.get("chord"):
+            pool["regions"] = plan.plan_regions(theplan, tempo)   # ... and on the melody's own chords
+            pool["chord_weight"] = w["chord"]
+            log("      the part follows the melody's chords")
     min_notes = {-2: max(3, int(0.08 * length)), -1: max(4, int(0.15 * length)), 0: max(6, int(0.5 * length)),
                  1: max(10, int(1.0 * length)), 2: max(14, int(1.5 * length))}[dens]
     model = _get_ant(size)
@@ -969,8 +1097,12 @@ def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_
     label0 = instrument_name(program)
     log(f"Writing {count} {label0.lower()} options ({key_label(key)})...")
     out = []
+    theplan = plan_for_file(source_midi)
+    plan_chords = None
+    if theplan is not None and plan.form_weights(theplan.get("form", DEFAULT_FORM)).get("chord"):
+        plan_chords = theplan["chords"]
     for k in range(1, count + 1):
-        label, part = tx.option(notes, tempo, sig, key, style, k, program, d)
+        label, part = tx.option(notes, tempo, sig, key, style, k, program, d, plan_chords)
         ticks = lambda beats: round(beats * 60.0 / tempo * 100)
         tokens = []
         for pitch, start, dur in sorted(part, key=lambda n: (n[1], n[0])):
@@ -1018,8 +1150,8 @@ def interpret_direction(text, instrument, context, log=print, use_llm=True, mode
             raw = generate(model, tok, prompt=tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False), max_tokens=320)
             got = dr.from_llm(text, raw)
             if got is None:
-                log("      (the LLM's reply wasn't usable, so keyword matching was used instead)")
-                return keywords
+                log(f"      (the {key} LLM's reply wasn't usable)")
+                continue   # try the next model in the chain before giving up on the LLM
             return got   # may have no effect (e.g. "purple"): describe() then says so rather than guessing
         except Exception as e:
             log(f"      (the {key} LLM couldn't run: {type(e).__name__})")
@@ -1054,6 +1186,7 @@ def make_music(
     in_key=True,
     phrasing=1,
     shape=1,
+    form=DEFAULT_FORM,
 ):
     """Run the whole pipeline. Returns (melody_path, full_path or None).
 
@@ -1093,9 +1226,15 @@ def make_music(
         present = {program}
         log("[1/3] LLM composing melody...")
         total_beats = bars * bar_beats(sig)
+        thekey = key or parse_key(prompt)
+        theplan = plan.build_plan(bars, sig, thekey) if thekey and plan.form_weights(form) else None
+        if thekey:
+            _write_meta(folder, key=list(thekey))     # the accompaniment and the sheet music follow this key
         notes, tempo = hybrid_melody(prompt, bars, sig, complexity, llm, program, size, top_p,
                                      candidates if melody_engine != "llm" else 1, bpm, log, resolve, key,
-                                     melody_engine, phrasing, shape)
+                                     melody_engine, phrasing, shape, form, theplan)
+        if theplan is not None:
+            _write_meta(folder, plan=plan_json(theplan, form), form=int(form))
         length = write_melody_midi(melody_path, tempo, notes, program, sig, total_beats)
         log(f"      {len(notes)} notes, {tempo} bpm, {sig}, {length:.1f}s -> {melody_path}")
         if melody_only:
@@ -1136,6 +1275,13 @@ def make_music(
     if skey and pool is not None:
         pool["pitch_classes"] = scale_pcs(skey)
         log(f"      keeping the added parts in {key_label(skey)}")
+    theplan = plan_for_file(melody_path)
+    if theplan is not None and pool is not None:
+        w = plan.form_weights(theplan.get("form", DEFAULT_FORM))
+        if w.get("chord"):
+            pool["regions"] = plan.plan_regions(theplan, tempo)   # ... and on the melody's own chords
+            pool["chord_weight"] = w["chord"]
+            log("      the added parts follow the melody's chords")
 
     log("[3/3] Generating accompaniment (this can take a few minutes)...")
     # The model sometimes picks a first event past the end of the clip and returns nothing (or a
@@ -1190,12 +1336,17 @@ def main():
     ap.add_argument("--key", default=None, help='force a key, e.g. "D minor" or "Bb major"')
     ap.add_argument("--phrasing", type=int, default=1, choices=[0, 1, 2], help="rests between ideas: 0 flowing, 1 balanced, 2 spacious")
     ap.add_argument("--shape", type=int, default=1, choices=[0, 1, 2], help="melodic shape: 0 stepwise, 1 balanced, 2 angular")
+    ap.add_argument("--form", type=int, default=DEFAULT_FORM, choices=[0, 1, 2, 3],
+                    help="how much of the piece's plan the melody follows: 0 free, 1 harmony, 2 cadences, 3 the whole plan")
+    ap.add_argument("--seed", type=int, default=None, help="random seed, for repeatable output")
     ap.add_argument("--no-resolve", action="store_true", help="don't force the melody to end on the tonic")
     ap.add_argument("--no-playable", action="store_true", help="skip the instrument range / polyphony limits")
     ap.add_argument("--melody-only", action="store_true", help="Skip Anticipation, just save the LLM melody")
     ap.add_argument("--name", default=None, help="file name stem for the outputs")
     ap.add_argument("--session", default=None, help="session (folder) name; defaults to the prompt")
     a = ap.parse_args()
+    if a.seed is not None:
+        seed_everything(a.seed)
     new_session(a.session, a.prompt)  # each command-line run is its own session
     make_music(
         a.prompt, a.bars, a.program, a.size, a.top_p, a.attempts, a.min_density, a.melody_only, a.name,
@@ -1203,7 +1354,7 @@ def main():
         complexity=a.complexity, llm=a.llm, ensemble=a.ensemble,
         melody_engine=a.melody_engine, candidates=a.candidates, source_midi=a.source_midi,
         bpm=max(40, min(a.bpm, 220)), resolve=not a.no_resolve, playable=not a.no_playable, key=parse_key(a.key or ""),
-        phrasing=a.phrasing, shape=a.shape,
+        phrasing=a.phrasing, shape=a.shape, form=a.form,
     )
 
 

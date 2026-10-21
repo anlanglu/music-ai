@@ -302,6 +302,14 @@ struct ContentView: View {
                 .pickerStyle(.segmented).labelsHidden()
                 .help("Rests between ideas and phrases. Flowing: the melody never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
             }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Form").font(.callout); Spacer()
+                    Text(["Free", "Harmony", "Cadences", "Full"][Int(vm.form)]).foregroundStyle(.secondary)
+                }
+                Slider(value: $vm.form, in: 0...3, step: 1)
+                .help("How much of a written plan the melody follows. Free: the melody wanders. Harmony: every bar has a chord, and the melody prefers its notes. Cadences: each phrase ends on a chord tone. Full: the opening idea comes back at the start of every phrase.")
+            }
             Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
                 .help("Changes only the final note, so the melody ends on the tonic")
 
@@ -360,7 +368,13 @@ struct ContentView: View {
                 optionGrid
             }
 
-            Text(vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+            HStack(alignment: .firstTextBaseline) {
+                Text(vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                Spacer()
+                if vm.stalled || vm.backendDown {
+                    Button("Restart backend", action: vm.restartBackend)
+                }
+            }
             ScrollView {
                 Text(vm.log).font(.system(.caption, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)

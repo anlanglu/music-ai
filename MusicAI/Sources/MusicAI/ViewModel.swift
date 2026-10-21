@@ -90,6 +90,7 @@ final class ViewModel: ObservableObject {
     @Published var resolveEnding = true
     @Published var shape = 1      // 0 stepwise, 1 balanced, 2 angular: leaps, turns and phrase contour vs scale runs
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
+    @Published var form = 2.0     // how much of the piece's plan the melody follows: 0 free .. 3 the whole plan
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
     /// Which generator writes the melody: "hybrid" (LLM seed + Anticipation, the default), "llm", or "theory".
@@ -126,6 +127,13 @@ final class ViewModel: ObservableObject {
     @Published var log = ""
     @Published var ready = false
     @Published var busy = false
+    /// True when a request has been running for a long time without a single message from the backend.
+    @Published var stalled = false
+    /// True after the Python process has exited unexpectedly, until a new one reports ready.
+    @Published var backendDown = false
+    private var lastEvent = Date()
+    private var watchdog: Timer?
+    private static let stallSeconds: TimeInterval = 240
     @Published var candidates: [Candidate] = []
     @Published var selectedID: UUID?
     @Published var orchestration: Orchestration?
@@ -147,6 +155,8 @@ final class ViewModel: ObservableObject {
     @Published var sessionURL: URL?
     @Published var sessions: [SessionInfo] = []
     private var pdfJob: (midi: URL, destination: URL)?
+    /// How the backend's direction report starts (see direction.describe); the app shows that line under the box.
+    private static let directionPrefixes = ["Understood", "Matched keywords", "Couldn't turn"]
     private var pendingOpen: URL?   // MIDI whose MusicXML should open in a notation app once engraved
     private var exporter: PDFExporter?
 
@@ -182,14 +192,45 @@ final class ViewModel: ObservableObject {
 
     func start() {
         backend.onEvent = { [weak self] ev in self?.handle(ev) }
+        launchBackend()
+        watchdog = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.busy, !self.stalled,
+                      Date().timeIntervalSince(self.lastEvent) > Self.stallSeconds else { return }
+                self.stalled = true
+                self.status = "No response from the backend for \(Int(Self.stallSeconds / 60)) minutes. "
+                    + "It may be stuck: use Restart backend."
+            }
+        }
+    }
+
+    private func launchBackend() {
+        lastEvent = Date()
+        stalled = false
+        backendDown = false
         do { try backend.start() } catch {
             status = "Could not start Python backend: \(error.localizedDescription)"
         }
     }
 
-    func shutdown() { backend.stop() }
+    /// Kill the Python process and start a fresh one (used when it has crashed or stopped responding). Loaded models
+    /// are lost, so the next generation loads them again. Files already written are untouched.
+    func restartBackend() {
+        stop()
+        ready = false
+        busy = false
+        pdfBusy = false
+        pdfJob = nil
+        sheetLoading = []
+        status = "Restarting the backend…"
+        launchBackend()
+    }
+
+    func shutdown() { watchdog?.invalidate(); backend.stop() }
 
     private func handle(_ ev: BackendEvent) {
+        lastEvent = Date()
+        stalled = false
         switch ev {
         case .session(let name, let path, let oldPath):
             if let oldPath, let path, oldPath != path { remap(from: oldPath, to: path) }
@@ -199,17 +240,21 @@ final class ViewModel: ObservableObject {
             sessions = items
         case .ready:
             ready = true
+            backendDown = false
             send(["cmd": "session_list"])
             status = "Ready. Describe a melody and press Generate melodies."
         case .log(let text):
-            if text.contains("Following your direction") || text.contains("No direction recognised") {
-                directionNote = text.trimmingCharacters(in: .whitespaces)
-            }
+            // direction.describe() in the backend starts its one-line report with one of these
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            if Self.directionPrefixes.contains(where: { trimmed.hasPrefix($0) }) { directionNote = trimmed }
             log += text + "\n"
             status = text.trimmingCharacters(in: .whitespaces)
         case .error(let text):
             busy = false
-            if text.hasPrefix("Python backend exited") { ready = false }
+            pdfBusy = false      // whatever was running is over: don't leave the buttons locked
+            pdfJob = nil
+            sheetLoading = []
+            if text.hasPrefix("Python backend exited") { ready = false; backendDown = true }
             status = text
             log += "ERROR: \(text)\n"
         case .candidate(let c):
@@ -229,6 +274,7 @@ final class ViewModel: ObservableObject {
             sheetErrors[midi] = text
             if pdfBusy, pdfJob?.midi == midi {
                 pdfBusy = false
+                pdfJob = nil
                 status = "PDF export failed: \(text)"
             }
         case .melodiesDone:
@@ -273,8 +319,11 @@ final class ViewModel: ObservableObject {
 
     /// A rename moves the session folder, so every file URL we hold has to move with it.
     private func remap(from old: URL, to new: URL) {
+        // match whole path components, so renaming "x" doesn't also move a sibling folder called "x-2"
         func moved(_ u: URL) -> URL {
-            u.path.hasPrefix(old.path) ? URL(fileURLWithPath: new.path + u.path.dropFirst(old.path.count)) : u
+            let o = old.standardizedFileURL.path
+            guard u.path == o || u.path.hasPrefix(o + "/") else { return u }
+            return URL(fileURLWithPath: new.path + u.path.dropFirst(o.count))
         }
         stop()
         candidates = candidates.map {
@@ -314,7 +363,7 @@ final class ViewModel: ObservableObject {
     /// session will be created with; afterwards it renames the folder.
     func renameSession() {
         let name = sessionName.trimmingCharacters(in: .whitespaces)
-        guard ready, !name.isEmpty else { return }
+        guard ready, !busy, !name.isEmpty else { return }
         send(["cmd": "session_rename", "name": name])
     }
 
@@ -349,7 +398,7 @@ final class ViewModel: ObservableObject {
             "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing, "shape": shape,
             "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm, "melody_engine": engine,
-            "count": Int(optionCount), "size": size, "session_name": sessionName,
+            "count": Int(optionCount), "size": size, "session_name": sessionName, "form": Int(form),
         ])
     }
 
@@ -503,6 +552,7 @@ final class ViewModel: ObservableObject {
                 status = "PDF export failed: \(error.localizedDescription)"
             }
             pdfBusy = false
+            pdfJob = nil
             self.exporter = nil
         }
     }

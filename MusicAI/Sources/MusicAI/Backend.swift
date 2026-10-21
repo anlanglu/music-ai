@@ -62,32 +62,88 @@ enum BackendEvent {
 final class Backend {
     static let projectRoot = URL(fileURLWithPath: ProcessInfo.processInfo.environment["MUSIC_AI_ROOT"] ?? "/Users/Shared/music-ai")
 
-    private let process = Process()
-    private let stdin = Pipe()
-    private let stdout = Pipe()
+    private var process = Process()
+    private var stdin = Pipe()
+    private var stdout = Pipe()
+    private var stderr = Pipe()
     private var buffer = Data()
+    /// Bumped on every (re)start so output and exit notices from an old process are ignored.
+    private var generation = 0
+    private let lock = NSLock()
+    private var stderrTail = ""
     var onEvent: ((BackendEvent) -> Void)?
 
+    /// Where the Python process's stderr (library warnings, tracebacks) is kept: ~/Library/Logs/Composer/backend.log
+    static let logURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Logs/Composer/backend.log")
+
+    /// Start the Python backend (or start a fresh one after `stop()`).
     func start() throws {
+        stop()
+        generation += 1
+        let gen = generation
         let root = Backend.projectRoot
+        let process = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
+        self.process = process; self.stdin = stdin; self.stdout = stdout; self.stderr = stderr
+        buffer = Data()
+        lock.lock(); stderrTail = ""; lock.unlock()
         process.executableURL = root.appendingPathComponent(".venv/bin/python")
         process.arguments = ["-u", "backend.py"]
         process.currentDirectoryURL = root
         process.standardInput = stdin
         process.standardOutput = stdout
-        process.standardError = FileHandle.nullDevice
+        process.standardError = stderr
         stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
             let data = h.availableData
-            guard !data.isEmpty else { return }
-            self?.consume(data)
+            guard !data.isEmpty, let self, self.generation == gen else { return }
+            self.consume(data)
+        }
+        let logFile = Backend.openLog()
+        stderr.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let data = h.availableData
+            guard !data.isEmpty, let self else { return }
+            try? logFile?.write(contentsOf: data)
+            let text = String(decoding: data, as: UTF8.self)
+            self.lock.lock()
+            self.stderrTail = String((self.stderrTail + text).suffix(2000))
+            self.lock.unlock()
         }
         process.terminationHandler = { [weak self] p in
-            self?.emit(.error("Python backend exited (status \(p.terminationStatus))."))
+            guard let self, self.generation == gen else { return }
+            // the process is gone, so whatever it wrote last may still be sitting in the pipe: read it out now
+            stderr.fileHandleForReading.readabilityHandler = nil
+            if let rest = try? stderr.fileHandleForReading.readToEnd(), !rest.isEmpty {
+                try? logFile?.write(contentsOf: rest)
+                self.lock.lock()
+                self.stderrTail = String((self.stderrTail + String(decoding: rest, as: UTF8.self)).suffix(2000))
+                self.lock.unlock()
+            }
+            self.lock.lock(); let tail = self.stderrTail; self.lock.unlock()
+            let lastLines = tail.split(separator: "\n").suffix(3).joined(separator: " | ")
+            self.emit(.error("Python backend exited (status \(p.terminationStatus))."
+                             + (lastLines.isEmpty ? "" : " Last output: \(lastLines)")
+                             + " Full log: \(Backend.logURL.path)"))
         }
         try process.run()
     }
 
+    private static func openLog() -> FileHandle? {
+        let dir = logURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
+        guard let h = try? FileHandle(forWritingTo: logURL) else { return nil }
+        // keep the log from growing without bound: start over once it passes 1 MB
+        if let size = try? h.seekToEnd(), size > 1_000_000 { try? h.truncate(atOffset: 0) }
+        return h
+    }
+
+    /// Stop the process. Its exit is not reported as an error.
     func stop() {
+        generation += 1
+        stdout.fileHandleForReading.readabilityHandler = nil
+        stderr.fileHandleForReading.readabilityHandler = nil
         if process.isRunning { process.terminate() }
     }
 

@@ -147,15 +147,10 @@ def _num(v, lo=-2, hi=2):
 
 def from_llm(text, raw):
     """Turn the LLM's raw reply into the controls dict, or None if it can't be used."""
-    import json
-    import re
+    from llmjson import extract_json
 
-    m = re.search(r"\{.*\}", raw or "", re.S)
-    if not m:
-        return None
-    try:
-        j = json.loads(m.group(0))
-    except ValueError:
+    j = extract_json(raw)
+    if j is None:
         return None
     out = _blank(text)
     out["source"] = "llm"

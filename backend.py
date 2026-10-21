@@ -1,12 +1,13 @@
 """JSON-lines backend for the Swift app. Reads one JSON request per stdin line, writes events to stdout.
 
 Requests (one JSON object per line, "cmd" selects the stage):
-  {"cmd":"melodies", prompt, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size}
+  {"cmd":"melodies", prompt, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size, form}
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
   {"cmd":"notation", "path":..., "title":..., "paged":false}
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, top_p, attempts, min_density, enforce_meter}
+Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
           session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | error{text}      (notes = [[channel,pitch,start,end],...])
@@ -27,7 +28,8 @@ from pathlib import Path
 
 from text2music import (  # noqa: E402
     add_part_options, approve_part, current_session, ensure_session, instrument_name, list_sessions,
-    make_melodies, make_music, midi_info, new_session, open_session, rename_session, reset_session, session_info,
+    make_melodies, make_music, midi_info, new_session, open_session, rename_session, reset_session, seed_everything,
+    session_info,
 )
 
 
@@ -110,13 +112,17 @@ def restore(path):
             tempo, sig, _ = midi_info(imports[-1])
             candidate_event({"index": 1, "path": imports[-1], "tempo": tempo, "sig": sig, "score": None})
     send(type="melodies_done")
-    fulls = sorted(folder.glob("*-full.mid"))
-    if fulls:
-        send(type="done", melody=str(fulls[-1]), full=str(fulls[-1]), notes=notes_of(fulls[-1]), programs=list(programs_of(fulls[-1])))
+    # the latest finished piece: an automatic orchestration (*-full.mid) or the newest approved version (pieceNN-*.mid)
+    finals = list(folder.glob("*-full.mid")) + list(folder.glob("piece*.mid"))
+    if finals:
+        latest = max(finals, key=lambda f: (f.stat().st_mtime, f.name))
+        send(type="done", melody=str(latest), full=str(latest), notes=notes_of(latest), programs=list(programs_of(latest)))
 
 
 def handle(r):
     cmd = r.get("cmd", "orchestrate")
+    if r.get("seed") is not None:
+        seed_everything(int(r["seed"]))
     log = lambda s: send(type="log", text=s)
     if cmd == "session_list":
         send(type="sessions", items=list_sessions())
@@ -145,7 +151,7 @@ def handle(r):
             r.get("melody_engine", "hybrid"), log=log, on_candidate=candidate_event,
             key=(int(r["key"][0]), r["key"][1]) if r.get("key") else None,
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
-            shape=int(r.get("shape", 1)),
+            shape=int(r.get("shape", 1)), form=int(r.get("form", 2)),
         )
         send(type="melodies_done")
     elif cmd == "add_part":  # stage 2, one instrument at a time: several options for the chosen instrument

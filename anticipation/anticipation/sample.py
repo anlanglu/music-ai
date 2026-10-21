@@ -96,9 +96,12 @@ def grid_time_logits(logits, offset, grid, current_time=0, n_same=0):
         if spaced.any():
             ok = spaced
     if grid.get('max_gap'):  # no long silences: the next onset must come soon
-        ok = ok & (ticks <= current_time + grid['max_gap'])
-    bonus = (_on_grid(ticks, grid['beat']) * grid.get('beat_boost', 0.0)
-             + _on_grid(ticks, grid['bar']) * grid.get('bar_boost', 0.0))
+        soon = ok & (ticks <= current_time + grid['max_gap'])
+        if soon.any():
+            ok = soon
+    beat = grid.get('beat', grid['step'])
+    bonus = (_on_grid(ticks, beat) * grid.get('beat_boost', 0.0)
+             + _on_grid(ticks, grid.get('bar', beat)) * grid.get('bar_boost', 0.0))
     seg = logits[TIME_OFFSET:TIME_OFFSET+MAX_TIME]
     ok = torch.from_numpy(ok).to(logits.device)
     new = torch.where(ok, seg + torch.from_numpy(bonus).float().to(logits.device), torch.full_like(seg, -float('inf')))
@@ -110,10 +113,14 @@ def grid_time_logits(logits, offset, grid, current_time=0, n_same=0):
 def grid_dur_logits(logits, onset, grid):
     """Restrict durations so every note ends on the grid (and lasts at least one grid step)."""
     d = np.arange(MAX_DUR)
-    ok = _on_grid(onset + d, grid['step']) & (d >= max(int(grid['step']) - 1, int(grid.get('min_dur', 0))))
+    ok = _on_grid(onset + d, grid['step'])    # the grid matters most; the rest are dropped one at a time if impossible
+    longer = ok & (d >= max(int(grid['step']) - 1, int(grid.get('min_dur', 0))))
+    if longer.any():
+        ok = longer
     if grid.get('max_dur'):  # short, detached notes vs long, held ones
         limited = ok & (d <= grid['max_dur'])
-        ok = limited if limited.any() else ok
+        if limited.any():
+            ok = limited
     seg = logits[DUR_OFFSET:DUR_OFFSET+MAX_DUR]
     ok = torch.from_numpy(ok).to(logits.device)
     new = torch.where(ok, seg, torch.full_like(seg, -float('inf')))
@@ -123,20 +130,61 @@ def grid_dur_logits(logits, onset, grid):
 
 
 def _pool_mask(pool, device):
-    """Bool tensor [instrument, pitch]: which (instrument, pitch) notes the pool permits at all."""
-    mask = pool.get('_mask')
-    if mask is None or mask.device != device:
+    """Bool tensor [instrument, pitch]: which (instrument, pitch) notes the pool permits at all (the instruments and
+    their playable ranges). Cached per pool, and rebuilt if the pool's instruments or ranges change."""
+    ranges = pool.get('ranges', {})
+    sig = (str(device), tuple(pool['allowed']), tuple(sorted((k, tuple(v)) for k, v in ranges.items())),
+           tuple(pool['pitch_range']) if pool.get('pitch_range') else None)
+    cache = pool.setdefault('_mask_cache', {})
+    if sig not in cache:
         arr = np.zeros((MAX_INSTR, MAX_PITCH), dtype=bool)
-        ranges = pool.get('ranges', {})
-        pcs = pool.get('pitch_classes')  # keep every pitched instrument inside one scale (drums are exempt)
         for instr in pool['allowed']:
             lo, hi = ranges.get(instr) or pool.get('pitch_range') or (0, MAX_PITCH - 1)
             arr[instr, lo:hi+1] = True
-            if pcs and instr != 128:
-                arr[instr, [p for p in range(MAX_PITCH) if p % 12 not in pcs]] = False
+        cache.clear()
+        cache[sig] = torch.from_numpy(arr).to(device)
+    return cache[sig]
+
+
+_SCALE_CACHE = {}
+
+
+def _key_mask(pool, device):
+    """Bool tensor [instrument, pitch]: the pitch classes of the key the part may use. Drums are exempt."""
+    pcs = pool.get('pitch_classes')
+    if not pcs:
+        return None
+    key = (str(device), tuple(sorted(pcs)))
+    mask = _SCALE_CACHE.get(key)
+    if mask is None:
+        arr = np.ones((MAX_INSTR, MAX_PITCH), dtype=bool)
+        arr[:, [p for p in range(MAX_PITCH) if p % 12 not in pcs]] = False
+        arr[128] = True      # drums have no pitch: they are exempt from the scale
         mask = torch.from_numpy(arr).to(device)
-        pool['_mask'] = mask
+        _SCALE_CACHE[key] = mask
     return mask
+
+
+def _chord_bonus(pool, onset, device, weight):
+    """A bonus for the pitch classes of the chord that is sounding where the note lands. The plan gives one chord
+    per bar; a note that belongs to it is more likely, but the melody may still pass through other notes of the
+    scale on the way - a hard restriction would leave only three pitches to choose from and the line would stall."""
+    regions = pool.get('regions')
+    if not regions or onset is None or weight <= 0:
+        return None
+    pcs = None
+    for start, end, p in regions:
+        if start <= onset < end:
+            pcs = p
+            break
+    if not pcs:
+        return None
+    vec = torch.zeros(MAX_PITCH, device=device)
+    for p in pcs:
+        vec[p::12] = weight
+    bonus = vec.unsqueeze(0).expand(MAX_INSTR, MAX_PITCH).clone()
+    bonus[128] = 0.0       # drums have no pitch
+    return bonus
 
 
 def steer_instruments(logits, tokens, pool, onset=None):
@@ -148,8 +196,11 @@ def steer_instruments(logits, tokens, pool, onset=None):
         only a *simultaneous* onset is refused; legato overlaps are trimmed afterwards)
       - unless 'free', an instrument that has fallen behind its fair share must play next, and under-used ones are
         boosted, so that every instrument in the pool actually plays
+      - 'regions' restricts the pitch classes bar by bar, so the part follows the piece's harmony
     """
     allowed = list(pool['allowed'])
+    if not allowed:
+        return logits
     max_poly = pool.get('max_poly', {})
     counts = {i: 0 for i in allowed}
     active = {i: 0 for i in allowed}
@@ -175,7 +226,8 @@ def steer_instruments(logits, tokens, pool, onset=None):
         candidates = starved or candidates
     keep = torch.zeros(MAX_INSTR, dtype=torch.bool, device=logits.device)
     keep[candidates] = True
-    mask = _pool_mask(pool, logits.device) & keep[:, None]
+    keep_all = torch.zeros(MAX_INSTR, dtype=torch.bool, device=logits.device)
+    keep_all[allowed] = True
 
     bonus = torch.zeros(MAX_INSTR, device=logits.device)
     if pool.get('balance') and not pool.get('free'):
@@ -184,19 +236,65 @@ def steer_instruments(logits, tokens, pool, onset=None):
             bonus[i] = -pool['balance'] * math.log((counts[i] + 1) / (mean + 1))
 
     notes = logits[NOTE_OFFSET:NOTE_OFFSET+MAX_NOTE].view(MAX_INSTR, MAX_PITCH)
-    steered = torch.where(mask, notes + bonus[:, None], torch.full_like(notes, -float('inf')))
-    if torch.isfinite(steered).any():
-        logits[NOTE_OFFSET:NOTE_OFFSET+MAX_NOTE] = steered.reshape(-1)
+    base = _pool_mask(pool, logits.device)
+    keymask = _key_mask(pool, logits.device)
+    chord = _chord_bonus(pool, onset, logits.device, pool.get('chord_weight', 0.0))
+    scored = notes + bonus[:, None]
+    if chord is not None:
+        scored = scored + chord
+    # If the model gives no probability to anything the full rules allow, relax one rule at a time, least important
+    # first: the fair share, then the scale. The playable range and the instrument list stay in force.
+    strict = base & keep[:, None]
+    relaxed = base & keep_all[:, None]
+    tiers = [strict & keymask, relaxed & keymask, relaxed] if keymask is not None else [strict, relaxed]
+    for mask in tiers:
+        steered = torch.where(mask, scored, torch.full_like(scored, -float('inf')))
+        if torch.isfinite(steered).any():
+            logits[NOTE_OFFSET:NOTE_OFFSET+MAX_NOTE] = steered.reshape(-1)
+            break
     return logits
 
 
-def melodic_bias(logits, tokens, pool):
-    """Nudge a single-line melody away from monotony. pool['melodic'] = {'run', 'leap', 'repeat', 'variety'} weights
-    (logit units; 0 = off) plus 'instrument' (the melody's program). Looks at the pitches the melody instrument has played so far (seed included) and
+def _target_bias(targets, onset, weight, tol, sigma):
+    """Pull the melody towards a target. `targets` is a list of (tick, pitch) anchors - the motif at a phrase's
+    start, the cadence at a phrase's end. The anchor nearest this onset (within `tol` ticks) is the one that speaks,
+    and a note that lands between two anchors is pulled towards the line between them, so the melody follows the
+    shape of the idea rather than only its exact notes. Nothing is forced: the target only makes the intended note
+    more likely, and notes that land away from every anchor are left alone."""
+    if not targets or onset is None or weight <= 0:
+        return np.zeros(MAX_PITCH, dtype=np.float32)
+    ts = sorted(targets)
+    # the pitch to aim at: the line between two anchors if the note lands between them, else the nearest anchor
+    pitch = None
+    distance = None
+    for a, b in zip(ts, ts[1:]):
+        if a[0] <= onset <= b[0]:
+            frac = (onset - a[0]) / (b[0] - a[0]) if b[0] != a[0] else 0.0
+            pitch = a[1] + frac * (b[1] - a[1])
+            distance = 0.0          # between two anchors the shape is known, so the pull is at full strength
+            break
+    if pitch is None:
+        best = min(ts, key=lambda tp: abs(tp[0] - onset))
+        distance = abs(best[0] - onset)
+        if distance > tol:
+            return np.zeros(MAX_PITCH, dtype=np.float32)
+        pitch = best[1]
+    strength = weight * max(0.0, 1.0 - distance / tol)
+    x = np.arange(MAX_PITCH)
+    return (strength * np.exp(-((x - pitch) ** 2) / (2.0 * sigma * sigma))).astype(np.float32)
+
+
+def melodic_bias(logits, tokens, pool, onset=None):
+    """Nudge a single-line melody away from monotony, and towards what the piece is meant to say.
+    pool['melodic'] = {'run', 'leap', 'repeat', 'variety'} weights (logit units; 0 = off) plus 'instrument'
+    (the melody's program). Looks at the pitches the melody instrument has played so far (seed included) and
     - discourages a third step in the same direction (scalar runs) and repeated notes,
     - favours thirds-to-fifths leaps, and stepping back the other way after a big leap (a leap is answered),
     - discourages wild jumps (over a sixth), and shuffling among the same few pitches,
-    - rewards reaching beyond the range used so far while that range is still narrow."""
+    - rewards reaching beyond the range used so far while that range is still narrow.
+    pool['melodic']['targets'] is a list of (tick, pitch) anchors - the motif at each phrase's start, the cadence
+    at each phrase's end - that the melody is pulled towards; 'target_weight', 'target_tol' and 'target_sigma'
+    tune how strongly."""
     w = pool['melodic']
     instr = w['instrument']   # the melody instrument (set by the caller; the pool may hold others)
     hist = []
@@ -206,7 +304,8 @@ def melodic_bias(logits, tokens, pool):
     if not hist:
         return logits
     last = hist[-1]
-    moves = [b - a for a, b in zip(hist[-4:], hist[-3:])]
+    last4 = hist[-4:]
+    moves = [b - a for a, b in zip(last4, last4[1:])]   # the last (up to) three melodic moves
     seg = logits[NOTE_OFFSET + instr * MAX_PITCH: NOTE_OFFSET + (instr + 1) * MAX_PITCH]
     iv = np.arange(MAX_PITCH) - last
     mag = np.abs(iv)
@@ -235,8 +334,23 @@ def melodic_bias(logits, tokens, pool):
         if max(far) - min(far) < 9:
             outside = (np.arange(MAX_PITCH) > max(far)) | (np.arange(MAX_PITCH) < min(far))
             bias += w.get('variety', 0) * 0.8 * (outside & (mag <= 7))
+    bias += _target_bias(w.get('targets') or [], onset, w.get('target_weight', 0.0),
+                         w.get('target_tol', 25), w.get('target_sigma', 1.6))
     seg += torch.from_numpy(bias).to(seg.device)
     return logits
+
+
+def count_simultaneous(tokens, current_time):
+    """How many generated notes already start exactly at `current_time`. Anticipated controls are appended to the tail
+    of `tokens` as the clock nears them; they are skipped so they can't hide the notes just before them."""
+    n = 0
+    for t, note in zip(reversed(tokens[0::3]), reversed(tokens[2::3])):
+        if note >= CONTROL_OFFSET:
+            continue
+        if t - TIME_OFFSET != current_time:
+            break
+        n += 1
+    return n
 
 
 def add_token(model, z, tokens, top_p, current_time, debug=False, grid=None, instruments=None):
@@ -267,19 +381,16 @@ def add_token(model, z, tokens, top_p, current_time, debug=False, grid=None, ins
             if i == 0:
                 logits = future_logits(logits, current_time - offset)
                 if grid is not None:
-                    n_same = 0
-                    for t in reversed(tokens[0::3]):
-                        if t - TIME_OFFSET != current_time: break
-                        n_same += 1
-                    logits = grid_time_logits(logits, offset, grid, current_time, n_same)
+                    logits = grid_time_logits(logits, offset, grid, current_time, count_simultaneous(tokens, current_time))
             elif i == 1 and grid is not None:
                 logits = grid_dur_logits(logits, new_token[0] - TIME_OFFSET + offset, grid)
             elif i == 2:
                 logits = instr_logits(logits, tokens)
                 if instruments is not None:
-                    logits = steer_instruments(logits, tokens, instruments, new_token[0] - TIME_OFFSET + offset)
+                    onset = new_token[0] - TIME_OFFSET + offset
+                    logits = steer_instruments(logits, tokens, instruments, onset)
                     if instruments.get('melodic'):
-                        logits = melodic_bias(logits, tokens, instruments)
+                        logits = melodic_bias(logits, tokens, instruments, onset)
             logits = nucleus(logits, top_p)
 
             probs = F.softmax(logits, dim=-1)
