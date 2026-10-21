@@ -312,6 +312,11 @@ struct ContentView: View {
                 .onChange(of: Int(vm.form)) { _, new in vm.applyForm(new) }
                 .help("How much of a written plan the melody follows. Free: the melody wanders. Harmony: every bar has a chord, and the melody prefers its notes. Cadences: each phrase ends on a chord tone. Full: the opening idea comes back at the start of every phrase. Choosing one sets the sliders under Advanced.")
             }
+            Button(vm.showAdvanced ? "Hide the fine-tuning sliders" : "Fine-tune with sliders…") {
+                vm.showAdvanced.toggle()
+            }
+            .buttonStyle(.link).font(.caption)
+            .help("Shape and Form are presets. The sliders under Advanced set the numbers behind them.")
             Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
                 .help("Changes only the final note, so the melody ends on the tonic")
 
@@ -397,9 +402,16 @@ struct ContentView: View {
     }
 
     /// A slider for one musical setting, which remembers that the user moved it.
+    /// Only the user's own drags count: a preset setting the value must not mark it as moved. The number beside it
+    /// shows the value in use.
     private func knobSlider(_ value: Binding<Double>, _ name: String, _ range: ClosedRange<Double>) -> some View {
-        Slider(value: value, in: range)
-            .onChange(of: value.wrappedValue) { _, _ in vm.markOverridden(name) }
+        let mine = Binding<Double>(get: { value.wrappedValue },
+                                   set: { value.wrappedValue = $0; vm.markOverridden(name) })
+        return HStack {
+            Slider(value: mine, in: range)
+            Text(value.wrappedValue, format: .number.precision(.fractionLength(1)))
+                .monospacedDigit().frame(width: 36, alignment: .trailing).foregroundStyle(.secondary)
+        }
     }
 
     // MARK: Right column

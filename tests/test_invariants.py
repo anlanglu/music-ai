@@ -77,3 +77,15 @@ def test_theory_melodies_are_playable_and_correct(request):
 def test_shape_changes_the_melodies_but_not_their_correctness(shape):
     notes, rng = build("4/4", 4, (7, "major"), 8, 73, 1, shape, 123)
     check(notes, rng, "4/4", 8, (7, "major"), f"shape{shape}")
+
+
+def test_melody_velocities_shape_the_phrase():
+    import text2music as t
+
+    notes = [(60, 0, 1), (62, 1, 1), (64, 2, 1), (67, 3, 0.5), (65, 4, 1), (64, 5, 1), (62, 6, 1), (60, 7, 1)]
+    v = t.melody_velocities(notes, "4/4")
+    assert len(v) == len(notes) and all(40 <= x <= 118 for x in v)
+    assert len(set(v)) > 3                      # not flat
+    assert v[3] == max(v) or v[3] >= max(v) - 4     # the climax is among the loudest
+    assert v[-1] < v[3]                         # and the close tapers
+    assert t.melody_velocities([], "4/4") == []

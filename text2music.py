@@ -506,7 +506,37 @@ def resolve_ending(notes, bars, sig, key_hint=None, span=(0, 127)):
     return notes[:-1] + [(tonic, s, d)]
 
 
-def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None):
+def melody_velocities(notes, sig="4/4"):
+    """A velocity for each note [(pitch, start_beat, dur_beats)], so the phrasing can be heard and not only seen:
+    downbeats and beats are a little stronger, the note that ends a phrase (a rest follows it) is accented, the line
+    swells towards its highest note and the last notes taper. Returns a list parallel to `notes`, in 40..118."""
+    if not notes:
+        return []
+    bb = bar_beats(sig)
+    top = max(range(len(notes)), key=lambda i: (notes[i][0], -notes[i][1]))     # the climax: first of the highest notes
+    span = max(notes[-1][1] - notes[0][1], 1e-9)
+    climax = (notes[top][1] - notes[0][1]) / span
+    out = []
+    for i, (p, s, d) in enumerate(notes):
+        v = 76.0
+        pos = s % bb
+        v += 8 if pos < 1e-6 else 4 if abs(pos % 1.0) < 1e-6 else 0
+        end = s + d
+        gap = (notes[i + 1][1] - end) if i + 1 < len(notes) else 1.0
+        if gap >= 0.45:
+            v += 7                                  # a phrase-final note is leant on
+        x = (s - notes[0][1]) / span
+        arch = 1 - abs(x - climax) / max(climax, 1 - climax, 1e-9)    # 0 at the ends, 1 at the climax
+        v += 10 * arch
+        if i == top:
+            v += 4
+        if i >= len(notes) - 2:
+            v -= 10                                 # the closing notes taper
+        out.append(int(max(40, min(118, round(v)))))
+    return out
+
+
+def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True):
     tpb = 480
     mid = mido.MidiFile(type=1, ticks_per_beat=tpb)
     mid.tracks.append(conductor_track(tempo, sig))
@@ -514,14 +544,15 @@ def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None):
     mid.tracks.append(track)
     track.append(mido.Message("program_change", program=program, channel=0, time=0))
     events = []
-    for p, s, d in notes:
-        events.append((round(s * tpb), 1, p))
-        events.append((round((s + d) * tpb), 0, p))  # note-off sorts before note-on at same tick
+    vels = melody_velocities(notes, sig) if dynamics else [90] * len(notes)
+    for (p, s, d), v in zip(notes, vels):
+        events.append((round(s * tpb), 1, p, v))
+        events.append((round((s + d) * tpb), 0, p, 0))  # note-off sorts before note-on at same tick
     events.sort()
     last = 0
-    for tick, on, p in events:
+    for tick, on, p, v in events:
         track.append(
-            mido.Message("note_on" if on else "note_off", note=p, velocity=90 if on else 0, channel=0, time=tick - last)
+            mido.Message("note_on" if on else "note_off", note=p, velocity=v if on else 0, channel=0, time=tick - last)
         )
         last = tick
     if total_beats is not None:  # pad the file out to the final barline so its length is exactly N bars
