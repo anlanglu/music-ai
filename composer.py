@@ -14,17 +14,14 @@ Everything is in scale degrees until the very end, so the melody cannot leave it
 """
 import math
 
-_MAJOR = [0, 2, 4, 5, 7, 9, 11]
-_MINOR = [0, 2, 3, 5, 7, 8, 10]
-
-# Chord progressions per phrase role, as scale degrees of the chord roots (0 = I / i ... 4 = V ...).
-_PROGRESSIONS = {
-    "ante": [[0, 3, 1, 4], [0, 5, 3, 4], [0, 2, 3, 4], [0, 0, 3, 4]],     # a question: ends on the dominant
-    "cons": [[0, 3, 4, 0], [0, 5, 4, 0], [0, 1, 4, 0], [0, 2, 3, 0]],     # the answer: ends home
-    "cont": [[5, 3, 0, 4], [3, 4, 5, 2], [1, 4, 0, 5], [3, 0, 4, 5]],     # contrast: leaves home, ends away from it
-    "final": [[0, 3, 4, 0], [0, 5, 1, 0], [0, 1, 4, 0], [3, 5, 4, 0]],
-}
-_CADENCE_TARGETS = {"ante": [4, 1], "cons": [0, 2], "cont": [4, 2, 5], "final": [0]}   # scale degrees to end a phrase on
+from plan import (  # the scales, the chord progressions and the phrase plan live in plan.py: every engine uses them
+    CADENCE_TARGETS as _CADENCE_TARGETS,
+    DEG_MAJOR as _MAJOR,
+    DEG_MINOR as _MINOR,
+    PROGRESSIONS as _PROGRESSIONS,
+    chord_progression,
+    phrase_plan as _phrase_plan,
+)
 
 # Rhythm cells that fill one beat (or two, for span 2). durations are in quarter notes; negative = rest.
 # (name, durations, span_in_beats, weight at complexity 1..5)
@@ -220,8 +217,9 @@ def breathe(notes, boundaries, phrasing=1):
     return [tuple(n) for n in out]
 
 
-def compose(bars, sig, key, level, rng, lo=55, hi=84, phrasing=1, shape=1):
-    """Write a melody. Returns (notes, info) with notes = [(pitch, start_beat, dur_beats)]."""
+def compose(bars, sig, key, level, rng, lo=55, hi=84, phrasing=1, shape=1, chords=None):
+    """Write a melody. Returns (notes, info) with notes = [(pitch, start_beat, dur_beats)].
+    `chords` (scale degrees, one per bar) may be given so the caller can share the harmony with the other engines."""
     tonic, mode = key
     scale = _MAJOR if mode == "major" else _MINOR
     num, den = (int(x) for x in sig.split("/"))
@@ -240,12 +238,11 @@ def compose(bars, sig, key, level, rng, lo=55, hi=84, phrasing=1, shape=1):
 
     plan = _phrase_plan(bars)
     # ---- harmony: one chord per bar
-    chords = []
-    for length, role in plan:
-        prog = list(rng.choice(_PROGRESSIONS[role]))
-        if length != 4:
-            prog = (prog[: length - 1] + [prog[-1]]) if length > 1 else [prog[-1]]
-        chords += prog[:length]
+    if chords is None:
+        chords = []
+        for length, role in plan:
+            chords += chord_progression(role, length, rng)
+    chords = list(chords)
     chords[-1] = 0   # the piece ends on the tonic chord
 
     # ---- the motif: a rhythm and a contour

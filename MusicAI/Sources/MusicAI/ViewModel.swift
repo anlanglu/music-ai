@@ -90,6 +90,23 @@ final class ViewModel: ObservableObject {
     @Published var resolveEnding = true
     @Published var shape = 1      // 0 stepwise, 1 balanced, 2 angular: leaps, turns and phrase contour vs scale runs
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
+    @Published var form = 2.0     // how much of the piece's plan the melody follows: 0 free .. 3 the whole plan
+
+    // The musical settings behind the shape and form controls. The shape and form controls are presets that set
+    // these; moving one of them on its own overrides that number until the next preset is chosen.
+    @Published var knobChord = 2.2      // how strongly the melody prefers the chord of the bar it is in
+    @Published var knobCadence = 5.0    // how strongly it is pulled towards the note a phrase cadences on
+    @Published var knobMotif = 8.0      // how strongly it is pulled towards the opening idea at each phrase's start
+    @Published var knobSigma = 1.0      // how wide that pull is, in semitones
+    @Published var knobTol = 1.0        // how near a note has to land to be pulled, in beats
+    @Published var knobRun = 1.5        // how much the line avoids running up and down the scale
+    @Published var knobLeap = 0.5       // how much it likes to leap
+    @Published var knobRepeat = 0.7     // how much it avoids repeating a note
+    @Published var knobVariety = 0.7    // how much it avoids sticking to a few pitches
+    @Published var knobBeat = 0.5       // how strongly onsets prefer the beat
+
+    private var presets: Presets?
+    private var overridden: Set<String> = []
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
     /// Which generator writes the melody: "hybrid" (LLM seed + Anticipation, the default), "llm", or "theory".
@@ -126,6 +143,13 @@ final class ViewModel: ObservableObject {
     @Published var log = ""
     @Published var ready = false
     @Published var busy = false
+    /// True when a request has been running for a long time without a single message from the backend.
+    @Published var stalled = false
+    /// True after the Python process has exited unexpectedly, until a new one reports ready.
+    @Published var backendDown = false
+    private var lastEvent = Date()
+    private var watchdog: Timer?
+    private static let stallSeconds: TimeInterval = 240
     @Published var candidates: [Candidate] = []
     @Published var selectedID: UUID?
     @Published var orchestration: Orchestration?
@@ -147,6 +171,8 @@ final class ViewModel: ObservableObject {
     @Published var sessionURL: URL?
     @Published var sessions: [SessionInfo] = []
     private var pdfJob: (midi: URL, destination: URL)?
+    /// How the backend's direction report starts (see direction.describe); the app shows that line under the box.
+    private static let directionPrefixes = ["Understood", "Matched keywords", "Couldn't turn"]
     private var pendingOpen: URL?   // MIDI whose MusicXML should open in a notation app once engraved
     private var exporter: PDFExporter?
 
@@ -182,14 +208,96 @@ final class ViewModel: ObservableObject {
 
     func start() {
         backend.onEvent = { [weak self] ev in self?.handle(ev) }
+        launchBackend()
+        watchdog = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.busy, !self.stalled,
+                      Date().timeIntervalSince(self.lastEvent) > Self.stallSeconds else { return }
+                self.stalled = true
+                self.status = "No response from the backend for \(Int(Self.stallSeconds / 60)) minutes. "
+                    + "It may be stuck: use Restart backend."
+            }
+        }
+    }
+
+    private func launchBackend() {
+        lastEvent = Date()
+        stalled = false
+        backendDown = false
         do { try backend.start() } catch {
             status = "Could not start Python backend: \(error.localizedDescription)"
         }
     }
 
-    func shutdown() { backend.stop() }
+    /// Kill the Python process and start a fresh one (used when it has crashed or stopped responding). Loaded models
+    /// are lost, so the next generation loads them again. Files already written are untouched.
+    func restartBackend() {
+        stop()
+        ready = false
+        busy = false
+        pdfBusy = false
+        pdfJob = nil
+        sheetLoading = []
+        status = "Restarting the backend…"
+        launchBackend()
+    }
+
+    func shutdown() { watchdog?.invalidate(); backend.stop() }
+
+    // MARK: The musical knobs
+
+    /// Take the presets the backend sent (plan.py owns the tables) and set the sliders from them.
+    private func applyPresets(_ p: Presets) {
+        presets = p
+        applyShape(Int(shape))
+        applyForm(Int(form))
+    }
+
+    /// The values the backend is sent. Only the ones that are set.
+    var knobValues: [String: Double] {
+        ["chord": knobChord, "cadence": knobCadence, "motif": knobMotif, "sigma": knobSigma, "tol": knobTol,
+         "run": knobRun, "leap": knobLeap, "repeat": knobRepeat, "variety": knobVariety, "beat": knobBeat]
+    }
+
+    /// The shape control is a preset: it sets the sliders, except the ones the user has moved.
+    func applyShape(_ which: Int) {
+        guard let preset = presets?.shape[String(which)] else { return }
+        set(knob: preset, names: ["run", "leap", "repeat", "variety"])
+    }
+
+    /// The form control is a preset too.
+    func applyForm(_ which: Int) {
+        guard let preset = presets?.form[String(which)] else { return }
+        set(knob: preset, names: ["chord", "cadence", "motif", "sigma", "tol"])
+    }
+
+    private func set(knob preset: Knobs, names: [String]) {
+        let values: [String: Double?] = ["chord": preset.chord, "cadence": preset.cadence, "motif": preset.motif,
+                                         "sigma": preset.sigma, "tol": preset.tol, "run": preset.run,
+                                         "leap": preset.leap, "repeat": preset.repeatAvoid, "variety": preset.variety]
+        for name in names where !overridden.contains(name) {
+            guard let value = values[name] ?? nil else { continue }
+            switch name {
+            case "chord": knobChord = value
+            case "cadence": knobCadence = value
+            case "motif": knobMotif = value
+            case "sigma": knobSigma = value
+            case "tol": knobTol = value
+            case "run": knobRun = value
+            case "leap": knobLeap = value
+            case "repeat": knobRepeat = value
+            case "variety": knobVariety = value
+            default: break
+            }
+        }
+    }
+
+    /// The user moved a slider: remember that, so the next preset does not undo it.
+    func markOverridden(_ name: String) { overridden.insert(name) }
 
     private func handle(_ ev: BackendEvent) {
+        lastEvent = Date()
+        stalled = false
         switch ev {
         case .session(let name, let path, let oldPath):
             if let oldPath, let path, oldPath != path { remap(from: oldPath, to: path) }
@@ -197,19 +305,24 @@ final class ViewModel: ObservableObject {
             sessionName = name
         case .sessions(let items):
             sessions = items
-        case .ready:
+        case .ready(let presets):
             ready = true
+            backendDown = false
+            if let presets { applyPresets(presets) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a melody and press Generate melodies."
         case .log(let text):
-            if text.contains("Following your direction") || text.contains("No direction recognised") {
-                directionNote = text.trimmingCharacters(in: .whitespaces)
-            }
+            // direction.describe() in the backend starts its one-line report with one of these
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            if Self.directionPrefixes.contains(where: { trimmed.hasPrefix($0) }) { directionNote = trimmed }
             log += text + "\n"
             status = text.trimmingCharacters(in: .whitespaces)
         case .error(let text):
             busy = false
-            if text.hasPrefix("Python backend exited") { ready = false }
+            pdfBusy = false      // whatever was running is over: don't leave the buttons locked
+            pdfJob = nil
+            sheetLoading = []
+            if text.hasPrefix("Python backend exited") { ready = false; backendDown = true }
             status = text
             log += "ERROR: \(text)\n"
         case .candidate(let c):
@@ -229,6 +342,7 @@ final class ViewModel: ObservableObject {
             sheetErrors[midi] = text
             if pdfBusy, pdfJob?.midi == midi {
                 pdfBusy = false
+                pdfJob = nil
                 status = "PDF export failed: \(text)"
             }
         case .melodiesDone:
@@ -273,8 +387,11 @@ final class ViewModel: ObservableObject {
 
     /// A rename moves the session folder, so every file URL we hold has to move with it.
     private func remap(from old: URL, to new: URL) {
+        // match whole path components, so renaming "x" doesn't also move a sibling folder called "x-2"
         func moved(_ u: URL) -> URL {
-            u.path.hasPrefix(old.path) ? URL(fileURLWithPath: new.path + u.path.dropFirst(old.path.count)) : u
+            let o = old.standardizedFileURL.path
+            guard u.path == o || u.path.hasPrefix(o + "/") else { return u }
+            return URL(fileURLWithPath: new.path + u.path.dropFirst(o.count))
         }
         stop()
         candidates = candidates.map {
@@ -314,7 +431,7 @@ final class ViewModel: ObservableObject {
     /// session will be created with; afterwards it renames the folder.
     func renameSession() {
         let name = sessionName.trimmingCharacters(in: .whitespaces)
-        guard ready, !name.isEmpty else { return }
+        guard ready, !busy, !name.isEmpty else { return }
         send(["cmd": "session_rename", "name": name])
     }
 
@@ -349,7 +466,8 @@ final class ViewModel: ObservableObject {
             "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing, "shape": shape,
             "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm, "melody_engine": engine,
-            "count": Int(optionCount), "size": size, "session_name": sessionName,
+            "count": Int(optionCount), "size": size, "session_name": sessionName, "form": Int(form),
+            "knobs": knobValues,
         ])
     }
 
@@ -503,6 +621,7 @@ final class ViewModel: ObservableObject {
                 status = "PDF export failed: \(error.localizedDescription)"
             }
             pdfBusy = false
+            pdfJob = nil
             self.exporter = nil
         }
     }

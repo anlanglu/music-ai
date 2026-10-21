@@ -10,6 +10,8 @@ import math
 import mido
 
 from playable import fold_pitch, limits
+from plan import DEG_MAJOR as _MAJOR, DEG_MINOR as _MINOR
+from plan import chord_triple
 
 STYLES = ["block", "arpeggio", "alberti", "oompah", "sustained", "bassline", "walking", "pulse", "double"]
 STYLE_LABELS = {
@@ -19,8 +21,6 @@ STYLE_LABELS = {
 }
 MIX = ["block", "arpeggio", "alberti", "oompah", "sustained"]   # what "mix" cycles through
 LEFT_HAND = set(range(0, 9)) | set(range(16, 21))                # keyboards: tuck under the melody like a left hand
-_MAJOR = [0, 2, 4, 5, 7, 9, 11]
-_MINOR = [0, 2, 3, 5, 7, 8, 10]
 
 
 def piece_notes(path):
@@ -60,10 +60,19 @@ def _chords(tonic, mode):
     return out
 
 
-def choose_chords(notes, key, seg_beats, total_beats):
+def choose_chords(notes, key, seg_beats, total_beats, plan_chords=None, bar_beats=4.0):
     """One chord per segment: melody fit + a prior for common chords + a preference for good root motion, solved
-    with a small Viterbi search; the last segment is forced to the tonic and the one before leans to the dominant."""
+    with a small Viterbi search; the last segment is forced to the tonic and the one before leans to the dominant.
+    `plan_chords` (scale degrees, one per bar) overrides the search, so the accompaniment can follow the melody's
+    own harmony."""
     tonic, mode = key
+    if plan_chords:
+        n_seg = max(1, math.ceil(total_beats / seg_beats - 1e-9))
+        out = []
+        for k in range(n_seg):
+            bar = int((k * seg_beats) // bar_beats) if bar_beats else 0
+            out.append(chord_triple(tonic, mode, plan_chords[min(bar, len(plan_chords) - 1)]))
+        return out
     chords = _chords(tonic, mode)
     scale_pcs = {(tonic + s) % 12 for s in (_MAJOR if mode == "major" else _MINOR)}
     n_seg = max(1, math.ceil(total_beats / seg_beats - 1e-9))
@@ -161,12 +170,13 @@ def _double(notes, key, program, d, variant):
     return out
 
 
-def build(notes, tempo, sig, key, style, variant=0, program=0, d=None):
+def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None):
     """The accompaniment as [(pitch, start_beat, dur_beats)] for one instrument.
 
     Keyboards play it as a left hand tucked under the melody; any other instrument gets a window inside its own
     playable range and never more simultaneous notes than it can sound. `d` is a parsed direction (see
-    direction.py): density (step size), register (high / low part of the range), length ('short' = staccato)."""
+    direction.py): density (step size), register (high / low part of the range), length ('short' = staccato).
+    `chords` (scale degrees, one per bar) makes the part follow the melody's own harmony."""
     d = d or {}
     if style == "double":
         return _double(notes, key, program, d, variant)
@@ -185,7 +195,7 @@ def build(notes, tempo, sig, key, style, variant=0, program=0, d=None):
     wlo = int(lo + max(0, hi - lo - width) * frac)
     total = max((st + du for _, st, du, _ in notes), default=bar)
     total = math.ceil(total / bar - 1e-9) * bar
-    chords = choose_chords(notes, key, seg, total)
+    chords = choose_chords(notes, key, seg, total, plan_chords=chords, bar_beats=bar)
     out = []
     for k, chord in enumerate(chords):
         s0, s1 = k * seg, min((k + 1) * seg, total)
@@ -254,7 +264,7 @@ def style_order(sig):
     return ["arpeggio", "alberti", "block", "oompah", "sustained"]
 
 
-def option(notes, tempo, sig, key, style, k, program=0, d=None):
+def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None):
     """Option number k (1-based). style='mix' cycles through the styles; otherwise the same style gets a different
     voicing for each option. Returns (label, [(pitch, start_beat, dur_beats)])."""
     if style == "mix":
@@ -268,6 +278,6 @@ def option(notes, tempo, sig, key, style, k, program=0, d=None):
                  -4: "a third below", -8: "a sixth below", -9: "a sixth below", 7: "a fifth above", 5: "a fourth above"}
         iv = ([ivs[0]] + [x for x in (-12, 12, -24) if x != ivs[0]])[variant % 4]
         label = "Doubling " + names.get(iv, f"{iv:+d} semitones")
-        return label, build(notes, tempo, sig, key, chosen, variant, program, d)
+        return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords)
     label = STYLE_LABELS[chosen] + (f" (voicing {variant + 1})" if variant else "")
-    return label, build(notes, tempo, sig, key, chosen, variant, program, d)
+    return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords)

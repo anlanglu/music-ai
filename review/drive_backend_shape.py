@@ -12,10 +12,12 @@ def until(stops):
 until({'ready'})
 for engine in ('theory','hybrid'):
     for shape in (0,2):
-        send({'cmd':'melodies','prompt':'a hopeful tune in G major','bars':8,'program':73,'size':'small','sig':'4/4','complexity':3,'llm':'7B','count':4,'engine':engine,'bpm':96,'resolve':True,'phrasing':1,'shape':shape,'key':[7,'major']})
+        send({'cmd':'melodies','prompt':'a hopeful tune in G major','bars':8,'program':73,'size':'small','sig':'4/4','complexity':3,'llm':'7B','count':4,'melody_engine':engine,'bpm':96,'resolve':True,'phrasing':1,'shape':shape,'seed':1,'key':[7,'major']})
         evs=until({'melodies_done','error'})
         err=[e for e in evs if e['type']=='error']
         if err: print(engine,shape,'ERROR',err[0]); continue
+        logs=' '.join(e.get('text','') for e in evs if e['type']=='log')
+        assert (('form ' in logs) == (engine == 'theory')), f'engine {engine!r} was not the one that ran'
         c=[e for e in evs if e['type']=='candidate']
         mel=[[(n[1],n[2],n[3]-n[2]) for n in e['notes']] for e in c]
         print(variety.line(f'{engine} shape={shape} (via backend)', variety.mean_stats(mel)), len(c))

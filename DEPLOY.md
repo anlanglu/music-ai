@@ -79,6 +79,13 @@ Check it:
 
 It should print `mps True`. If it prints `mps False`, generation falls back to the CPU and will be many times slower.
 
+### Run the tests (optional, no models needed)
+
+```bash
+uv pip install --python .venv/bin/python -r requirements-dev.txt
+make test            # about 3 seconds; `make test-full` also sweeps about 140,000 composer settings
+```
+
 ## 4. Download the models once (optional but recommended)
 
 ```bash
@@ -136,6 +143,18 @@ This uses the theory composer, which needs no model download, and writes a MIDI 
 session folder afterwards. The JSON-lines backend can be tried directly with `.venv/bin/python -u backend.py`
 (it prints `{"type": "ready"}`).
 
+### The command-line options that matter
+
+| Option | What it does |
+|---|---|
+| `--melody-engine hybrid\|llm\|theory` | which composer writes the melody |
+| `--form 0..3` | how much of a written plan the melody follows: 0 free, 1 harmony, 2 cadences, 3 the whole plan (the **Form** slider in the app) |
+| `--shape 0..2` | melodic shape: stepwise, balanced, angular |
+| `--phrasing 0..2` | rests between ideas and phrases: flowing, balanced, spacious |
+| `--key "D minor"` | force a key instead of guessing one from the prompt |
+| `--seed N` | make the run repeatable (the same seed gives the same music) |
+| `--melody-only` | stop after the melody, before the accompaniment |
+
 ## 7. Updating, moving, and distributing
 
 - **Update Python code:** replace the files, restart the app.
@@ -156,5 +175,6 @@ session folder afterwards. The JSON-lines backend can be tried directly with `.v
 | Very slow generation | `torch.backends.mps.is_available()` is false, so it is running on the CPU. Check macOS version and the torch install. |
 | A model "downloads" every time | `HF_HOME`/cache path differs between the shell where you pre-fetched and the app's environment. Use the default cache location. |
 | "App is damaged" / cannot be opened | Quarantine flag after copying: `xattr -dr com.apple.quarantine Composer.app`. |
+| "Python backend exited" in the app | The message includes the last lines of the process's error output; the full log is `~/Library/Logs/Composer/backend.log`. Press **Restart backend** (loaded models are lost, files already written are safe). The same button appears if a request shows no sign of life for 4 minutes. |
 | No sound in the app | Playback uses macOS's built-in `gs_instruments.dls`; check output device and system volume. MIDI files themselves open in Logic or any DAW. |
 | Sheet music fails | `music21` or `verovio` missing from the environment; reinstall step 3. The log shows the error. |
