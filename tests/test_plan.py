@@ -338,3 +338,13 @@ def test_flavor_brings_in_the_characteristic_note():
     assert all({p % 12 for p, _, _ in ns} <= {2, 4, 5, 7, 9, 11, 0} for ns in (some, more)), "still in the mode"
     assert some[0] == notes[0] and some[-1] == notes[-1], "the first and last notes stay"
     assert plan.flavor_notes(notes, (2, "major"), 10) == notes
+
+
+def test_a_mode_named_in_the_prompt_is_picked_up():
+    import text2music as t
+    assert t.parse_key("a C major scale in lydian mode") == (0, "major"), "no second note: key says major..."
+    assert t.parse_mode("a C major scale in lydian mode") == "lydian", "...but the mode is found"
+    assert t.parse_mode("a major scale in lydian mode") == "lydian" and t.parse_mode("a tune in Dorian") == "dorian"
+    assert t.parse_mode("a sad slow tune") is None and t.parse_mode("an aeolian tune") == "minor"
+    assert t.parse_key("play a C major scale in C lydian") == (0, "lydian"), "the modal name wins over major"
+    assert t.parse_key("D dorian, not D minor") == (2, "dorian")

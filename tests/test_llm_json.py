@@ -139,3 +139,19 @@ def test_a_direction_leads_the_prompt_and_is_spread_over_the_parts(monkeypatch):
     seen.clear()
     t.compose("a bright tune", 4, "4/4", 3, "7B", lambda s: None, 100, (0, "major"))
     assert seen[0][0].startswith("a bright tune") and seen[0][1].get("climax") is True
+
+
+def test_a_prompt_that_names_a_mode_but_no_note_sets_the_mode(monkeypatch):
+    seen = []
+
+    def fake(*a, **k):
+        seen.append(a[0])
+        return 100, [(60 + i % 4, i, 1.0) for i in range(16)], "", "", ""
+
+    monkeypatch.setattr(t, "llm_melody", fake)
+    monkeypatch.setattr(t, "pick_key", lambda prompt, llm, log: (7, "major"))      # the LLM picks G major
+    monkeypatch.setattr(t, "explain_prompt", lambda *a, **k: None)
+    got = list(t.melody_candidates("a bright scale in lydian mode", 4, "4/4", 3, "7B", 73, 1, lambda s: None))
+    assert got[0]["key"] == (7, "lydian"), "G, from the LLM, in the mode the prompt asked for"
+    got = list(t.melody_candidates("a bright scale in lydian mode", 4, "4/4", 3, "7B", 73, 1, lambda s: None, mode="dorian"))
+    assert got[0]["key"] == (7, "dorian"), "the picker wins over the prompt"

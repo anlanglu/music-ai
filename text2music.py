@@ -389,8 +389,10 @@ _PC = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
 
 
 def parse_key(prompt):
-    """Tonic pitch class (and mode) named in a prompt like 'a sad tune in D minor' or 'Bb major', else None.
-    A lone lowercase 'a' is the article, not the note, so A must be capitalised."""
+    """Tonic pitch class (and mode) named in a prompt like 'a sad tune in D minor', 'Bb major' or 'F# lydian', else None.
+    A lone lowercase 'a' is the article, not the note, so A must be capitalised. When a prompt names more than one
+    ('C major scale in C lydian'), a modal one (dorian, lydian...) wins over major or minor, as the more specific."""
+    found = []
     for m in re.finditer(r"\b([A-Ga-g])\s?(#|sharp|♯|b|flat|♭)?[ -]?(major|minor|maj|min|ionian|aeolian|dorian|phrygian|lydian|mixolydian)\b",
                          prompt or "", re.I):
         letter, acc, mode = m.groups()
@@ -402,8 +404,18 @@ def parse_key(prompt):
         elif acc and acc.lower() in ("b", "flat", "♭"):
             tonic -= 1
         mode = mode.lower()
-        return tonic % 12, plan.MODE_ALIASES.get(mode, mode)
-    return None
+        found.append((tonic % 12, plan.MODE_ALIASES.get(mode, mode)))
+    return next((k for k in found if plan.is_modal(k[1])), found[0] if found else None)
+
+
+def parse_mode(prompt):
+    """A mode named in a prompt with or without a note ('in lydian mode', 'a dorian tune'), else None. Used to override
+    the mode of whatever key the prompt or the app gave, and to set the mode when no note is named."""
+    m = re.search(r"\b(dorian|phrygian|lydian|mixolydian|ionian|aeolian)\b", prompt or "", re.I)
+    if not m:
+        return None
+    name = m.group(1).lower()
+    return plan.MODE_ALIASES.get(name, name)
 
 
 PC_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
@@ -873,7 +885,8 @@ def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=No
     explain_prompt(prompt, key, bpm or 90, bars, level, llm, log)
     if not enforce:
         enforce = pick_key(prompt, llm, log)
-    if mode and mode in plan.MODES and enforce[1] != mode:
+    mode = mode if mode in plan.MODES else parse_mode(prompt)         # the picker wins, then a mode named in the prompt
+    if mode and enforce[1] != mode:
         enforce = (enforce[0], mode)
         log(f"  ▸ Mode: {key_label(enforce)}.")
     if theplan is None and plan.from_sliders(sl)["form"] > 0:
