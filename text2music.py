@@ -591,7 +591,7 @@ def retime(path, tempo, sig):
     out.save(str(path))
 
 
-def _short(text, n=260):
+def _short(text, n=900):
     text = " ".join(str(text).split())
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
