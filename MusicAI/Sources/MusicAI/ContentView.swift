@@ -271,7 +271,7 @@ struct ContentView: View {
             llmPicker
             characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
                               harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider,
-                              phrasing: $vm.phrasing, resolve: $vm.resolveEnding, what: "the melody")
+                              phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
             optionsRow($vm.optionCount)
 
             Button(action: vm.generateMelodies) {
@@ -310,7 +310,7 @@ struct ContentView: View {
             if vm.expandEngine == "llm" { llmPicker }
             characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
                               harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme,
-                              phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, what: "the new bars")
+                              phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
             optionsRow($vm.expandCount)
 
             HStack {
@@ -383,21 +383,21 @@ struct ContentView: View {
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
     private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
                                    harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>,
-                                   phrasing: Binding<Int>, resolve: Binding<Bool>, what: String) -> some View {
+                                   phrasing: Binding<Int>, resolve: Binding<Bool>, auto: Binding<Set<String>>, what: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Divider()
             Text("Character of \(what)").font(.callout)
-            knobRow("Smooth ↔ Jumpy", shape, 0...10, readout: shapeWord(shape.wrappedValue),
+            knobRow("Smooth ↔ Jumpy", shape, 0...10, auto: autoBinding(auto, "shape"), readout: shapeWord(shape.wrappedValue),
                     help: "How \(what) moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
-            knobRow("Avoid scale runs", runs, 0...10,
+            knobRow("Avoid scale runs", runs, 0...10, auto: autoBinding(auto, "runs"),
                     help: "How much \(what) is kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn. Zero: runs are fine. Independent of Smooth ↔ Jumpy, so a smooth tune can still avoid runs.")
-            knobRow("Steady pulse", pulse, 0...10,
+            knobRow("Steady pulse", pulse, 0...10, auto: autoBinding(auto, "pulse"),
                     help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
-            knobRow("Fit the harmony", harmony, 0...10,
+            knobRow("Fit the harmony", harmony, 0...10, auto: autoBinding(auto, "harmony"),
                     help: "Every bar is given a chord underneath. High: \(what) mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
-            knobRow("Phrase endings", endings, 0...10,
+            knobRow("Phrase endings", endings, 0...10, auto: autoBinding(auto, "endings"),
                     help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
-            knobRow("Recurring theme", theme, 0...10,
+            knobRow("Recurring theme", theme, 0...10, auto: autoBinding(auto, "theme"),
                     help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
             Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: phrasing) {
@@ -412,15 +412,23 @@ struct ContentView: View {
         }
     }
 
-    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
+    private func autoBinding(_ set: Binding<Set<String>>, _ key: String) -> Binding<Bool> {
+        Binding(get: { set.wrappedValue.contains(key) },
+                set: { on in if on { set.wrappedValue.insert(key) } else { set.wrappedValue.remove(key) } })
+    }
+
+    /// A slider with an Auto switch: on Auto the slider is greyed and the LLM is given no instruction for it.
+    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, auto: Binding<Bool>,
                          readout: String? = nil, help: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(title); Spacer()
-                Text(readout ?? (value.wrappedValue == 0 ? "off" : value.wrappedValue.formatted(.number.precision(.fractionLength(1)))))
+                Text(auto.wrappedValue ? "Auto" : readout ?? (value.wrappedValue == 0 ? "off" : value.wrappedValue.formatted(.number.precision(.fractionLength(1)))))
                     .monospacedDigit().foregroundStyle(.secondary)
+                Toggle("Auto", isOn: auto).toggleStyle(.checkbox).controlSize(.small)
+                    .help("Auto: don't set this. The LLM decides from your description (the engine uses its usual setting).")
             }
-            Slider(value: value, in: range)
+            Slider(value: value, in: range).disabled(auto.wrappedValue)
         }
         .help(help)
     }

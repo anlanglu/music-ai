@@ -118,9 +118,12 @@ final class ViewModel: ObservableObject {
     @Published var endingsSlider = 3.33 // phrases end on a stopping note
     @Published var themeSlider = 0.0    // the opening idea returns in each phrase
     @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
-    var sliderValues: [String: Double] {
-        ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider, "endings": endingsSlider, "theme": themeSlider,
-         "runs": runsSlider]
+    /// Sliders left on Auto are sent as "auto": the backend gives the LLM no instruction for them.
+    @Published var autoSliders: Set<String> = []
+    var sliderValues: [String: Any] {
+        let v: [String: Double] = ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider,
+                                   "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider]
+        return v.reduce(into: [String: Any]()) { $0[$1.key] = autoSliders.contains($1.key) ? "auto" : $1.value }
     }
     private func applySliderDefaults(_ d: [String: Double]) {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
@@ -133,7 +136,7 @@ final class ViewModel: ObservableObject {
         expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
         expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider
         expandComplexity = complexity; expandCount = optionCount
-        expandPhrasing = phrasing; expandResolve = resolveEnding
+        expandPhrasing = phrasing; expandResolve = resolveEnding; expandAuto = autoSliders
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
@@ -156,9 +159,11 @@ final class ViewModel: ObservableObject {
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     private var lastExpandBars = 4.0
-    var expandSliderValues: [String: Double] {
-        ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony, "endings": expandEndings, "theme": expandTheme,
-         "runs": expandRuns]
+    @Published var expandAuto: Set<String> = []
+    var expandSliderValues: [String: Any] {
+        let v: [String: Double] = ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony,
+                                   "endings": expandEndings, "theme": expandTheme, "runs": expandRuns]
+        return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
     }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.
     var canExpand: Bool { ready && !busy && selected != nil && orchestration == nil && partsAdded.isEmpty && partOptions.isEmpty }

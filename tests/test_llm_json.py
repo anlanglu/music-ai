@@ -66,7 +66,7 @@ def test_compose_keeps_the_enforced_key_as_a_pair_across_phrases(monkeypatch):
     """Regression: the key the LLM declared used to overwrite the enforced (tonic, mode) pair, so phrase 2 crashed."""
     seen = []
 
-    def fake(prompt, bars, sig, level, llm, prev, phrase, tempo, key, chords=None, guidance="", ending=True):
+    def fake(prompt, bars, sig, level, llm, prev, phrase, tempo, key, chords=None, guidance="", ending=True, climax=True):
         seen.append(key)
         return 90, [(60 + i, i, 1) for i in range(bars * 4)], "plan", "C minor", "reading"
 
@@ -113,3 +113,29 @@ def test_the_runs_slider_is_said_to_the_llm_and_zero_says_nothing():
     assert "three notes" in t.guidance_text({"runs": 10})
     assert "Scale runs" not in t.guidance_text({"runs": 0})
     assert "Scale runs" in t.guidance_text({"shape": 0, "runs": 10}), "a smooth tune can still avoid runs"
+
+
+def test_an_automatic_slider_gets_no_instruction():
+    assert "Scale runs" in t.guidance_text({"runs": 10})
+    assert "Scale runs" not in t.guidance_text({"runs": "auto"})
+    assert "angular" not in t.guidance_text({"shape": "auto"}) and "mostly by step" not in t.guidance_text({"shape": "auto"})
+    s = t.plan.clean_sliders({"shape": "auto", "pulse": 7})
+    assert s["auto"] == ["shape"] and s["shape"] == t.plan.SLIDER_DEFAULTS["shape"], "the sampler still gets a number"
+    assert t.plan.clean_sliders(s)["auto"] == ["shape"], "cleaning twice keeps it"
+
+
+def test_a_direction_leads_the_prompt_and_is_spread_over_the_parts(monkeypatch):
+    seen = []
+
+    def fake(ask, n_bars, *args, **kw):
+        seen.append((ask, kw))
+        return 100, [(60 + i % 5, i, 1.0) for i in range(int(n_bars * 4))], "", "", ""
+
+    monkeypatch.setattr(t, "llm_melody", fake)
+    t.compose("a bright tune", 8, "4/4", 3, "7B", lambda s: None, 100, (0, "major"), extra="build to a climax")
+    assert seen[0][0].startswith("INSTRUCTION FROM THE USER") and "build to a climax" in seen[0][0]
+    assert "part 1 of 2" in seen[0][0] and "part 2 of 2" in seen[1][0]
+    assert all(kw.get("climax") is False for _, kw in seen), "the built-in 'climax' line must not fight the direction"
+    seen.clear()
+    t.compose("a bright tune", 4, "4/4", 3, "7B", lambda s: None, 100, (0, "major"))
+    assert seen[0][0].startswith("a bright tune") and seen[0][1].get("climax") is True

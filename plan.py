@@ -299,11 +299,19 @@ SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33
 
 
 def clean_sliders(sliders=None):
-    """The six slider positions, each clamped to 0..10; missing or None ones take their defaults."""
+    """The six slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
+    (or listed under the "auto" key, which is how a cleaned set remembers it) keeps its default number for the
+    sampler, and is named in s["auto"] so that the LLM is not given an instruction for it."""
     s = dict(SLIDER_DEFAULTS)
-    for name, v in (sliders or {}).items():
-        if name in s and v is not None:
-            s[name] = max(0.0, min(10.0, float(v)))
+    given = sliders or {}
+    auto = set(given.get("auto") or ())
+    for name, v in given.items():
+        if name in s:
+            if isinstance(v, str) and v.lower() == "auto":
+                auto.add(name)
+            elif v is not None:
+                s[name] = max(0.0, min(10.0, float(v)))
+    s["auto"] = sorted(auto & set(SLIDER_DEFAULTS))
     return s
 
 

@@ -54,6 +54,24 @@ def read_melody(path):
     return notes, tempo, sig, program, total
 
 
+def _hybrid_reading(d):
+    """What Hybrid will do with a direction, and what it cannot: it steers only how busy, how high or low, how much on the
+    beat and how adventurous the new bars are."""
+    words = {"density": {-2: "much sparser", -1: "sparser", 1: "busier", 2: "much busier"},
+             "register": {-2: "much lower", -1: "lower", 1: "higher", 2: "much higher"},
+             "rhythm": {-2: "looser, off the beat", -1: "looser, off the beat", 1: "steadier, on the beat",
+                        2: "much steadier, on the beat"},
+             "adventurous": {-2: "safer", -1: "safer", 1: "more adventurous", 2: "more adventurous"}}
+    used = [words[k][d[k]] for k in words if d.get(k) in words[k]]
+    skipped = [name for name, on in (("a playing style", d.get("style")), ("note lengths", d.get("length")),
+                                     ("loudness", d.get("dynamics")), ("answering the melody", d.get("complementary")),
+                                     ("doubling", d.get("double_interval"))) if on]
+    out = ("Hybrid will make the new bars " + ", ".join(used) + ".") if used else "Hybrid found nothing in that to act on."
+    if skipped:
+        out += f" It cannot do {', '.join(skipped)}; choose LLM only for that."
+    return out
+
+
 def _direction_for_sampler(d, grid, q, top_p, lo, hi):
     """What a free-text direction can change in the Anticipation sampler: how busy the line is, how much it leans on the beat,
     where in the range it sits and how adventurous the sampling is. Returns the (top_p, lo, hi) to use."""
@@ -101,9 +119,12 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
     if direction.strip():
         import direction as dr
 
-        d = t.interpret_direction(direction, "melody", "", log)
-        if not d["empty"]:
-            log("      " + dr.describe(d))
+        if engine == "llm":
+            log(f"  ▸ Your direction goes to the LLM as its first instruction: \"{direction.strip()}\".")
+        else:
+            d = t.interpret_direction(direction, "melody", "", log)
+            if not d["empty"]:
+                log("  ▸ " + _hybrid_reading(d))
     log(f"  ▸ Expanding {old_bars} bars by {add_bars} bars to {old_bars + add_bars}, in {t.key_label(key)} "
         f"({'the LLM continues it' if engine == 'llm' else 'the Anticipation model continues it'}).")
 

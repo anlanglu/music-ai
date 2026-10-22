@@ -24,7 +24,7 @@ def fake_notes(bars, sig, key, rng, lo=55, hi=84):
 
 
 def fake_llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(1, 1), tempo=None, key=None,
-                    chords=None, guidance="", ending=True):
+                    chords=None, guidance="", ending=True, climax=True):
     rng = random.Random(hash((prompt, bars, phrase, len(before or []))) & 0xFFFF)
     return (tempo or 100), fake_notes(bars, sig, key, rng), "a rising idea that peaks mid-way", "C major", "a bright, simple tune"
 

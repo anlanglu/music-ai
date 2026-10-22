@@ -275,7 +275,7 @@ def _get_ant(size):
 
 
 def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(1, 1), tempo=None, key=None, chords=None,
-               guidance="", ending=True):
+               guidance="", ending=True, climax=True):
     from mlx_lm import generate
     from mlx_lm.sample_utils import make_sampler
 
@@ -306,7 +306,8 @@ def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(
                  f"develop or vary its motif (sequence, inversion, new rhythm); do not copy it.")
         user += f" Use tempo {tempo}." if tempo else ""
     if phrase[0] == phrase[1] and phrase[1] > 1:
-        user += " This is the final phrase: build to the climax if not yet reached, then resolve and end on a stable note."
+        user += (" This is the final phrase: build to the climax if not yet reached, then resolve and end on a stable note."
+                 if climax else " This is the final phrase: end on a stable note.")
     elif phrase[0] == 1 and phrase[1] > 1:
         user += " This is the opening phrase: state the main motif clearly."
     msgs = [
@@ -605,25 +606,32 @@ def guidance_text(sliders, motif=None):
     """The character sliders (0..10), said to the LLM in words. A language model cannot be told 'smoothness 3'; it can
     be told what the line should do."""
     s = plan.clean_sliders(sliders)
+    auto = set(s["auto"])             # an automatic slider gets no instruction: the LLM decides, from the prompt
     out = []
-    if s["shape"] < 2.5:
+    if "shape" in auto:
+        pass
+    elif s["shape"] < 2.5:
         out.append("Shape: move mostly by step (seconds, sometimes thirds), with no leap larger than a fourth; smooth and singable.")
     elif s["shape"] > 7.5:
         out.append("Shape: angular. Use frequent leaps of a fourth or more, often answered by a step the other way.")
     else:
         out.append("Shape: a mix of steps and leaps.")
-    if s["runs"] > 7.5:
+    if "runs" in auto:
+        pass
+    elif s["runs"] > 7.5:
         out.append("Scale runs: never play more than three notes in a row in one direction along the scale; break up any "
                    "run with a leap or a turn.")
     elif s["runs"] > 5.5:
         out.append("Scale runs: never play more than four notes in a row in one direction along the scale.")
     elif s["runs"] > 2.5:
         out.append("Scale runs: avoid long runs; no more than five notes in a row in one direction.")
-    if s["pulse"] < 2.5:
+    if "pulse" in auto:
+        pass
+    elif s["pulse"] < 2.5:
         out.append("Rhythm: loose and syncopated; start many notes off the beat and tie across the barline.")
     elif s["pulse"] > 7.5:
         out.append("Rhythm: square and regular; start almost every note on a beat.")
-    if s["theme"] > 0 and motif:
+    if "theme" not in auto and s["theme"] > 0 and motif:
         how = "nearly note for note" if s["theme"] > 6 else "recognisably but varied"
         out.append(f"Theme: begin each phrase with the piece's opening idea {json.dumps([[p, st, d] for p, st, d in motif])} "
                    f"(start_beat, duration_beats), moved to fit that phrase's chord, {how}.")
@@ -672,6 +680,11 @@ def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None
     n_chunks = -(-bars // chunk)
     all_notes, plans, tempo, prev, declared = [], [], bpm, before, ""
     sl = plan.clean_sliders(sliders) if sliders is not None else None
+    sparse = False
+    if extra:
+        import direction as dr
+
+        sparse = dr.parse(extra)["density"] < 0       # "sparse", "spacious"...: don't retry for lack of notes
     off = 1 if before else 0
     chord_names = None
     if harmony and (sl is None or sl["harmony"] > 0):
@@ -679,18 +692,24 @@ def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None
         chord_names = [plan.chord_name(tonic, mode, deg) for deg in harmony["chords"]]
     for c in range(n_chunks):
         n_bars = min(chunk, bars - c * chunk)
-        target = COMPLEXITY[level][1] * n_bars * bb
+        target = COMPLEXITY[level][1] * n_bars * bb * (0.5 if sparse else 1)
         here = chord_names[c * chunk: c * chunk + n_bars] if chord_names else None
         best = None
         for attempt in range(1, 4):
             try:
                 if sl is not None and sl["theme"] > 0 and motif is None and all_notes:
                     motif = [n for n in all_notes if n[1] < bb]      # the first bar written is the piece's idea
-                guide = "\n".join(x for x in (guidance_text(sl, motif) if sl is not None else "",
-                                              f"Direction for this section: {extra}" if extra else "") if x)
+                guide = guidance_text(sl, motif) if sl is not None else ""
+                ask = prompt
+                if extra:     # the user's instruction comes first, and is spread over the parts of the addition
+                    ask = (f"INSTRUCTION FROM THE USER for these new bars, which comes before everything else, including "
+                           f"the original description: {extra}\nThe new bars are written in {n_chunks} part"
+                           f"{'s' if n_chunks > 1 else ''}; this is part {c + 1} of {n_chunks}. Spread what the instruction "
+                           f"asks for over the parts (a build or an arc runs across them, not inside each one).\n"
+                           f"(The piece was originally described as: {prompt}. Follow the instruction where they differ.)")
                 t, raw, idea, said_key, reading = llm_melody(
-                    prompt, n_bars, sig, level, llm, prev, (c + 1 + off, n_chunks + off + (0 if final else 1)), tempo, key,
-                    here, guide, ending=sl is None or sl["endings"] > 0)
+                    ask, n_bars, sig, level, llm, prev, (c + 1 + off, n_chunks + off + (0 if final else 1)), tempo, key,
+                    here, guide, ending=sl is None or sl["endings"] > 0, climax=not extra)
             except ValueError as e:   # unusable reply: ask again instead of failing the whole melody
                 log(f"      phrase {c + 1}/{n_chunks} attempt {attempt}: unusable reply ({str(e).splitlines()[0][:50]}), retrying")
                 continue
