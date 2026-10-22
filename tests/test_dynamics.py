@@ -99,3 +99,14 @@ def test_each_instrument_has_its_own_volume(tmp_path):
         pass
     else:
         raise AssertionError("a channel that is not in the file is an error")
+
+
+def test_a_file_with_system_exclusive_messages_still_has_a_mix(tmp_path):
+    mel = tmp_path / "mel.mid"
+    t.write_melody_midi(mel, 100, NOTES, 73, "4/4", 12)
+    mid = mido.MidiFile(str(mel))
+    mid.tracks[1].insert(0, mido.Message("sysex", data=[0x7E, 0x7F, 0x09, 0x01], time=0))      # no channel
+    mid.save(str(mel))
+    assert mixer.read_mix(mel)[0]["name"] == "Flute"
+    mixer.set_volume(mel, 0, 70)
+    assert mixer.read_mix(mel)[0]["volume"] == 70

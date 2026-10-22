@@ -16,7 +16,7 @@ def read_mix(path):
     chans = {}
     for trk in mid.tracks:
         for m in trk:
-            if m.is_meta:
+            if m.is_meta or not hasattr(m, "channel"):           # meta and system-exclusive messages belong to no channel
                 continue
             c = chans.setdefault(m.channel, {"channel": m.channel, "program": None, "volume": DEFAULT_VOLUME, "notes": 0})
             if m.type == "program_change" and c["program"] is None:
@@ -41,7 +41,7 @@ def set_volume(path, channel, volume):
     mid = mido.MidiFile(str(path))
     done = False
     for trk in mid.tracks:
-        if not any((not m.is_meta) and m.channel == channel for m in trk):
+        if not any(hasattr(m, "channel") and m.channel == channel for m in trk):
             continue
         # deleting a message must not shift the ones after it: its delta time moves onto the next message
         rebuilt, carry = mido.MidiTrack(), 0
