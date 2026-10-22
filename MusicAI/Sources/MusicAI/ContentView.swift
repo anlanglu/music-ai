@@ -282,12 +282,12 @@ struct ContentView: View {
             }
             Slider(value: $vm.complexity, in: 1...5, step: 1)
 
-            Picker("Anticipation model", selection: $vm.size) {
+            Picker("Music model", selection: $vm.size) {
                 ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
             }
             .pickerStyle(.segmented)
             .disabled(vm.engine != "hybrid")
-            .help("The Anticipatory Music Transformer used by the Hybrid engine, and later for the accompaniment. Larger is slower and usually better.")
+            .help("The neural network that continues the melody (Hybrid) and writes the accompaniment parts. Small is quick; large is slower and usually better. It has no effect on LLM-only or Theory melodies.")
             Picker("Melody LLM", selection: $vm.llm) {
                 Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
                 Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
@@ -297,17 +297,17 @@ struct ContentView: View {
 
             Divider()
             Text("Character of the melody").font(.callout)
-            knobRow("Melodic shape", $vm.shapeAmount, 0...10, readout: shapeWord(vm.shapeAmount),
-                    help: "Stepwise: the line walks up and down the scale. Angular: it leaps and turns. This one slider sets how much the melody avoids scale runs, repeated notes and a few pitches, and how much it likes leaps. Applies to Hybrid and Theory composer.")
-            knobRow("Sit on the beat", $vm.knobBeat, 0...10,
-                    help: "How strongly note beginnings prefer the beat, and the barline twice as much. Hybrid engine.")
-            knobRow("Follow the chords", $vm.knobChord, 0...10,
-                    help: "How strongly the melody prefers the notes of the chord under each bar. Zero ignores the harmony; the accompaniment then follows the key alone. Hybrid engine.")
-            knobRow("Land on the cadence", $vm.knobCadence, 0...10,
-                    help: "How strongly each phrase is pulled towards the note it ends on, so it arrives somewhere. Hybrid engine.")
-            knobRow("Bring the idea back", $vm.knobMotif, 0...10,
-                    help: "How strongly the opening idea returns at the start of every later phrase, moved onto that phrase's chord. Zero: it never does. Hybrid engine.")
-            Text("Rests between ideas").font(.callout)
+            knobRow("Smooth ↔ Jumpy", $vm.shapeAmount, 0...10, readout: shapeWord(vm.shapeAmount),
+                    help: "How the tune moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
+            knobRow("Steady pulse", $vm.knobBeat, 0...10,
+                    help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
+            knobRow("Fit the harmony", $vm.knobChord, 0...10,
+                    help: "Every bar is given a chord underneath. High: the melody mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
+            knobRow("Phrase endings", $vm.knobCadence, 0...10,
+                    help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
+            knobRow("Recurring theme", $vm.knobMotif, 0...10,
+                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
+            Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: $vm.phrasing) {
                 Text("Flowing").tag(0)
                 Text("Balanced").tag(1)
@@ -341,7 +341,7 @@ struct ContentView: View {
     }
 
     private func shapeWord(_ v: Double) -> String {
-        v < 2.5 ? "Stepwise" : v < 7.5 ? "Balanced" : "Angular"
+        v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
     }
 
     /// Settings of the accompaniment generator, kept out of the way.

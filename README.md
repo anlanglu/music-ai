@@ -24,15 +24,15 @@ everything runs on your Mac, with no cloud service and no account.
 
 ## The character of the melody
 
-A melody with no shape behind it wanders. Five sliders in the Melody section put one there:
+A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody section put one there:
 
 | Slider | What it does |
 |---|---|
-| **Melodic shape** | Stepwise to Angular: how much the line avoids scale runs, repeats and a few pitches, and likes leaps (one slider that blends the old presets) |
-| **Sit on the beat** | how strongly note beginnings prefer the beat (and the barline twice as much) |
-| **Follow the chords** | every bar has a chord, and the melody prefers its notes |
-| **Land on the cadence** | every phrase is pulled towards the note it ends on, so it arrives somewhere |
-| **Bring the idea back** | the opening idea returns, moved onto each phrase's chord (off by default) |
+| **Smooth ↔ Jumpy** | how the tune moves: small steps along the scale, or bigger leaps and turns |
+| **Steady pulse** | how strongly notes start on the beat: loose and improvised, or square and regular |
+| **Fit the harmony** | every bar has a chord underneath, and the melody prefers its notes |
+| **Phrase endings** | each phrase finishes on a note that sounds like a stopping place, like a full stop |
+| **Recurring theme** | the opening idea comes back at the start of each phrase, moved onto its chord (off by default) |
 
 The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
