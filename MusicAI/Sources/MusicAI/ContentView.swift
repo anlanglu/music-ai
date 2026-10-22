@@ -151,7 +151,10 @@ struct ContentView: View {
                 Text("Added instruments"); Spacer()
                 Text(vm.ensemble == 0 ? "Auto" : "\(Int(vm.ensemble))").monospacedDigit()
             }
+            .contentShape(Rectangle())
+            .help("How many instruments the accompaniment adds. Auto lets the music model choose.")
             Slider(value: $vm.ensemble, in: 0...15, step: 1)
+                .help("How many instruments the accompaniment adds. Auto (0) lets the music model choose.")
             Button(action: vm.addAccompaniment) {
                 HStack {
                     if vm.busy && vm.selected != nil { ProgressView().controlSize(.small) }
@@ -207,7 +210,9 @@ struct ContentView: View {
                 }
             }
             HStack { Text("Options"); Spacer(); Text("\(Int(vm.partOptionCount))").monospacedDigit() }
+                .contentShape(Rectangle()).help("How many versions of this instrument's part are written for you to choose from.")
             Slider(value: $vm.partOptionCount, in: 1...6, step: 1)
+                .help("How many versions of this instrument's part are written for you to choose from.")
             Button(action: vm.generatePartOptions) {
                 HStack {
                     if vm.busy { ProgressView().controlSize(.small) }
@@ -241,7 +246,7 @@ struct ContentView: View {
     private var melodyControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             describeBox("Describe the melody", text: $vm.prompt, height: 80)
-            barsRow("Bars", $vm.bars)
+            barsRow("Bars", $vm.bars, help: "How long the melody is, in bars (measures). At 4/4 and 80 bpm, 8 bars last about 24 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
@@ -302,7 +307,7 @@ struct ContentView: View {
             describeBox("What should the new bars do? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
                 .help("Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
-            barsRow("Bars to add", $vm.expandBars)
+            barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
 
             Picker("Written by", selection: $vm.expandEngine) {
                 Text("Hybrid: LLM + Anticipation").tag("hybrid")
@@ -352,27 +357,32 @@ struct ContentView: View {
         }
     }
 
-    private func barsRow(_ title: String, _ value: Binding<Double>) -> some View {
+    private func barsRow(_ title: String, _ value: Binding<Double>, help: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack { Text(title); Spacer(); Text("\(Int(value.wrappedValue))").monospacedDigit() }
-            Slider(value: value, in: 2...16, step: 1)
+                .contentShape(Rectangle()).help(help)
+            Slider(value: value, in: 2...16, step: 1).help(help)
         }
     }
 
     private func complexityRow(_ value: Binding<Double>) -> some View {
         VStack(alignment: .leading, spacing: 2) {
+            let help = "How busy and varied the notes are. Simple: mostly quarter and half notes, stepwise, singable. Varied: a mix of note lengths and some leaps. Virtuosic: many fast notes, wide leaps and rhythmic variety."
             HStack {
                 Text("Complexity"); Spacer()
                 Text(["Simple", "Easy", "Varied", "Rich", "Virtuosic"][Int(value.wrappedValue) - 1])
             }
-            Slider(value: value, in: 1...5, step: 1)
+            .contentShape(Rectangle()).help(help)
+            Slider(value: value, in: 1...5, step: 1).help(help)
         }
     }
 
     private func optionsRow(_ value: Binding<Double>) -> some View {
         VStack(alignment: .leading, spacing: 2) {
+            let help = "How many different versions are written for you to choose from. More options give more to pick from but take longer."
             HStack { Text("Options to choose from"); Spacer(); Text("\(Int(value.wrappedValue))").monospacedDigit() }
-            Slider(value: value, in: 1...8, step: 1)
+                .contentShape(Rectangle()).help(help)
+            Slider(value: value, in: 1...8, step: 1).help(help)
         }
     }
 
@@ -434,12 +444,14 @@ struct ContentView: View {
                 Text(title); Spacer()
                 Text(auto.wrappedValue ? "Auto" : readout ?? (value.wrappedValue == 0 ? "off" : "\(Int(value.wrappedValue))"))
                     .monospacedDigit().foregroundStyle(.secondary)
+                    .help(help)
                 Toggle("Auto", isOn: auto).toggleStyle(.checkbox).controlSize(.small)
                     .help("Auto: don't set this. The LLM decides from your description (the engine uses its usual setting).")
             }
-            Slider(value: value, in: range, step: 1).disabled(auto.wrappedValue)
+            .contentShape(Rectangle())
+            .help(help)                  // hovering the name (or anywhere on the label row) explains the slider
+            Slider(value: value, in: range, step: 1).disabled(auto.wrappedValue).help(help)
         }
-        .help(help)
     }
 
     private func shapeWord(_ v: Double) -> String {
