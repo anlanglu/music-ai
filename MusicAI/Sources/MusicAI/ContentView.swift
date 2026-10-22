@@ -297,15 +297,15 @@ struct ContentView: View {
 
             Divider()
             Text("Character of the melody").font(.callout)
-            knobRow("Melodic shape", $vm.shapeAmount, 0...2, readout: shapeWord(vm.shapeAmount),
+            knobRow("Melodic shape", $vm.shapeAmount, 0...10, readout: shapeWord(vm.shapeAmount),
                     help: "Stepwise: the line walks up and down the scale. Angular: it leaps and turns. This one slider sets how much the melody avoids scale runs, repeated notes and a few pitches, and how much it likes leaps. Applies to Hybrid and Theory composer.")
-            knobRow("Sit on the beat", $vm.knobBeat, 0...3,
+            knobRow("Sit on the beat", $vm.knobBeat, 0...10,
                     help: "How strongly note beginnings prefer the beat, and the barline twice as much. Hybrid engine.")
-            knobRow("Follow the chords", $vm.knobChord, 0...8,
+            knobRow("Follow the chords", $vm.knobChord, 0...10,
                     help: "How strongly the melody prefers the notes of the chord under each bar. Zero ignores the harmony; the accompaniment then follows the key alone. Hybrid engine.")
-            knobRow("Land on the cadence", $vm.knobCadence, 0...15,
+            knobRow("Land on the cadence", $vm.knobCadence, 0...10,
                     help: "How strongly each phrase is pulled towards the note it ends on, so it arrives somewhere. Hybrid engine.")
-            knobRow("Bring the idea back", $vm.knobMotif, 0...20,
+            knobRow("Bring the idea back", $vm.knobMotif, 0...10,
                     help: "How strongly the opening idea returns at the start of every later phrase, moved onto that phrase's chord. Zero: it never does. Hybrid engine.")
             Text("Rests between ideas").font(.callout)
             Picker("Phrasing", selection: $vm.phrasing) {
@@ -341,7 +341,7 @@ struct ContentView: View {
     }
 
     private func shapeWord(_ v: Double) -> String {
-        v < 0.5 ? "Stepwise" : v < 1.5 ? "Balanced" : "Angular"
+        v < 2.5 ? "Stepwise" : v < 7.5 ? "Balanced" : "Angular"
     }
 
     /// Settings of the accompaniment generator, kept out of the way.

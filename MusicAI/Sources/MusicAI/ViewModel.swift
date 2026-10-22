@@ -88,14 +88,15 @@ final class ViewModel: ObservableObject {
     @Published var bpmText = "80"
     @Published var keyChoice: KeyChoice?   // nil = Auto: use a key named in the prompt, else none
     @Published var resolveEnding = true
-    @Published var shapeAmount = 1.0   // 0 stepwise .. 1 balanced .. 2 angular: leaps and turns vs scale runs
+    @Published var shapeAmount = 5.0   // 0 stepwise .. 5 balanced .. 10 angular: leaps and turns vs scale runs
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
     // How strongly the melody follows the plan, each from 0 (not at all) to its maximum. All three at 0 is a free
     // melody. The defaults are what the app did before these were sliders: chords and cadences on, the idea off.
-    @Published var knobChord = 2.2      // prefers the notes of the chord of the bar it is in
-    @Published var knobCadence = 5.0    // is pulled towards the note each phrase cadences on
+    // Every slider runs 0...10; `backendScale` turns a slider position into the number the backend uses.
+    @Published var knobChord = 2.75     // prefers the notes of the chord of the bar it is in (backend 2.2)
+    @Published var knobCadence = 3.33   // is pulled towards the note each phrase cadences on (backend 5.0)
     @Published var knobMotif = 0.0      // is pulled back to the opening idea at the start of each phrase
-    @Published var knobBeat = 0.5       // note beginnings prefer the beat
+    @Published var knobBeat = 1.67      // note beginnings prefer the beat (backend 0.5)
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
     /// Which generator writes the melody: "hybrid" (LLM seed + Anticipation, the default), "llm", or "theory".
@@ -235,7 +236,7 @@ final class ViewModel: ObservableObject {
 
     /// The plan's strengths, as the backend is sent them. It works out from these how much of the plan is in use.
     var knobValues: [String: Double] {
-        ["chord": knobChord, "cadence": knobCadence, "motif": knobMotif, "beat": knobBeat]
+        ["chord": knobChord * 0.8, "cadence": knobCadence * 1.5, "motif": knobMotif * 2.0, "beat": knobBeat * 0.3]
     }
 
     private func handle(_ ev: BackendEvent) {
@@ -406,7 +407,7 @@ final class ViewModel: ObservableObject {
         status = "Composing \(Int(optionCount)) melody options…"
         send([
             "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
-            "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing, "shape_amount": shapeAmount,
+            "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing, "shape_amount": shapeAmount / 5,
             "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm, "melody_engine": engine,
             "count": Int(optionCount), "size": size, "session_name": sessionName,
             "knobs": knobValues,
