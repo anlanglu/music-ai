@@ -32,6 +32,15 @@ struct PartCandidate: Identifiable {
     let programs: [Int]
 }
 
+/// One instrument's volume (MIDI controller 7, 0...127) in a MIDI file.
+struct MixChannel: Identifiable {
+    let channel: Int
+    let name: String
+    var volume: Int
+    let notes: Int
+    var id: Int { channel }
+}
+
 /// A saved session folder.
 struct SessionInfo: Identifiable {
     let name: String
@@ -50,6 +59,7 @@ enum BackendEvent {
     case partCandidate(PartCandidate)
     case partsDone
     case partApproved(url: URL, notes: [Note], programs: [Int])
+    case mix(path: URL, channels: [MixChannel])
     case notation(midi: URL, html: URL, paged: Bool)
     case notationError(midi: URL, text: String)
     case session(name: String, path: URL?, oldPath: URL?)
@@ -206,6 +216,12 @@ final class Backend {
                             created: $0["created"] as? String ?? "", files: $0["files"] as? Int ?? 0)
             }
             return .sessions(items)
+        case "mix":
+            let chans = (obj["channels"] as? [[String: Any]] ?? []).map {
+                MixChannel(channel: $0["channel"] as? Int ?? 0, name: $0["name"] as? String ?? "",
+                           volume: $0["volume"] as? Int ?? 100, notes: $0["notes"] as? Int ?? 0)
+            }
+            return .mix(path: URL(fileURLWithPath: obj["path"] as? String ?? ""), channels: chans)
         case "notation":
             return .notation(midi: URL(fileURLWithPath: obj["midi"] as? String ?? ""),
                              html: URL(fileURLWithPath: obj["html"] as? String ?? ""),

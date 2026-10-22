@@ -74,7 +74,7 @@ def test_unknown_session_path_is_an_error_not_a_crash(backend, tmp_path):
 
 def test_the_ready_event_carries_where_the_sliders_start(backend):
     sliders = backend.ready["sliders"]
-    assert set(sliders) == {"shape", "pulse", "harmony", "endings", "theme", "runs", "flavor", "strict"}
+    assert set(sliders) == {"shape", "pulse", "harmony", "endings", "theme", "runs", "flavor", "strict", "dynamics"}
     assert all(0 <= v <= 10 for v in sliders.values())
 
 

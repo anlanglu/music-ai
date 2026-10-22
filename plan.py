@@ -339,11 +339,11 @@ def shape_amount_knobs(amount):
 # What the app's sliders (and the command line's) send: all run 0..10, and this is the one place that turns them into
 # the numbers the sampler uses. The defaults are what the app did before they were sliders.
 SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 2.0, "harmony": 3.0, "endings": 3.0, "theme": 0.0, "runs": 5.0, "flavor": 5.0,
-                   "strict": 10.0}
+                   "strict": 10.0, "dynamics": 5.0}
 
 
 def clean_sliders(sliders=None):
-    """The eight slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
+    """The nine slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
     (or listed under the "auto" key, which is how a cleaned set remembers it) keeps its default number for the
     sampler, and is named in s["auto"] so that the LLM is not given an instruction for it."""
     s = dict(SLIDER_DEFAULTS)

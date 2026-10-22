@@ -7,7 +7,8 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
   {"cmd":"notation", "path":..., "title":..., "paged":false}
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
-  {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size}
+  {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
+  {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
@@ -32,6 +33,7 @@ from text2music import (  # noqa: E402
     make_melodies, make_music, midi_info, new_session, open_session, rename_session, reset_session, seed_everything,
     session_info,
 )
+import mixer  # noqa: E402
 import plan  # noqa: E402
 from expand import expand_melody  # noqa: E402
 
@@ -189,6 +191,7 @@ def handle(r):
             r["source_midi"], int(r["program"]), int(r.get("count", 3)), r.get("size", "small"),
             bool(r.get("playable", True)), log=log, on_candidate=part_event,
             in_key=bool(r.get("in_key", True)), direction=r.get("direction", ""),
+            dynamics=float(r.get("dynamics", 5)),
             texture_style=(r.get("style") or "mix") if r.get("texture") else None,
         )
         send(type="parts_done")
@@ -196,6 +199,11 @@ def handle(r):
         dest = approve_part(r["path"], r.get("label", "part"))
         send(type="part_approved", path=str(dest), notes=notes_of(dest), programs=list(programs_of(dest)))
         send(type="sessions", items=list_sessions())
+    elif cmd == "mix_info":  # the volume of each instrument in a file
+        send(type="mix", path=r["path"], channels=mixer.read_mix(r["path"]))
+    elif cmd == "set_volume":  # change one instrument's volume in the file itself, then report the new mix
+        mixer.set_volume(r["path"], int(r["channel"]), int(r["volume"]))
+        send(type="mix", path=r["path"], channels=mixer.read_mix(r["path"]))
     elif cmd == "notation":  # engrave a MIDI file as sheet music (HTML with inline SVG)
         try:
             from notation import render
@@ -224,6 +232,7 @@ def handle(r):
             "", size=r.get("size", "small"), log=log,
             ensemble=int(r.get("ensemble", 0)), source_midi=r["source_midi"],
             playable=bool(r.get("playable", True)), in_key=bool(r.get("in_key", True)),
+            dynamics=float(r.get("dynamics", 5)),
         )
         send(type="done", melody=str(melody), full=str(full), notes=notes_of(full), programs=list(programs_of(full)))
         send(type="sessions", items=list_sessions())

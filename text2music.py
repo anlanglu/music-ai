@@ -7,6 +7,7 @@ GUI:
 """
 import argparse
 import json
+import math
 import os
 import re
 import time
@@ -16,6 +17,7 @@ import mido
 import numpy as np
 import torch
 
+import dynamics as dynamics_mod
 import plan
 import variety
 from llmjson import extract_json
@@ -566,16 +568,24 @@ def resolve_ending(notes, bars, sig, key_hint=None, span=(0, 127)):
     return notes[:-1] + [(tonic, s, d)]
 
 
-def melody_velocities(notes, sig="4/4"):
+def melody_velocities(notes, sig="4/4", depth=1.0):
     """A velocity for each note [(pitch, start_beat, dur_beats)], so the phrasing can be heard and not only seen:
     downbeats and beats are a little stronger, the note that ends a phrase (a rest follows it) is accented, the line
-    swells towards its highest note and the last notes taper. Returns a list parallel to `notes`, in 40..118."""
+    swells towards its highest note, each phrase rises and falls a little, and the last notes taper. `depth` scales how
+    much of that is applied (0 = every note at one steady level, 1 = as described, 2 = twice as much). Returns a list
+    parallel to `notes`, in 30..120."""
     if not notes:
         return []
     bb = bar_beats(sig)
     top = max(range(len(notes)), key=lambda i: (notes[i][0], -notes[i][1]))     # the climax: first of the highest notes
     span = max(notes[-1][1] - notes[0][1], 1e-9)
     climax = (notes[top][1] - notes[0][1]) / span
+    phrase_of, first = [], 0
+    for i, (p, s, d) in enumerate(notes):                  # a phrase ends where a rest follows
+        gap = (notes[i + 1][1] - (s + d)) if i + 1 < len(notes) else 1.0
+        phrase_of.append((first, i))
+        if gap >= 0.45:
+            first = i + 1
     out = []
     for i, (p, s, d) in enumerate(notes):
         v = 76.0
@@ -592,11 +602,17 @@ def melody_velocities(notes, sig="4/4"):
             v += 4
         if i >= len(notes) - 2:
             v -= 10                                 # the closing notes taper
-        out.append(int(max(40, min(118, round(v)))))
+        a, b = phrase_of[i]
+        ph_end = i
+        while ph_end + 1 < len(notes) and phrase_of[ph_end + 1][0] == a:
+            ph_end += 1
+        if ph_end > a:
+            v += 5 * math.sin(math.pi * (i - a) / (ph_end - a))        # each phrase swells and fades
+        out.append(int(max(30, min(120, round(76 + depth * (v - 76))))))
     return out
 
 
-def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True):
+def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True, depth=1.0):
     tpb = 480
     mid = mido.MidiFile(type=1, ticks_per_beat=tpb)
     mid.tracks.append(conductor_track(tempo, sig))
@@ -604,7 +620,7 @@ def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, 
     mid.tracks.append(track)
     track.append(mido.Message("program_change", program=program, channel=0, time=0))
     events = []
-    vels = melody_velocities(notes, sig) if dynamics else [90] * len(notes)
+    vels = melody_velocities(notes, sig, depth) if dynamics else [90] * len(notes)
     for (p, s, d), v in zip(notes, vels):
         events.append((round(s * tpb), 1, p, v))
         events.append((round((s + d) * tpb), 0, p, 0))  # note-off sorts before note-on at same tick
@@ -970,7 +986,8 @@ def make_melodies(prompt, bars=8, program=0, sig="4/4", complexity=3, llm="7B", 
                         form=plan.from_sliders(sliders)["form"])
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
-        write_melody_midi(path, c["tempo"], c["notes"], program, sig, total_beats)
+        write_melody_midi(path, c["tempo"], c["notes"], program, sig, total_beats,
+                          depth=plan.clean_sliders(sliders)["dynamics"] / 5)
         info = {"index": k, "path": path, "tempo": c["tempo"], "sig": sig, "score": c["score"]}
         out.append(info)
         log(f"      option {k}: {len(c['notes'])} notes, {c['tempo']} bpm")
@@ -1044,7 +1061,7 @@ def instrument_name(program):
 
 
 def add_part_options(source_midi, program, count=3, size="small", playable=True, name=None, log=print,
-                     on_candidate=None, texture_style=None, in_key=True, direction=""):
+                     on_candidate=None, texture_style=None, in_key=True, direction="", dynamics=5.0):
     """Write `count` alternative parts for ONE instrument, each as a complete piece: the existing piece (held fixed)
     plus a freshly generated part for `program`. Files go to <session>/parts/. on_candidate(info) fires as each is
     ready. Approving an option just means using its file as the piece for the next round."""
@@ -1067,7 +1084,7 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
         log("      " + dr.describe(d))
     style = d["style"] or texture_style   # a pattern named in the direction overrides the pattern picker
     if style:  # rule-based chords / arpeggios / bass lines instead of a model-generated part
-        return texture_options(source_midi, style, count, name, log, on_candidate, program, d)
+        return texture_options(source_midi, style, count, name, log, on_candidate, program, d, dynamics)
 
     from anticipation import ops
     from anticipation.convert import events_to_midi, midi_to_events
@@ -1161,6 +1178,7 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
         path = parts_dir / f"{name}-{slugify(label)}-{k}.mid"
         events_to_midi(ops.combine(best, controls)).save(str(path))
         retime(path, tempo, sig)
+        dynamics_mod.finish(path, source_midi, sig, dynamics)    # the model writes every note at one velocity
         if velocity_for(d):
             apply_velocity(path, program, velocity_for(d))
         info = {"index": len(out) + 1, "path": path, "program": program, "added": len(best) // 3}
@@ -1179,7 +1197,8 @@ def velocity_for(d):
 
 
 def apply_velocity(path, program, velocity):
-    """Set how hard one instrument is played (MIDI velocity) in a file written by this app."""
+    """Set how hard one instrument is played in a file written by this app: its notes keep their relative dynamics, and
+    their average moves to `velocity`."""
     mid = mido.MidiFile(str(path))
     for trk in mid.tracks:
         notes = [m for m in trk if m.type == "note_on"]
@@ -1188,13 +1207,17 @@ def apply_velocity(path, program, velocity):
         drums = notes[0].channel == 9
         prog = next((m.program for m in trk if m.type == "program_change"), 0)
         if (drums and program == DRUMS) or (not drums and prog == program):
-            for m in notes:
-                if m.velocity > 0:
-                    m.velocity = velocity
+            on = [m for m in notes if m.velocity > 0]
+            if not on:
+                continue
+            shift = velocity - sum(m.velocity for m in on) / len(on)
+            for m in on:
+                m.velocity = int(max(20, min(127, round(m.velocity + shift))))
     mid.save(str(path))
 
 
-def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_candidate=None, program=0, d=None):
+def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_candidate=None, program=0, d=None,
+                    dynamics=5.0):
     """Chords / arpeggios / bass lines for one instrument under the existing piece, by music theory (see texture.py).
     The piece is left exactly as it is; each option is the whole piece plus a different pattern, written to
     <session>/parts/. If the instrument is already there and is a keyboard (e.g. the melody is on piano), the new
@@ -1237,6 +1260,7 @@ def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_
         path = parts_dir / f"{name}-{slugify(label0)}-{slugify(label)}-{k}.mid"
         events_to_midi(ops.combine(tokens, controls)).save(str(path))
         retime(path, tempo, sig)
+        dynamics_mod.finish(path, source_midi, sig, dynamics)
         if velocity_for(d) and not already:
             apply_velocity(path, program, velocity_for(d))
         info = {"index": k, "path": path, "program": program, "added": len(part), "label": label}
@@ -1307,6 +1331,7 @@ def make_music(
     in_key=True,
     phrasing=1,
     sliders=None,
+    dynamics=5.0,
 ):
     """Run the whole pipeline. Returns (melody_path, full_path or None).
 
@@ -1423,6 +1448,7 @@ def make_music(
     out = folder / f"{name}-full.mid"
     events_to_midi(full).save(str(out))
     retime(out, tempo, sig)
+    dynamics_mod.finish(out, melody_path, sig, dynamics)           # the melody's own dynamics come back; the parts follow it
     log(f"Done: {out}")
     return melody_path, out
 
@@ -1448,7 +1474,8 @@ def main():
                        ("theme", "how strongly the opening idea returns in each phrase"),
                        ("runs", "how much one-way runs up or down the scale are avoided"),
                        ("flavor", "how strongly a mode's own note is used (dorian, phrygian, lydian, mixolydian)"),
-                       ("strict", "0 relaxed .. 10 strict: how closely the notes keep to the key or mode")]:
+                       ("strict", "0 relaxed .. 10 strict: how closely the notes keep to the key or mode"),
+                       ("dynamics", "0 flat .. 10 expressive: how much the loudness varies (melody and accompaniment)")]:
         ap.add_argument("--" + name, type=float, default=None, help=f"{text} (0..10; default {plan.SLIDER_DEFAULTS[name.replace('-', '_').replace('smooth_jumpy', 'shape')]})")
     ap.add_argument("--seed", type=int, default=None, help="random seed, for repeatable output")
     ap.add_argument("--no-resolve", action="store_true", help="don't force the melody to end on the tonic")
@@ -1468,7 +1495,9 @@ def main():
         bpm=max(40, min(a.bpm, 220)), resolve=not a.no_resolve, playable=not a.no_playable, key=parse_key(a.key or ""),
         phrasing=a.phrasing, sliders=plan.clean_sliders({"shape": a.smooth_jumpy, "pulse": a.pulse, "harmony": a.harmony,
                                                          "endings": a.endings, "theme": a.theme, "runs": a.runs,
-                                                         "flavor": a.flavor, "strict": a.strict}),
+                                                         "flavor": a.flavor, "strict": a.strict,
+                                                         "dynamics": a.dynamics}),
+        dynamics=plan.clean_sliders({"dynamics": a.dynamics})["dynamics"],
     )
 
 

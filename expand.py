@@ -167,7 +167,7 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         combined = old + [(p, s_ + old_beats, dd) for p, s_, dd in new]
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
-        t.write_melody_midi(path, tempo, combined, program, sig, total_beats)
+        t.write_melody_midi(path, tempo, combined, program, sig, total_beats, depth=sl["dynamics"] / 5)
         if not out:    # the accompaniment follows the plan of the whole, longer melody
             t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,

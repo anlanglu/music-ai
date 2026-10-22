@@ -124,13 +124,15 @@ final class ViewModel: ObservableObject {
     @Published var themeSlider = 0.0    // the opening idea returns in each phrase
     @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
     @Published var strictSlider = 10.0  // relaxed (0) .. strict (10): how many notes may be outside the scale
+    @Published var dynamicsSlider = 5.0 // flat (0) .. expressive (10): how much the loudness varies
     @Published var flavorSlider = 5.0   // how much the mode's own note (Lydian #4, Dorian ♮6...) is brought out
     /// Sliders left on Auto are sent as "auto": the backend gives the LLM no instruction for them.
     @Published var autoSliders: Set<String> = []
     var sliderValues: [String: Any] {
         let v: [String: Double] = ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider,
                                    "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider,
-                                   "flavor": flavorSlider, "strict": strictSlider]
+                                   "flavor": flavorSlider, "strict": strictSlider,
+                                   "dynamics": dynamicsSlider]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = autoSliders.contains($1.key) ? "auto" : $1.value }
     }
     private func applySliderDefaults(_ d: [String: Double]) {
@@ -138,12 +140,13 @@ final class ViewModel: ObservableObject {
         harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
         themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
         flavorSlider = d["flavor"] ?? flavorSlider; strictSlider = d["strict"] ?? strictSlider
+        dynamicsSlider = d["dynamics"] ?? dynamicsSlider; accompDynamics = dynamicsSlider
         copySettingsToExpansion()
     }
     /// Step 2 starts from step 1's settings; after that each step keeps its own.
     private func copySettingsToExpansion() {
         expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
-        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider; expandStrict = strictSlider
+        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider; expandStrict = strictSlider; expandDynamics = dynamicsSlider
         expandComplexity = complexity; expandCount = optionCount
         expandPhrasing = phrasing; expandResolve = resolveEnding; expandAuto = autoSliders
     }
@@ -165,6 +168,7 @@ final class ViewModel: ObservableObject {
     @Published var expandRuns = 5.0
     @Published var expandFlavor = 5.0
     @Published var expandStrict = 10.0
+    @Published var expandDynamics = 5.0
     @Published var expandPhrasing = 1
     @Published var expandResolve = true
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
@@ -174,7 +178,8 @@ final class ViewModel: ObservableObject {
     var expandSliderValues: [String: Any] {
         let v: [String: Double] = ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony,
                                    "endings": expandEndings, "theme": expandTheme, "runs": expandRuns,
-                                   "flavor": expandFlavor, "strict": expandStrict]
+                                   "flavor": expandFlavor, "strict": expandStrict,
+                                   "dynamics": expandDynamics]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
     }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.
@@ -194,6 +199,7 @@ final class ViewModel: ObservableObject {
     // One-at-a-time mode: pick an instrument, choose among its options, approve, repeat
     @Published var partInstrument = Instrument.parts.first { $0.program == 40 } ?? Instrument.parts[0]
     @Published var partOptionCount = 3.0
+    @Published var accompDynamics = 5.0   // how much the accompaniment's loudness varies; 5 = normal
     @Published var pianoStyle = "mix"
     @Published var partOptions: [PartCandidate] = []
     @Published var selectedPartID: UUID?
@@ -374,6 +380,8 @@ final class ViewModel: ObservableObject {
                 status = candidates.count == 1 ? "Melody ready — expand it, add the accompaniment, or generate again."
                                                : "Pick the melody you like, or generate new options."
             }
+        case .mix(let path, let channels):
+            gotMix(path, channels)
         case .partCandidate(let c):
             partOptions.append(c)
             status = "\(partInstrument.name) option \(c.index) ready"
@@ -630,7 +638,7 @@ final class ViewModel: ObservableObject {
         status = "Adding accompaniment…"
         send([
             "cmd": "orchestrate", "source_midi": c.url.path, "ensemble": Int(ensemble), "size": size,
-            "playable": playable, "in_key": inKey,
+            "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
         ])
     }
 
@@ -655,7 +663,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "add_part", "source_midi": source.path, "program": partInstrument.program,
             "count": Int(partOptionCount), "size": size,
-            "playable": playable, "in_key": inKey,
+            "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
             "texture": partInstrument.texture, "style": pianoStyle, "direction": partDirection,
         ])
     }
@@ -749,13 +757,50 @@ final class ViewModel: ObservableObject {
         }
     }
 
+    // MARK: Mixer: the volume of each instrument, kept in the MIDI file itself
+
+    @Published var mix: [MixChannel] = []
+    private var mixURL: URL?
+    private var volumeWork: DispatchWorkItem?
+    private var resumeAt: Double?       // where to carry on playing once a changed volume has been written to the file
+
+    /// Ask for the volumes of whatever the main view is showing (called when that changes).
+    func loadMix() {
+        guard ready, let url = displayURL else { mix = []; mixURL = nil; return }
+        guard url != mixURL else { return }
+        mix = []
+        send(["cmd": "mix_info", "path": url.path])
+    }
+
+    func setVolume(_ channel: Int, _ volume: Int) {
+        guard let url = displayURL, let i = mix.firstIndex(where: { $0.channel == channel }) else { return }
+        mix[i].volume = volume
+        volumeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if self.playingURL == url { self.resumeAt = self.playhead }
+            self.send(["cmd": "set_volume", "path": url.path, "channel": channel, "volume": volume])
+        }
+        volumeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)    // one write when the slider stops moving
+    }
+
+    private func gotMix(_ path: URL, _ channels: [MixChannel]) {
+        if path == displayURL { mix = channels; mixURL = path }
+        if let at = resumeAt, path == playingURL {                 // the file changed under the player: carry on from where it was
+            resumeAt = nil
+            play(path, from: at)
+        }
+    }
+
     // MARK: Playback
 
-    func play(_ url: URL) {
+    func play(_ url: URL, from position: Double = 0) {
         stop()
         do {
             let p = try AVMIDIPlayer(contentsOf: url, soundBankURL: Self.soundBank)
             p.prepareToPlay()
+            p.currentPosition = position
             player = p
             playingURL = url
             p.play { [weak self] in

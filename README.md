@@ -11,11 +11,11 @@ everything runs on your Mac, with no cloud service and no account.
 ## What it does
 
 1. **Melody first.** Prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
-   ideas) and seven sliders for the line's character (see below). The language model writes every bar. You get N options
+   ideas) and eight sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
 2. **Expand the melody (optional).** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
-   as you like (with Undo). Each expansion has its own settings: length, complexity, the seven sliders and a free-text
+   as you like (with Undo). Each expansion has its own settings: length, complexity, the eight sliders and a free-text
    direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
    continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
@@ -40,11 +40,12 @@ A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody s
 | **Recurring theme** | the opening idea comes back at the start of each phrase, moved onto its chord (off by default) |
 | **Avoid scale runs** | how much one-way runs up or down the scale are cut short, independent of Smooth ↔ Jumpy |
 | **Modal flavor** | with a mode (Dorian, Phrygian, Lydian, Mixolydian, Locrian) chosen next to the Key: how often the note that gives the mode its sound is used |
+| **Dynamics** | flat to expressive: how much the loudness varies (beat accents, phrase swells, a rise to the climax, a tapering end). The accompaniment has its own Dynamics slider |
 
 The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
 The accompaniment's sampling settings (randomness, retries, minimum density, beat-grid snapping, LLM directions) are fixed
-constants in `text2music.py`, not options. The command line has the same seven sliders as flags: `--smooth-jumpy`, `--pulse`,
+constants in `text2music.py`, not options. The command line has the same eight sliders as flags: `--smooth-jumpy`, `--pulse`,
 `--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
 numbers, for the app and the command line alike.
 
@@ -126,3 +127,6 @@ the full log is at `~/Library/Logs/Composer/backend.log`.
 Built on the [Anticipatory Music Transformer](https://github.com/jthickstun/anticipation) (Thickstun et al., Stanford CRFM,
 Apache 2.0), Qwen2.5 (Alibaba) through [MLX](https://github.com/ml-explore/mlx), music21, verovio and mido. Model weights
 are downloaded from Hugging Face under their own licenses.
+
+
+**Mixer.** Under the preview, each instrument of the piece has a volume slider (MIDI volume, 0–127). It is written into the MIDI file itself, so the notes are not changed and Logic or a notation app uses it too. Playback restarts from where it was when a volume changes.

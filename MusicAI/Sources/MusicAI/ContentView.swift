@@ -69,6 +69,8 @@ struct ContentView: View {
         }
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
+        .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
+        .onChange(of: vm.ready) { _, _ in vm.loadMix() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
     }
 
@@ -130,6 +132,13 @@ struct ContentView: View {
                     .help("Keeps every instrument inside its real range and within the number of notes one player can sound at once")
                 Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
                     .help("When a key was chosen for the melody, the added parts only use notes from that key")
+                let dynHelp = "How much the loudness of the accompaniment varies. Each instrument plays a little under the melody, swelling and fading with it, with the beat a little stronger. Zero: each instrument at one steady level. The melody keeps its own dynamics."
+                HStack {
+                    Text("Dynamics"); Spacer()
+                    Text(vm.accompDynamics <= 0 ? "Flat" : "\(Int(vm.accompDynamics))").monospacedDigit().foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle()).help(dynHelp)
+                Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
                 if vm.accompMode == .auto { autoControls } else { oneByOneControls }
             }
             .padding(.trailing, 10)
@@ -279,7 +288,7 @@ struct ContentView: View {
             complexityRow($vm.complexity)
             llmPicker
             characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
-                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider, strict: $vm.strictSlider,
+                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider, strict: $vm.strictSlider, dynamics: $vm.dynamicsSlider,
                               phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
             optionsRow($vm.optionCount)
 
@@ -318,7 +327,7 @@ struct ContentView: View {
             complexityRow($vm.expandComplexity)
             if vm.expandEngine == "llm" { llmPicker }
             characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
-                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor, strict: $vm.expandStrict,
+                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor, strict: $vm.expandStrict, dynamics: $vm.expandDynamics,
                               phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
             optionsRow($vm.expandCount)
 
@@ -396,7 +405,7 @@ struct ContentView: View {
 
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
     private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
-                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>, strict: Binding<Double>,
+                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>, strict: Binding<Double>, dynamics: Binding<Double>,
                                    phrasing: Binding<Int>, resolve: Binding<Bool>, auto: Binding<Set<String>>, what: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Divider()
@@ -416,6 +425,9 @@ struct ContentView: View {
             knobRow("Scale: Relaxed ↔ Strict", strict, 0...10, auto: autoBinding(auto, "strict"),
                     readout: strict.wrappedValue >= 10 ? "Strict" : strict.wrappedValue <= 0 ? "Relaxed" : "\(Int(strict.wrappedValue))",
                     help: "How closely \(what) keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
+            knobRow("Dynamics: Flat ↔ Expressive", dynamics, 0...10, auto: autoBinding(auto, "dynamics"),
+                    readout: dynamics.wrappedValue <= 0 ? "Flat" : dynamics.wrappedValue >= 10 ? "Very expressive" : "\(Int(dynamics.wrappedValue))",
+                    help: "How much the loudness varies in \(what): notes on the beat a little stronger, each phrase swelling and fading, the line rising towards its highest note, and the ending tapering. Zero: every note at one level. The accompaniment gets its own setting. The volume of each instrument is in the Mixer under the preview.")
             knobRow("Modal flavor", flavor, 0...10, auto: autoBinding(auto, "flavor"),
                     help: "Only for the modes other than major and minor. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th, Locrian's flat 5th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
             Text("Pauses between phrases").font(.callout)
@@ -526,6 +538,7 @@ struct ContentView: View {
             mainView
 
             transport
+            mixer
 
             if !vm.partOptions.isEmpty {
                 Text(vm.selectedPart == nil ? "Choose a \(vm.partInstrument.name.lowercased()) part (highlighted in the roll)"
@@ -608,6 +621,27 @@ struct ContentView: View {
                     .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
             }
             Spacer()
+        }
+    }
+
+    /// The volume of each instrument in the piece shown above. It is written into the MIDI file (controller 7).
+    @ViewBuilder private var mixer: some View {
+        if !vm.mix.isEmpty {
+            DisclosureGroup("Mixer — volume of each instrument") {
+                VStack(spacing: 4) {
+                    ForEach(vm.mix) { ch in
+                        HStack {
+                            Text(ch.name).lineLimit(1).frame(width: 130, alignment: .leading)
+                            Slider(value: Binding(get: { Double(ch.volume) }, set: { vm.setVolume(ch.channel, Int($0)) }),
+                                   in: 0...127, step: 1)
+                            Text("\(ch.volume)").monospacedDigit().foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
+                        }
+                        .help("The volume of \(ch.name) (MIDI controller 7, 0 to 127; 100 is the usual level). It is saved in the MIDI file, so Logic and notation apps use it too, and the notes are not changed. Adding or regenerating an accompaniment writes a new file at the usual level.")
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .font(.callout)
         }
     }
 
