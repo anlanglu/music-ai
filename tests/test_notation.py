@@ -1,14 +1,17 @@
 """Engraving: MIDI -> MusicXML -> HTML/SVG, including grand staff for piano and the paged print layout."""
 import random
+import sys
+from pathlib import Path
 
-import composer
 import notation
 import text2music as t
 
 
 def make_midi(out_dir, program, bars=8, name="m"):
-    notes, _ = composer.compose(bars, "4/4", (7, "major"), 3, random.Random(2), 55, 84, 1, 1)
-    notes, _ = t.conform_melody(notes, bars, "4/4")
+    sys.path.insert(0, str(Path(__file__).parent))
+    from stub_backend import fake_notes
+
+    notes, _ = t.conform_melody(fake_notes(bars, "4/4", (7, "major"), random.Random(2)), bars, "4/4")
     path = out_dir / f"{name}.mid"
     t.write_melody_midi(path, 90, notes, program, "4/4", bars * 4)
     return path

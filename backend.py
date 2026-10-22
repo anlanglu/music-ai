@@ -1,7 +1,8 @@
 """JSON-lines backend for the Swift app. Reads one JSON request per stdin line, writes events to stdout.
 
 Requests (one JSON object per line, "cmd" selects the stage):
-  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size}
+  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, count}
+  {"cmd":"expand", "source_midi":..., bars (4|8), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
   {"cmd":"notation", "path":..., "title":..., "paged":false}
@@ -32,6 +33,7 @@ from text2music import (  # noqa: E402
     session_info,
 )
 import plan  # noqa: E402
+from expand import expand_melody  # noqa: E402
 
 
 def send(**ev):
@@ -143,18 +145,26 @@ def handle(r):
         announce()
         restore(r["path"])
     elif cmd == "melodies":
-        sl = plan.from_sliders(r.get("sliders"))      # the five 0..10 sliders -> the numbers the sampler uses
         if current_session() is None and r.get("session_name"):
             new_session(r["session_name"])
             announce()
         begin(r["prompt"])
         make_melodies(
-            r["prompt"], int(r.get("bars", 8)), int(r.get("program", 0)), r.get("size", "small"),
+            r["prompt"], int(r.get("bars", 8)), int(r.get("program", 0)),
             r.get("sig", "4/4"), int(r.get("complexity", 3)), r.get("llm", "7B"), int(r.get("count", 4)),
-            r.get("melody_engine", "hybrid"), log=log, on_candidate=candidate_event,
+            log=log, on_candidate=candidate_event,
             key=(int(r["key"][0]), r["key"][1]) if r.get("key") else None,
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
-            shape=sl["shape"], form=sl["form"], knobs=sl["knobs"],
+            sliders=r.get("sliders"),
+        )
+        send(type="melodies_done")
+    elif cmd == "expand":  # step 2: add 4 or 8 bars to the chosen melody, as several options
+        begin()
+        expand_melody(
+            r["source_midi"], 8 if int(r.get("bars", 4)) >= 8 else 4, r.get("engine", "hybrid"), int(r.get("count", 3)),
+            r.get("size", "small"), r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("sliders"),
+            r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
+            on_candidate=candidate_event,
         )
         send(type="melodies_done")
     elif cmd == "add_part":  # stage 2, one instrument at a time: several options for the chosen instrument

@@ -27,7 +27,7 @@ environment and the model cache on the target Mac, then building the app next to
 | Model | Used for | Size |
 |---|---|---|
 | `stanford-crfm/music-small-800k` | Anticipatory Music Transformer, default | 0.5 GB |
-| `stanford-crfm/music-medium-800k` | optional, "Anticipation model" in the Melody section | 1.3 GB |
+| `stanford-crfm/music-medium-800k` | optional, "Music model" in the Accompaniment section | 1.3 GB |
 | `stanford-crfm/music-large-800k` | optional | 2.9 GB |
 | `mlx-community/Qwen2.5-7B-Instruct-4bit` | language model for melodies and directions, default | 4.0 GB |
 | `mlx-community/Qwen2.5-3B-Instruct-4bit` | lightweight fallback for reading directions | 1.6 GB |
@@ -43,7 +43,7 @@ music21, verovio, numpy, tqdm, huggingface-hub (see `requirements.txt` for the e
 ## 2. Get the project folder in place
 
 Copy or clone the project to the target Mac. The default location is `/Users/Shared/music-ai`; any other location works
-if you set `MUSIC_AI_ROOT` (see 6.3). The folder must contain: `backend.py`, `text2music.py`, `composer.py`,
+if you set `MUSIC_AI_ROOT` (see 6.3). The folder must contain: `backend.py`, `text2music.py`, `expand.py`, `plan.py`,
 `texture.py`, `direction.py`, `playable.py`, `notation.py`, `variety.py`, `requirements.txt`, `MusicAI/` and
 `anticipation/`.
 
@@ -136,10 +136,10 @@ sheet-music HTML and MusicXML). Preferences are stored under the bundle id `loca
 
 ```bash
 cd /Users/Shared/music-ai
-.venv/bin/python text2music.py "a hopeful tune in G major" --melody-engine theory --melody-only --key "G major" --session smoke-test
+.venv/bin/python text2music.py "a hopeful tune in G major" --melody-only --key "G major" --session smoke-test
 ```
 
-This uses the theory composer, which needs no model download, and writes a MIDI file into `output/`. Delete the
+This uses the language model (Qwen 7B, downloaded on first use) and writes a MIDI file into `output/`. Delete the
 session folder afterwards. The JSON-lines backend can be tried directly with `.venv/bin/python -u backend.py`
 (it prints `{"type": "ready"}`).
 
@@ -147,7 +147,7 @@ session folder afterwards. The JSON-lines backend can be tried directly with `.v
 
 | Option | What it does |
 |---|---|
-| `--melody-engine hybrid\|llm\|theory` | which composer writes the melody |
+| `--candidates N` | how many melodies to write and score; the best one is used |
 | `--smooth-jumpy`, `--pulse`, `--harmony`, `--endings`, `--theme` (each 0..10) | the same five sliders as the app's Melody section |
 | `--phrasing 0..2` | rests between ideas and phrases: flowing, balanced, spacious |
 | `--key "D minor"` | force a key instead of guessing one from the prompt |

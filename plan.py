@@ -1,10 +1,11 @@
 """The musical plan behind a melody: the phrases it is made of, the harmony under them, where each phrase cadences,
 and the one idea the melody keeps coming back to.
 
-Every engine uses the same plan, so they all articulate the same kind of form:
-  - the theory composer builds a melody straight from it (`composer.py`),
+Everything uses the same plan, so it all articulates the same kind of form:
   - the language model is given the chords and asked to end each phrase on its cadence (`text2music.py`),
-  - the Anticipation sampler is given the chord of every bar and a target contour (`sample.py`).
+  - the Anticipation sampler, when it expands a melody (`expand.py`), is given the chord of every bar and a target
+    contour (`sample.py`),
+  - the accompaniment is steered by the chords too.
 
 A plan looks like this::
 
@@ -297,13 +298,19 @@ def shape_amount_knobs(amount):
 SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0}
 
 
-def from_sliders(sliders=None):
-    """The slider positions (0..10; any that are missing or None take their defaults) -> {shape, form, knobs}:
-    the melodic shape level for the theory composer, how much of the plan is in use, and the sampler's strengths."""
+def clean_sliders(sliders=None):
+    """The five slider positions, each clamped to 0..10; missing or None ones take their defaults."""
     s = dict(SLIDER_DEFAULTS)
     for name, v in (sliders or {}).items():
         if name in s and v is not None:
             s[name] = max(0.0, min(10.0, float(v)))
+    return s
+
+
+def from_sliders(sliders=None):
+    """The slider positions (0..10; any that are missing or None take their defaults) -> {shape, form, knobs}:
+    the melodic shape level (0..2), how much of the plan is in use, and the sampler's strengths."""
+    s = clean_sliders(sliders)
     knobs_ = {**shape_amount_knobs(s["shape"] / 5), "chord": s["harmony"] * 0.8, "cadence": s["endings"] * 1.5,
               "motif": s["theme"] * 2.0, "beat": s["pulse"] * 0.3}
     return {"shape": int(round(s["shape"] / 5)), "form": form_from_knobs(knobs_), "knobs": knobs_}
@@ -387,3 +394,82 @@ def resolve_phrase_endings(notes, plan, key, span=(0, 127)):
         if best is not None:
             out[idx] = (best[1], out[idx][1], out[idx][2])
     return out
+
+
+def infer_chords(notes, key, sig, bars):
+    """The chord (scale degree) of each bar of a melody that was written without a plan: the triad that shares the most
+    sounding time with that bar's notes. Ties go to the tonic, then the dominant and subdominant."""
+    tonic, mode = key
+    bb = _beats_per_bar(sig)
+    prefer = {0: 0.3, 4: 0.2, 3: 0.1}
+    out = []
+    for b in range(bars):
+        lo, hi = b * bb, (b + 1) * bb
+        weight = {}
+        for p, st, d in notes:
+            overlap = min(st + d, hi) - max(st, lo)
+            if overlap > 0:
+                weight[p % 12] = weight.get(p % 12, 0.0) + overlap
+        best = max(range(7), key=lambda deg: (sum(weight.get(pc, 0.0) for pc in chord_pcs(tonic, mode, deg))
+                                              + prefer.get(deg, 0.0)))
+        out.append(best)
+    return out
+
+
+def _beats_per_bar(sig):
+    num, den = (int(x) for x in sig.split("/"))
+    return num * 4 / den
+
+
+def extend(base, key, sig, old_bars, new_bars, old_notes=None, rng=None, level=3):
+    """Grow a plan by `new_bars` bars. Returns (whole, section): the plan for the old and new bars together, and the
+    plan of the new bars on their own (starting at bar 0, which is how the melody generators want it).
+    `base` is the plan the melody had (it is cut back to `old_bars` first, in case it was written for a longer piece);
+    with no plan, the old bars get the chords their notes suggest."""
+    section = build_plan(new_bars, sig, key, rng, level)
+    bb = _beats_per_bar(sig)
+    if base:
+        keep = [dict(p) for p in base["phrases"] if p["start_bar"] + p["bars"] <= old_bars]
+        chords = list(base["chords"][:old_bars])
+    else:
+        keep, chords = [], infer_chords(old_notes or [], key, sig, old_bars)
+        bar = 0
+        for i, (length, role) in enumerate(phrase_plan(old_bars)):
+            keep.append({"index": i, "start_bar": bar, "bars": length, "role": role, "start_beat": bar * bb,
+                         "end_beat": (bar + length) * bb, "chords": chords[bar:bar + length],
+                         "cadence": list(CADENCE_TARGETS[role])})
+            bar += length
+    old_bars_used = sum(p["bars"] for p in keep)
+    n = len(keep)
+    phrases, cadences, boundaries = list(keep), [], []
+    for p in keep:
+        cadences.append({"beat": p["end_beat"], "role": p["role"], "targets": list(p["cadence"]),
+                         "bar": p["start_bar"] + p["bars"] - 1, "phrase": p["index"]})
+        if p["bars"] >= 4:
+            boundaries.append(((p["start_bar"] + 2) * bb, "idea"))
+        boundaries.append((p["end_beat"], "phrase"))
+    for p in section["phrases"]:
+        q = dict(p, index=p["index"] + n, start_bar=p["start_bar"] + old_bars_used,
+                 start_beat=p["start_beat"] + old_bars_used * bb, end_beat=p["end_beat"] + old_bars_used * bb)
+        phrases.append(q)
+    for c in section["cadences"]:
+        cadences.append(dict(c, beat=c["beat"] + old_bars_used * bb, bar=c["bar"] + old_bars_used, phrase=c["phrase"] + n))
+    for beat, kind in section["boundaries"]:
+        boundaries.append((beat + old_bars_used * bb, kind))
+    whole = {"key": tuple(key), "bars": old_bars_used + new_bars, "sig": sig, "bb": bb, "level": level,
+             "chords": chords[:old_bars_used] + section["chords"], "phrases": phrases, "cadences": cadences,
+             "boundaries": boundaries}
+    return whole, section
+
+
+# Words that suggest a mode, for when a request names no key and the language model gives none.
+_MOODS_MINOR = ("sad", "melanchol", "dark", "tense", "mysterious", "somber", "sorrow", "lonely", "haunting", "ominous",
+                "dramatic", "war", "epic")
+_MOODS_MAJOR = ("happy", "bright", "playful", "hopeful", "upbeat", "joy", "cheerful", "sunny", "triumph", "festive", "gentle")
+
+
+def mode_for(prompt):
+    """'minor' or 'major' from the mood words in a request (major when there are none, or both kinds)."""
+    p = (prompt or "").lower()
+    minor, major = any(w in p for w in _MOODS_MINOR), any(w in p for w in _MOODS_MAJOR)
+    return "minor" if minor and not major else "major"

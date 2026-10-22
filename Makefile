@@ -6,7 +6,7 @@ PY := .venv/bin/python
 test:        ## fast test suite (no model downloads needed): about 3 seconds
 	$(PY) -m pytest tests -q
 
-test-full:   ## also sweep the theory composer over ~140,000 settings combinations (about 15 seconds)
+test-full:   ## also sweep the melody finishing steps over ~100,000 settings combinations (about 15 seconds)
 	$(PY) -m pytest tests -q --full
 
 app:         ## build Composer.app

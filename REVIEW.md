@@ -17,6 +17,11 @@ it fits together, what was verified and how, and where I think the risk is. Sect
 - Total size: about 2,800 lines Python (`text2music.py` is 1,237 lines), about 1,450 lines Swift, and a 53-test pytest
   suite in `tests/` (`make test`, about 3 seconds, no model downloads). Section 5 says what it does and does not cover.
 
+> **Read this first (branch `feature/expand-melody`).** The melody workflow was redesigned after most of this document was
+> written: step 1 is now written entirely by the language model, a new step 2 expands it, and the rule-based "theory
+> composer" and the Hybrid step 1 were removed. Sections 3.2 (melody engines), 3.4 (theory composer) and the parts of 4c
+> that benchmark Hybrid step 1 describe code that no longer exists; section 4e at the end describes what replaced them.
+
 ## 1. What it does (user-visible workflow)
 
 1. **Stage 1, melody.** The user types a prompt and picks time signature, BPM (default 80), key, bars, melody
@@ -461,3 +466,25 @@ or `--form`. A melody request carries `sliders` {shape, pulse, harmony, endings,
 turns them into the sampler's numbers; the `ready` event tells the app where they start. The command line has the same five
 as flags. Sampling safeguards are constants (`TOP_P`, `ATTEMPTS`, `MIN_DENSITY`, `BEAT_BOOST`). The Python functions still
 take `shape`, `form` and `knobs` (the review scripts and tests call them).
+
+### 4e. Melody redesign: LLM writes step 1, a new step 2 expands it (branch `feature/expand-melody`)
+
+- **Step 1** (`text2music.melody_candidates`): the language model writes every bar, a phrase at a time. There is no melody
+  engine choice any more; `composer.py` (the rule-based composer), its tests and the three review scripts that measured
+  Hybrid step 1 are gone. A key not given by the user or named in the prompt is picked by a short LLM call (`pick_key`),
+  so the plan, the key snapping and the accompaniment all have one key. The character sliders reach the LLM as sentences
+  (`guidance_text`); measured with the real 7B on 5 melodies per setting, Smooth / Balanced / Jumpy gave leaps 8% / 20% / 24%,
+  direction changes 28% / 31% / 47%. `finish_melody` is the shared clean-up (grid, range, key, rests, cadences, tonic ending).
+- **Step 2** (`expand.py`, backend command `expand`): add 4 or 8 bars to a chosen melody, as options, with its own length,
+  engine (LLM only, or Hybrid = the Anticipation model continuing the last 8 bars, steered by the chords, cadences, opening
+  idea and shape sliders), complexity, five sliders and a free-text direction. The old notes are preserved exactly, except
+  that the last one may be shortened. The plan grows with the melody (`plan.extend`; a melody with no plan gets chords
+  inferred from its notes, `plan.infer_chords`), so the accompaniment follows the whole.
+- **Step 3**: the accompaniment is unchanged and uses the Anticipation model only.
+- **App**: stage 2 "Expand melody (optional)" with Undo; the expansion options replace the list so one can be picked and
+  expanded again. It is only offered before any accompaniment exists.
+- **Tests**: the backend is run with a stand-in LLM (`tests/stub_backend.py`) so no model download is needed; one test uses
+  the real Anticipation model if it is in the cache.
+- **Not verified**: how any of it sounds; the new Expand section on screen; a Hybrid expansion of a long melody; direction text
+  for Hybrid is only turned into density, register, beat emphasis and adventurousness (not its dynamics or "answer the
+  melody" parts, although the log line may say it understood them).

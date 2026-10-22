@@ -66,7 +66,7 @@ def test_compose_keeps_the_enforced_key_as_a_pair_across_phrases(monkeypatch):
     """Regression: the key the LLM declared used to overwrite the enforced (tonic, mode) pair, so phrase 2 crashed."""
     seen = []
 
-    def fake(prompt, bars, sig, level, llm, prev, phrase, tempo, key, chords=None):
+    def fake(prompt, bars, sig, level, llm, prev, phrase, tempo, key, chords=None, guidance="", ending=True):
         seen.append(key)
         return 90, [(60 + i, i, 1) for i in range(bars * 4)], "plan", "C minor", "reading"
 
@@ -89,12 +89,21 @@ def test_the_log_says_what_the_llm_understood(monkeypatch):
     assert "plan for phrase 1: a rising motif" in text
 
 
-def test_the_log_explains_how_each_engine_uses_the_prompt():
-    for engine, needle in [("theory", "does not read sentences"), ("llm", "writes every one"), ("hybrid", "never sees")]:
-        lines = []
-        t.explain_prompt("a sad tune", engine, None, 80, 8, 3, "7B", lines.append)
-        text = "\n".join(lines)
-        assert needle in text and "Your prompt" in text
+def test_the_log_explains_how_the_prompt_is_used():
     lines = []
-    t.explain_prompt("a sad tune", "theory", None, 80, 8, 3, "7B", lines.append)
-    assert "sad" in "\n".join(lines) and "minor" in "\n".join(lines)
+    t.explain_prompt("a sad tune", None, 80, 8, 3, "7B", lines.append)
+    text = "\n".join(lines)
+    assert "Your prompt" in text and "writes every one of the 8 bars" in text and "chosen by the LLM" in text
+    lines = []
+    t.explain_prompt("a tune in D minor", (7, "major"), 80, 8, 3, "7B", lines.append)
+    assert "G major (set by you)" in "\n".join(lines)
+
+
+def test_the_sliders_are_said_to_the_llm_in_words():
+    smooth = t.guidance_text({"shape": 0, "pulse": 0})
+    jumpy = t.guidance_text({"shape": 10, "pulse": 10})
+    assert "mostly by step" in smooth and "syncopated" in smooth
+    assert "angular" in jumpy and "square and regular" in jumpy
+    assert "Theme" not in t.guidance_text({"theme": 8})                  # no motif yet, so nothing to restate
+    assert "opening idea" in t.guidance_text({"theme": 8}, [(60, 0, 1)])
+    assert "Theme" not in t.guidance_text({"theme": 0}, [(60, 0, 1)])

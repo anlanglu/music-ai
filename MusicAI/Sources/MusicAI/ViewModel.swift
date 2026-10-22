@@ -103,14 +103,31 @@ final class ViewModel: ObservableObject {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
         harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
         themeSlider = d["theme"] ?? themeSlider
+        expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
+        expandEndings = endingsSlider; expandTheme = themeSlider
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
-    /// Which generator writes the melody: "hybrid" (LLM seed + Anticipation, the default), "llm", or "theory".
-    @Published var engine: String = UserDefaults.standard.string(forKey: "melodyEngine") ?? "hybrid" {
-        didSet { UserDefaults.standard.set(engine, forKey: "melodyEngine") }
-    }
     @Published var llm = "7B"
+
+    // Step 2: expanding the chosen melody. It has its own settings, because each expansion can want a different character.
+    @Published var expandBars = 4                  // 4 or 8 bars added at a time
+    @Published var expandEngine = "hybrid"         // "hybrid" (Anticipation continues it) or "llm"
+    @Published var expandComplexity = 3.0
+    @Published var expandCount = 3.0
+    @Published var expandDirection = ""
+    @Published var expandShape = 5.0
+    @Published var expandPulse = 1.67
+    @Published var expandHarmony = 2.75
+    @Published var expandEndings = 3.33
+    @Published var expandTheme = 0.0
+    @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
+    private var expandJustRan = false
+    var expandSliderValues: [String: Double] {
+        ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony, "endings": expandEndings, "theme": expandTheme]
+    }
+    /// Expanding changes the melody, so it is only offered before any accompaniment exists.
+    var canExpand: Bool { ready && !busy && selected != nil && orchestration == nil && partsAdded.isEmpty && partOptions.isEmpty }
     // Stage 2: accompaniment
     @Published var ensemble = 0.0
     @Published var playable = true
@@ -259,6 +276,11 @@ final class ViewModel: ObservableObject {
             status = text.trimmingCharacters(in: .whitespaces)
         case .error(let text):
             busy = false
+            if expandJustRan, let last = expansionHistory.popLast() {   // the expansion failed: keep what there was
+                candidates = last.candidates
+                selectedID = last.selectedID
+            }
+            expandJustRan = false
             pdfBusy = false      // whatever was running is over: don't leave the buttons locked
             pdfJob = nil
             sheetLoading = []
@@ -287,8 +309,13 @@ final class ViewModel: ObservableObject {
             }
         case .melodiesDone:
             busy = false
-            status = candidates.count == 1 ? "Melody ready — add the accompaniment, or generate again."
-                                           : "Pick the melody you like, or generate new options."
+            if expandJustRan {
+                expandJustRan = false
+                status = "Pick the expanded melody you like, then expand it again or add the accompaniment."
+            } else {
+                status = candidates.count == 1 ? "Melody ready — expand it, add the accompaniment, or generate again."
+                                               : "Pick the melody you like, or generate new options."
+            }
         case .partCandidate(let c):
             partOptions.append(c)
             status = "\(partInstrument.name) option \(c.index) ready"
@@ -354,6 +381,7 @@ final class ViewModel: ObservableObject {
 
     private func clearWork() {
         stop()
+        expansionHistory = []
         candidates = []
         selectedID = nil
         orchestration = nil
@@ -405,8 +433,8 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
-            "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm, "melody_engine": engine,
-            "count": Int(optionCount), "size": size, "session_name": sessionName,
+            "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm,
+            "count": Int(optionCount), "session_name": sessionName,
             "sliders": sliderValues,
         ])
     }
@@ -437,7 +465,34 @@ final class ViewModel: ObservableObject {
         }
     }
 
-    // MARK: Stage 2
+    // MARK: Stage 2: expand the melody
+
+    func expandMelody() {
+        guard canExpand, let c = selected else { return }
+        stop()
+        expansionHistory.append((candidates, selectedID))
+        candidates = []
+        selectedID = nil
+        expandJustRan = true
+        busy = true
+        status = "Expanding the melody by \(expandBars) bars…"
+        send([
+            "cmd": "expand", "source_midi": c.url.path, "bars": expandBars, "engine": expandEngine,
+            "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
+            "sliders": expandSliderValues, "direction": expandDirection, "resolve": resolveEnding, "phrasing": phrasing,
+        ])
+    }
+
+    /// Go back to the options (and the choice) from before the last expansion.
+    func undoExpansion() {
+        guard !busy, let last = expansionHistory.popLast() else { return }
+        stop()
+        candidates = last.candidates
+        selectedID = last.selectedID
+        status = "Back to the melody before the expansion."
+    }
+
+    // MARK: Stage 3: accompaniment
 
     func addAccompaniment() {
         guard ready, !busy, let c = selected else { return }
