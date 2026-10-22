@@ -274,7 +274,7 @@ struct ContentView: View {
             complexityRow($vm.complexity)
             llmPicker
             characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
-                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider,
+                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider, strict: $vm.strictSlider,
                               phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
             optionsRow($vm.optionCount)
 
@@ -313,7 +313,7 @@ struct ContentView: View {
             complexityRow($vm.expandComplexity)
             if vm.expandEngine == "llm" { llmPicker }
             characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
-                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor,
+                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor, strict: $vm.expandStrict,
                               phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
             optionsRow($vm.expandCount)
 
@@ -386,7 +386,7 @@ struct ContentView: View {
 
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
     private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
-                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>,
+                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>, strict: Binding<Double>,
                                    phrasing: Binding<Int>, resolve: Binding<Bool>, auto: Binding<Set<String>>, what: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Divider()
@@ -403,6 +403,9 @@ struct ContentView: View {
                     help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
             knobRow("Recurring theme", theme, 0...10, auto: autoBinding(auto, "theme"),
                     help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
+            knobRow("Scale: Relaxed ↔ Strict", strict, 0...10, auto: autoBinding(auto, "strict"),
+                    readout: strict.wrappedValue >= 10 ? "Strict" : strict.wrappedValue <= 0 ? "Relaxed" : "\(Int(strict.wrappedValue))",
+                    help: "How closely \(what) keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
             knobRow("Modal flavor", flavor, 0...10, auto: autoBinding(auto, "flavor"),
                     help: "Only for Dorian, Phrygian, Lydian and Mixolydian. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
             Text("Pauses between phrases").font(.callout)
@@ -429,12 +432,12 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(title); Spacer()
-                Text(auto.wrappedValue ? "Auto" : readout ?? (value.wrappedValue == 0 ? "off" : value.wrappedValue.formatted(.number.precision(.fractionLength(1)))))
+                Text(auto.wrappedValue ? "Auto" : readout ?? (value.wrappedValue == 0 ? "off" : "\(Int(value.wrappedValue))"))
                     .monospacedDigit().foregroundStyle(.secondary)
                 Toggle("Auto", isOn: auto).toggleStyle(.checkbox).controlSize(.small)
                     .help("Auto: don't set this. The LLM decides from your description (the engine uses its usual setting).")
             }
-            Slider(value: value, in: range).disabled(auto.wrappedValue)
+            Slider(value: value, in: range, step: 1).disabled(auto.wrappedValue)
         }
         .help(help)
     }

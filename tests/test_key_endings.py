@@ -39,3 +39,22 @@ def test_resolve_ending_already_home_is_unchanged():
 
 def test_empty_melody_is_returned_as_is():
     assert t.resolve_ending([], 1, "4/4", (0, "major")) == []
+
+
+def test_a_relaxed_scale_lets_some_notes_stay_outside():
+    # C major with five chromatic notes (C# = 61) among white notes; the first and last are in the scale
+    notes = [(60, 0.0, 1.0)] + [(61 if i % 3 == 0 else 62, 1.0 + i * 0.5, 0.5) for i in range(10)] + [(60, 8.0, 1.0)]
+    key = (0, "major")
+    strict = t.limit_outside(notes, key, 10)
+    assert t.outside_share(strict, key) == 0, "strict: nothing outside"
+    some = t.limit_outside(notes, key, 5)
+    most = t.limit_outside(notes, key, 0)
+    assert 0 < t.outside_share(some, key) <= t.outside_share(most, key) <= 0.25 + 1e-9
+    assert [p for p, _, _ in most][0] == 60 and [p for p, _, _ in most][-1] == 60
+    assert len(most) == len(notes)
+
+
+def test_the_allowed_notes_come_from_the_mode_table():
+    assert t.scale_names((7, "lydian")) == "G A B C# D E F#"
+    assert t.scale_names((2, "dorian")) == "D E F G A B C"
+    assert t.scale_names((9, "minor")) == "A B C D E F G"

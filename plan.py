@@ -334,11 +334,12 @@ def shape_amount_knobs(amount):
 
 # What the app's sliders (and the command line's) send: all run 0..10, and this is the one place that turns them into
 # the numbers the sampler uses. The defaults are what the app did before they were sliders.
-SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0, "runs": 5.0, "flavor": 5.0}
+SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 2.0, "harmony": 3.0, "endings": 3.0, "theme": 0.0, "runs": 5.0, "flavor": 5.0,
+                   "strict": 10.0}
 
 
 def clean_sliders(sliders=None):
-    """The seven slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
+    """The eight slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
     (or listed under the "auto" key, which is how a cleaned set remembers it) keeps its default number for the
     sampler, and is named in s["auto"] so that the LLM is not given an instruction for it."""
     s = dict(SLIDER_DEFAULTS)
@@ -349,7 +350,7 @@ def clean_sliders(sliders=None):
             if isinstance(v, str) and v.lower() == "auto":
                 auto.add(name)
             elif v is not None:
-                s[name] = max(0.0, min(10.0, float(v)))
+                s[name] = float(round(max(0.0, min(10.0, float(v)))))     # whole numbers: one click on the slider
     s["auto"] = sorted(auto & set(SLIDER_DEFAULTS))
     return s
 
@@ -358,8 +359,8 @@ def from_sliders(sliders=None):
     """The slider positions (0..10; any that are missing or None take their defaults) -> {shape, form, knobs}:
     the melodic shape level (0..2), how much of the plan is in use, and the sampler's strengths."""
     s = clean_sliders(sliders)
-    knobs_ = {**shape_amount_knobs(s["shape"] / 5), "chord": s["harmony"] * 0.8, "cadence": s["endings"] * 1.5,
-              "motif": s["theme"] * 2.0, "beat": s["pulse"] * 0.3,
+    knobs_ = {**shape_amount_knobs(s["shape"] / 5), "chord": round(s["harmony"] * 2.2 / 3, 3), "cadence": round(s["endings"] * 5 / 3, 3),
+              "motif": s["theme"] * 2.0, "beat": round(s["pulse"] * 0.25, 3),
               "run": round(s["runs"] * 0.3, 3)}     # penalty on one-way scale runs; 5 = what the shape slider gave
     return {"shape": int(round(s["shape"] / 5)), "form": form_from_knobs(knobs_), "knobs": knobs_}
 

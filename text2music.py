@@ -288,7 +288,9 @@ def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(
     )
     user = f"{prompt}\nTime signature: {sig}. Length: {bars} bars ({bars * bb:g} quarter-note beats)."
     if key:
-        user += f"\nKey: {key_label(key)}. Every note must belong to the {key_label(key)} scale."
+        user += f"\nKey: {key_label(key)}. The notes of that scale are: {scale_names(key)}."
+        if "Scale rule:" not in guidance:
+            user += " Every note must belong to it."
     if chords:
         names = ", ".join(chords)
         user += f"\nThe harmony, one chord per bar: {names}. Prefer the notes of each bar's chord, especially on strong beats."
@@ -425,6 +427,12 @@ def key_label(key):
     return f"{PC_NAMES[key[0]]} {key[1]}"
 
 
+def scale_names(key):
+    """The notes of a key's scale, from its tonic up, as names ('G A B C# D E F#'). Worked out from the mode's table
+    (plan.MODES), not by the language model: this is what 'allowed' means, and what the LLM is shown."""
+    return " ".join(PC_NAMES[(key[0] + x) % 12] for x in plan.MODES.get(key[1], plan.DEG_MAJOR))
+
+
 def scale_pcs(key):
     """Pitch classes that belong to a key (tonic pitch class, 'major'|'minor')."""
     return plan.key_pcs(key[0], key[1])
@@ -444,6 +452,27 @@ def snap_to_key(notes, key, span=(0, 127)):
                 p = min(near, key=lambda x: (abs(x - p), x))
         out.append((p, s_, d))
     return out
+
+
+def limit_outside(notes, key, strict=10.0, span=(0, 127)):
+    """Bring a melody into its key, as strictly as asked. strict 10: every note outside the scale moves to the nearest
+    scale note. Lower: that many fewer move, up to a quarter of the notes at 0, so chromatic passing notes survive. The
+    ones that stay are the least harmful: short notes, off the beat, never the first or the last note."""
+    snapped = snap_to_key(notes, key, span)
+    allowed = round(len(notes) * (10 - max(0.0, min(10.0, strict))) / 10 * 0.25)
+    if allowed <= 0:
+        return snapped
+    pcs = scale_pcs(key)
+    outside = [i for i in range(1, len(notes) - 1) if notes[i][0] % 12 not in pcs]
+    outside.sort(key=lambda i: notes[i][2] + (1.0 if abs(notes[i][1] % 1) < 1e-6 else 0.0))   # short, weak first
+    keep = set(outside[:allowed])
+    return [notes[i] if i in keep else snapped[i] for i in range(len(notes))]
+
+
+def outside_share(notes, key):
+    """The fraction of the notes that are not in the key's scale."""
+    pcs = scale_pcs(key)
+    return sum(1 for p, _, _ in notes if p % 12 not in pcs) / max(len(notes), 1)
 
 
 def session_key():
@@ -649,6 +678,13 @@ def guidance_text(sliders, motif=None, key=None):
         how = "nearly note for note" if s["theme"] > 6 else "recognisably but varied"
         out.append(f"Theme: begin each phrase with the piece's opening idea {json.dumps([[p, st, d] for p, st, d in motif])} "
                    f"(start_beat, duration_beats), moved to fit that phrase's chord, {how}.")
+    if key and "strict" not in auto:
+        if s["strict"] >= 7:
+            out.append("Scale rule: use only the notes of the scale.")
+        elif s["strict"] >= 3:
+            out.append("Scale rule: use the scale's notes; an occasional chromatic passing note on a weak beat is fine.")
+        else:
+            out.append("Scale rule: the scale is the home base, but chromatic notes and notes borrowed from other scales are welcome.")
     if key and plan.is_modal(key[1]) and "flavor" not in auto and s["flavor"] > 2.5:
         semis, what = plan.FLAVOR[key[1]]
         note = PC_NAMES[(key[0] + semis) % 12]
@@ -862,7 +898,7 @@ def finish_melody(notes, bars, sig, program, enforce, resolve, phrasing, sliders
     notes, _ = conform_melody(notes, bars, sig)
     notes = [(fold_pitch(p, program), s_, d) for p, s_, d in notes]
     if enforce:
-        notes = snap_to_key(notes, enforce, span)
+        notes = limit_outside(notes, enforce, sl["strict"], span)
         if plan.is_modal(enforce[1]):
             notes = plan.flavor_notes(notes, enforce, sl["flavor"], span)    # bring in the note that gives the mode its sound
     notes = apply_breaths(notes, bars, sig, phrasing)
@@ -889,12 +925,16 @@ def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=No
     if mode and enforce[1] != mode:
         enforce = (enforce[0], mode)
         log(f"  ▸ Mode: {key_label(enforce)}.")
+    log(f"  ▸ Allowed notes in {key_label(enforce)}: {scale_names(enforce)}"
+        + ("." if sl["strict"] >= 10 else f" (relaxed: up to {round((10 - sl['strict']) * 2.5)}% of the notes may be outside)."))
     if theplan is None and plan.from_sliders(sl)["form"] > 0:
         theplan = plan.build_plan(bars, sig, enforce)
     for _ in range(count):
         notes, tempo, _plans, _declared = compose(prompt, bars, sig, level, llm, log, bpm, enforce, harmony=theplan,
                                                   sliders=sl)
         notes = finish_melody(notes, bars, sig, program, enforce, resolve, phrasing, sl, theplan)
+        if sl["strict"] < 10:
+            log(f"      {outside_share(notes, enforce):.0%} of this melody's notes are outside {key_label(enforce)}.")
         yield {"notes": notes, "tempo": tempo, "score": melody_score(notes, total_beats, target)[0], "key": enforce,
                "plan": theplan}
 
@@ -1406,7 +1446,9 @@ def main():
                        ("harmony", "how much the melody fits each bar's chord"),
                        ("endings", "how strongly phrases end on a stopping note"),
                        ("theme", "how strongly the opening idea returns in each phrase"),
-                       ("runs", "how much one-way runs up or down the scale are avoided")]:
+                       ("runs", "how much one-way runs up or down the scale are avoided"),
+                       ("flavor", "how strongly a mode's own note is used (dorian, phrygian, lydian, mixolydian)"),
+                       ("strict", "0 relaxed .. 10 strict: how closely the notes keep to the key or mode")]:
         ap.add_argument("--" + name, type=float, default=None, help=f"{text} (0..10; default {plan.SLIDER_DEFAULTS[name.replace('-', '_').replace('smooth_jumpy', 'shape')]})")
     ap.add_argument("--seed", type=int, default=None, help="random seed, for repeatable output")
     ap.add_argument("--no-resolve", action="store_true", help="don't force the melody to end on the tonic")
@@ -1425,7 +1467,8 @@ def main():
         candidates=a.candidates, source_midi=a.source_midi,
         bpm=max(40, min(a.bpm, 220)), resolve=not a.no_resolve, playable=not a.no_playable, key=parse_key(a.key or ""),
         phrasing=a.phrasing, sliders=plan.clean_sliders({"shape": a.smooth_jumpy, "pulse": a.pulse, "harmony": a.harmony,
-                                                         "endings": a.endings, "theme": a.theme, "runs": a.runs}),
+                                                         "endings": a.endings, "theme": a.theme, "runs": a.runs,
+                                                         "flavor": a.flavor, "strict": a.strict}),
     )
 
 

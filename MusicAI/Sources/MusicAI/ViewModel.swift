@@ -118,31 +118,32 @@ final class ViewModel: ObservableObject {
     // The five character sliders, each 0...10. The backend turns them into the sampler's numbers, and tells the app
     // where they start (plan.SLIDER_DEFAULTS), so neither the scale nor the defaults are repeated here.
     @Published var shapeSlider = 5.0    // smooth (0) .. jumpy (10)
-    @Published var pulseSlider = 1.67   // notes start on the beat
-    @Published var harmonySlider = 2.75 // the melody fits each bar's chord
-    @Published var endingsSlider = 3.33 // phrases end on a stopping note
+    @Published var pulseSlider = 2.0    // notes start on the beat
+    @Published var harmonySlider = 3.0  // the melody fits each bar's chord
+    @Published var endingsSlider = 3.0  // phrases end on a stopping note
     @Published var themeSlider = 0.0    // the opening idea returns in each phrase
     @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
+    @Published var strictSlider = 10.0  // relaxed (0) .. strict (10): how many notes may be outside the scale
     @Published var flavorSlider = 5.0   // how much the mode's own note (Lydian #4, Dorian ♮6...) is brought out
     /// Sliders left on Auto are sent as "auto": the backend gives the LLM no instruction for them.
     @Published var autoSliders: Set<String> = []
     var sliderValues: [String: Any] {
         let v: [String: Double] = ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider,
                                    "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider,
-                                   "flavor": flavorSlider]
+                                   "flavor": flavorSlider, "strict": strictSlider]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = autoSliders.contains($1.key) ? "auto" : $1.value }
     }
     private func applySliderDefaults(_ d: [String: Double]) {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
         harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
         themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
-        flavorSlider = d["flavor"] ?? flavorSlider
+        flavorSlider = d["flavor"] ?? flavorSlider; strictSlider = d["strict"] ?? strictSlider
         copySettingsToExpansion()
     }
     /// Step 2 starts from step 1's settings; after that each step keeps its own.
     private func copySettingsToExpansion() {
         expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
-        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider
+        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider; expandStrict = strictSlider
         expandComplexity = complexity; expandCount = optionCount
         expandPhrasing = phrasing; expandResolve = resolveEnding; expandAuto = autoSliders
     }
@@ -157,12 +158,13 @@ final class ViewModel: ObservableObject {
     @Published var expandCount = 3.0
     @Published var expandDirection = ""
     @Published var expandShape = 5.0
-    @Published var expandPulse = 1.67
-    @Published var expandHarmony = 2.75
-    @Published var expandEndings = 3.33
+    @Published var expandPulse = 2.0
+    @Published var expandHarmony = 3.0
+    @Published var expandEndings = 3.0
     @Published var expandTheme = 0.0
     @Published var expandRuns = 5.0
     @Published var expandFlavor = 5.0
+    @Published var expandStrict = 10.0
     @Published var expandPhrasing = 1
     @Published var expandResolve = true
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
@@ -172,7 +174,7 @@ final class ViewModel: ObservableObject {
     var expandSliderValues: [String: Any] {
         let v: [String: Double] = ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony,
                                    "endings": expandEndings, "theme": expandTheme, "runs": expandRuns,
-                                   "flavor": expandFlavor]
+                                   "flavor": expandFlavor, "strict": expandStrict]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
     }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.

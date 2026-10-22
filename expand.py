@@ -125,6 +125,8 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
             d = t.interpret_direction(direction, "melody", "", log)
             if not d["empty"]:
                 log("  ▸ " + _hybrid_reading(d))
+    log(f"  ▸ Allowed notes in {t.key_label(key)}: {t.scale_names(key)}"
+        + ("." if sl["strict"] >= 10 else f" (relaxed: up to {round((10 - sl['strict']) * 2.5)}% of the new notes may be outside)."))
     log(f"  ▸ Expanding {old_bars} bars by {add_bars} bars to {old_bars + add_bars}, in {t.key_label(key)} "
         f"({'the LLM continues it' if engine == 'llm' else 'the Anticipation model continues it'}).")
 
@@ -155,6 +157,8 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         new = t.finish_melody(raw, add_bars, sig, program, key, resolve, phrasing, sl, section)
         if len(new) < 4:
             continue
+        if sl["strict"] < 10:
+            log(f"      {t.outside_share(new, key):.0%} of the new notes are outside {t.key_label(key)}.")
         old = list(notes)
         first = new[0][1] + old_beats
         p, s_, dd = old[-1]
@@ -214,7 +218,9 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     lo, hi = max(plo, lo), min(phi, hi)
     if lo > hi:
         lo, hi = plo, phi
-    pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}, "pitch_classes": t.scale_pcs(key)}
+    pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}}
+    if plan.clean_sliders(sl)["strict"] >= 6:       # a relaxed scale lets the sampler wander; finish_melody then limits it
+        pool["pitch_classes"] = t.scale_pcs(key)
     weights = plan.form_weights(form, kn)
     bias = plan.shape_weights(plan.from_sliders(sl)["shape"], kn)
     if bias:
