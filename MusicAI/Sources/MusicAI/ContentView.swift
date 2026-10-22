@@ -54,6 +54,7 @@ struct SheetView: NSViewRepresentable {
 
 struct ContentView: View {
     @StateObject private var vm = ViewModel()
+    @AppStorage("showHistory") private var showHistory = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,10 +63,11 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 20) {
                 controls.frame(width: 310)
                 results.frame(maxWidth: .infinity)
+                if showHistory { historyPane.frame(width: 210) }
             }
             .padding(20)
         }
-        .frame(minWidth: 900, minHeight: 640)
+        .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
     }
@@ -79,6 +81,9 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { vm.renameSession() }
                 .help("Press Return to rename. The session's folder is renamed to match.")
+            Toggle(isOn: $showHistory) { Label("History", systemImage: "clock.arrow.circlepath") }
+                .toggleStyle(.button)
+                .help("Show or hide the list of steps you have taken, to go back to any of them")
             Menu("Sessions") {
                 Button("New session", action: vm.newSession)
                 if !vm.sessions.isEmpty {
@@ -422,6 +427,61 @@ struct ContentView: View {
 
     private func shapeWord(_ v: Double) -> String {
         v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
+    }
+
+    // MARK: History
+
+    private var historyPane: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History").font(.headline)
+            Text("Click a step to go back to it and carry on from there. Nothing is deleted: what you do next is added to the list.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if vm.history.isEmpty {
+                Text("Your steps will appear here.").font(.caption).foregroundStyle(.tertiary).padding(.top, 6)
+                Spacer()
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach(Array(vm.history.enumerated()), id: \.element.id) { i, e in
+                                historyRow(i + 1, e).id(e.id)
+                            }
+                        }
+                        .padding(2)
+                    }
+                    .onChange(of: vm.history.count) { _, _ in
+                        if let last = vm.history.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                    }
+                }
+            }
+        }
+    }
+
+    private func historyRow(_ n: Int, _ e: HistoryEntry) -> some View {
+        let current = e.id == vm.currentEntryID
+        return Button { vm.goBack(to: e) } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Text("\(n)").font(.caption.bold()).foregroundStyle(current ? .white : .secondary)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(current ? Color.accentColor : Color.secondary.opacity(0.25)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(e.title).font(.subheadline.bold()).lineLimit(2).multilineTextAlignment(.leading)
+                    if !e.detail.isEmpty {
+                        Text(e.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                    Text(e.time.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(current ? Color.accentColor.opacity(0.15) : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(current ? Color.accentColor : Color.secondary.opacity(0.3),
+                                                               lineWidth: current ? 2 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.busy)
+        .help(current ? "You are here" : "Go back to this step")
     }
 
     // MARK: Right column

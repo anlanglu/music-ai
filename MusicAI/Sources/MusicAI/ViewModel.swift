@@ -44,6 +44,27 @@ struct Orchestration {
 
 enum AccompMode: String { case auto, oneByOne }
 
+/// Everything the results area shows, so that a step can be gone back to. The files themselves stay on disk.
+struct Snapshot {
+    var candidates: [Candidate]
+    var selectedID: UUID?
+    var orchestration: Orchestration?
+    var partOptions: [PartCandidate]
+    var selectedPartID: UUID?
+    var partsAdded: [String]
+    var partHistory: [Orchestration?]
+    var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)]
+}
+
+/// One step in the history pane: what was done, and the state it left behind.
+struct HistoryEntry: Identifiable {
+    let id = UUID()
+    let title: String
+    let detail: String
+    let time: Date
+    var snapshot: Snapshot
+}
+
 /// A musical key the melody can be forced into (tonic pitch class 0-11, mode).
 struct KeyChoice: Hashable, Identifiable {
     let name: String
@@ -134,6 +155,7 @@ final class ViewModel: ObservableObject {
     @Published var expandResolve = true
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
+    private var lastExpandBars = 4.0
     var expandSliderValues: [String: Double] {
         ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony, "endings": expandEndings, "theme": expandTheme,
          "runs": expandRuns]
@@ -327,9 +349,11 @@ final class ViewModel: ObservableObject {
             if expandJustRan {
                 expandJustRan = false
                 selectedID = candidates.first?.id     // so Expand can go straight on from it; click another to switch
+                record("Expanded by \(Int(lastExpandBars)) bars", "\(candidates.count) options")
                 status = "Option 1 is selected. Pick the one you like, then expand again or add the accompaniment."
             } else {
                 copySettingsToExpansion()
+                record("Melodies", "\(candidates.count) option\(candidates.count == 1 ? "" : "s")")
                 status = candidates.count == 1 ? "Melody ready — expand it, add the accompaniment, or generate again."
                                                : "Pick the melody you like, or generate new options."
             }
@@ -338,6 +362,7 @@ final class ViewModel: ObservableObject {
             status = "\(partInstrument.name) option \(c.index) ready"
         case .partsDone:
             busy = false
+            record("\(partInstrument.name) options", "\(partOptions.count) to choose from")
             status = "Choose the \(partInstrument.name.lowercased()) part you like, then approve it — or generate new options."
         case .partApproved(let url, let notes, let programs):
             busy = false
@@ -346,6 +371,7 @@ final class ViewModel: ObservableObject {
             orchestration = Orchestration(full: url, notes: notes, programs: programs)
             partOptions = []
             selectedPartID = nil
+            record("Added \(partInstrument.name.lowercased())", partsAdded.joined(separator: ", "))
             status = "Added \(partInstrument.name.lowercased()). Pick another instrument, or you're done."
             ensureSheet()
             play(url)
@@ -353,6 +379,7 @@ final class ViewModel: ObservableObject {
             busy = false
             if let full {
                 orchestration = Orchestration(full: full, notes: notes, programs: programs)
+                record("Accompaniment", "\(notes.count) notes")
                 ensureSheet()
                 status = "Done — \(notes.count) notes. Press Play, or re-roll the accompaniment."
                 play(full)
@@ -429,6 +456,7 @@ final class ViewModel: ObservableObject {
     func newSession() {
         guard ready, !busy else { return }
         clearWork()
+        resetHistory()
         sessionName = Self.defaultSessionName()
         status = "New session. Describe a melody and press Generate melodies."
         send(["cmd": "session_new"])
@@ -437,6 +465,7 @@ final class ViewModel: ObservableObject {
     func openSession(_ info: SessionInfo) {
         guard ready, !busy, info.path != sessionURL else { return }
         clearWork()
+        resetHistory()
         status = "Opening \(info.name)…"
         send(["cmd": "session_open", "path": info.path.path])
     }
@@ -486,6 +515,54 @@ final class ViewModel: ObservableObject {
             partsAdded = []
             ensureSheet()
         }
+        refreshCurrentEntry()
+    }
+
+    // MARK: History: every step taken in this session, each one a place to go back to
+
+    @Published var history: [HistoryEntry] = []
+    @Published var currentEntryID: UUID?
+
+    private func snapshot() -> Snapshot {
+        Snapshot(candidates: candidates, selectedID: selectedID, orchestration: orchestration, partOptions: partOptions,
+                 selectedPartID: selectedPartID, partsAdded: partsAdded, partHistory: partHistory,
+                 expansionHistory: expansionHistory)
+    }
+
+    private func record(_ title: String, _ detail: String = "") {
+        let e = HistoryEntry(title: title, detail: detail, time: Date(), snapshot: snapshot())
+        history.append(e)
+        currentEntryID = e.id
+    }
+
+    /// Choosing an option is not a step of its own, but the step it happened in should remember it.
+    private func refreshCurrentEntry() {
+        guard let id = currentEntryID, let i = history.firstIndex(where: { $0.id == id }) else { return }
+        history[i].snapshot = snapshot()
+    }
+
+    private func resetHistory() {
+        history = []
+        currentEntryID = nil
+    }
+
+    /// Go back to how things were after a step. Later steps stay in the list, and whatever you do next is added after them.
+    func goBack(to entry: HistoryEntry) {
+        guard !busy, entry.id != currentEntryID else { return }
+        stop()
+        let s = entry.snapshot
+        candidates = s.candidates
+        selectedID = s.selectedID
+        orchestration = s.orchestration
+        partOptions = s.partOptions
+        selectedPartID = s.selectedPartID
+        partsAdded = s.partsAdded
+        partHistory = s.partHistory
+        expansionHistory = s.expansionHistory
+        expandJustRan = false
+        currentEntryID = entry.id
+        status = "Back to: \(entry.title). Carry on from here."
+        ensureSheet()
     }
 
     // MARK: Stage 2: expand the melody
@@ -497,6 +574,7 @@ final class ViewModel: ObservableObject {
         candidates = []
         selectedID = nil
         expandJustRan = true
+        lastExpandBars = expandBars
         busy = true
         status = "Expanding the melody by \(Int(expandBars)) bars…"
         send([
@@ -512,6 +590,7 @@ final class ViewModel: ObservableObject {
         stop()
         candidates = last.candidates
         selectedID = last.selectedID
+        record("Undid the expansion")
         status = "Back to the melody before the expansion."
     }
 
@@ -567,6 +646,7 @@ final class ViewModel: ObservableObject {
     func selectPart(_ c: PartCandidate) {
         guard !busy else { return }
         selectedPartID = c.id
+        refreshCurrentEntry()
         ensureSheet()
     }
 
@@ -586,6 +666,7 @@ final class ViewModel: ObservableObject {
         let removed = partsAdded.popLast() ?? "part"
         partOptions = []
         selectedPartID = nil
+        record("Removed \(removed.lowercased())")
         status = "Removed \(removed.lowercased())."
         ensureSheet()
     }
