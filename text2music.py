@@ -47,7 +47,8 @@ LLMS = {
 ANT = "stanford-crfm/music-{size}-800k"
 
 SYSTEM = """You are a composer. Reply with ONLY a JSON object, no prose, in this form:
-{"plan": "<one or two sentences: the motif, how it develops, where the climax is>",
+{"reading": "<one sentence: what you understood the request to ask for (mood, imagery, character) and how you used it: tempo, key, rhythm, contour>",
+ "plan": "<one or two sentences: the motif, how it develops, where the climax is>",
  "key": "<tonic> <major|minor>, the key the notes are actually in (e.g. D minor)", "tempo": <bpm int>,
  "notes": [[midi_pitch, start_beat, duration_beats], ...]}
 Rules: a single monophonic melody in {sig} time (one bar = {bar_beats:g} quarter-note beats), pitches
@@ -316,7 +317,7 @@ def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(
         tempo_out = int(float(data.get("tempo", 100)))
     except (TypeError, ValueError):
         tempo_out = 100
-    return tempo_out, notes, str(data.get("plan", "")), str(data.get("key", ""))
+    return tempo_out, notes, str(data.get("plan", "")), str(data.get("key", "")), str(data.get("reading", ""))
 
 
 def _json_with_notes(raw):
@@ -590,6 +591,11 @@ def retime(path, tempo, sig):
     out.save(str(path))
 
 
+def _short(text, n=260):
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
 def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None):
     """Write the melody a short phrase at a time: small LLMs lose the plot (and stop early) over long
     spans, and each phrase can then answer / develop the one before it.
@@ -609,7 +615,7 @@ def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None
         best = None
         for attempt in range(1, 4):
             try:
-                t, raw, idea, said_key = llm_melody(prompt, n_bars, sig, level, llm, prev, (c + 1, n_chunks), tempo, key, here)
+                t, raw, idea, said_key, reading = llm_melody(prompt, n_bars, sig, level, llm, prev, (c + 1, n_chunks), tempo, key, here)
             except ValueError as e:   # unusable reply: ask again instead of failing the whole melody
                 log(f"      phrase {c + 1}/{n_chunks} attempt {attempt}: unusable reply ({str(e).splitlines()[0][:50]}), retrying")
                 continue
@@ -617,20 +623,32 @@ def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None
             richness = min(len(notes) / target, 1.0)
             score = 2 * coverage + richness + min(len({d for _, _, d in notes}) / (level + 1), 1.0)
             if best is None or score > best[0]:
-                best = (score, t, notes, idea, said_key)
+                best = (score, t, notes, idea, said_key, reading)
             if coverage >= 0.95 and richness >= 0.7:
                 break
             log(f"      phrase {c + 1}/{n_chunks} attempt {attempt}: {len(notes)} notes (want ~{target:.0f}), "
                 f"fills {coverage:.0%}, retrying")
         if best is None:
             raise RuntimeError("The LLM did not produce a usable melody; try again or reword the prompt")
-        _, t, notes, idea, said_key = best
+        _, t, notes, idea, said_key, reading = best
         declared = declared or said_key  # the key the LLM says it wrote the opening phrase in
         if not notes:
             raise RuntimeError("The LLM did not produce a usable melody; try again or reword the prompt")
         tempo = tempo or max(40, min(t, 220))  # a requested bpm wins over whatever the LLM wrote
         if idea:
             plans.append(idea)
+        if c == 0:       # what the language model made of the request, once per melody
+            if reading:
+                log(f"  ▸ The LLM understood: {_short(reading)}")
+            if bpm and t and abs(t - bpm) > 2:
+                log(f"  ▸ It suggested {t} bpm; your {bpm} bpm is used.")
+            said = parse_key(said_key) if said_key else None
+            if key and said and said != tuple(key):
+                log(f"  ▸ It wrote in {said_key}; the notes are fitted to your {key_label(key)}.")
+            elif said and not key:
+                log(f"  ▸ It chose the key itself: {key_label(said)}.")
+        if idea:
+            log(f"  ▸ Its plan for phrase {c + 1}: {_short(idea)}")
         shift = c * chunk * bb
         all_notes += [(p, s + shift, d) for p, s, d in notes]
         prev = notes
@@ -688,6 +706,33 @@ def apply_breaths(notes, bars, sig, phrasing):
 # The presets live in plan.py, together with the rest of the knobs the app can turn.
 
 
+def explain_prompt(prompt, engine, user_key, bpm, bars, level, llm, log):
+    """Tell the user, in the log, how the prompt is going to be used (it is different for every engine)."""
+    import composer
+
+    tag = "  ▸ "
+    shown = " ".join(prompt.split())
+    log(f"{tag}Your prompt: “{_short(shown, 120)}”")
+    if engine == "theory":
+        mood = composer.mood_of(prompt)
+        how = (f"the theory composer does not read sentences; from the prompt it takes only the key and the mood"
+               + (f" (“{mood[0]}” suggests {mood[1]})" if mood else " (no mood word found)"))
+    elif engine == "llm":
+        how = f"the {llm} LLM reads all of it and writes every one of the {bars} bars, a phrase at a time, each answering the last"
+    else:
+        how = (f"the {llm} LLM reads all of it and writes only the opening bar; the Anticipation model, which never sees "
+               f"your words, then continues that bar for {bars} bars")
+    log(f"{tag}How it is used: {how}.")
+    named = parse_key(prompt)
+    if user_key:
+        key_text = f"key {key_label(user_key)} (set by you)"
+    elif named:
+        key_text = f"key {key_label(named)} (named in your prompt)"
+    else:
+        key_text = "no key forced (" + ("the mood picks one" if engine == "theory" else "the LLM chooses") + ")"
+    log(f"{tag}Fixed rather than guessed: {key_text}, {bpm} bpm, {bars} bars, complexity {level}.")
+
+
 def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engine, log, bpm=None, resolve=True, key=None,
                       phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None, knobs=None):
     """Yield up to `count` distinct melodies as dicts {notes, tempo, score}.
@@ -705,6 +750,7 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
     pcs = scale_pcs(enforce) if enforce else None
     knobs = plan.knobs(knobs)
     weights = plan.form_weights(form, knobs)
+    explain_prompt(prompt, engine, key, bpm or 90, bars, level, llm, log)
     if engine == "theory":   # rule-based composer: no LLM, no model (see composer.py)
         import random
 

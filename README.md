@@ -41,6 +41,11 @@ constants in `text2music.py`, not options. The command line has the same five sl
 `--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
 numbers, for the app and the command line alike.
 
+The log under the results also says how the prompt was used: what is fixed (key, tempo, length), how the chosen engine
+reads the words (the theory composer takes only key and mood; Hybrid lets the LLM write the opening bar for Anticipation to
+continue; LLM-only writes every bar), and, for the LLM engines, the model's own one-sentence reading of the request, its plan
+for each phrase, and where its key or tempo was overridden by yours. Lines start with ▸.
+
 ## Requirements and install
 
 Apple-silicon Mac, macOS 14+, 16 GB RAM, about 15 GB of disk (models download once from Hugging Face), Python 3.11 and the

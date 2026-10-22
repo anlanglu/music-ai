@@ -43,7 +43,7 @@ def _stub(monkeypatch, fail_times):
         calls["n"] += 1
         if calls["n"] <= fail_times:
             raise ValueError("LLM returned no usable JSON:\nxx")
-        return 90, good, "plan", "C major"
+        return 90, good, "plan", "C major", "reading"
 
     monkeypatch.setattr(t, "llm_melody", fake)
     return calls
@@ -68,8 +68,33 @@ def test_compose_keeps_the_enforced_key_as_a_pair_across_phrases(monkeypatch):
 
     def fake(prompt, bars, sig, level, llm, prev, phrase, tempo, key, chords=None):
         seen.append(key)
-        return 90, [(60 + i, i, 1) for i in range(bars * 4)], "plan", "C minor"
+        return 90, [(60 + i, i, 1) for i in range(bars * 4)], "plan", "C minor", "reading"
 
     monkeypatch.setattr(t, "llm_melody", fake)
     t.compose("x", 8, "4/4", 3, "7B", lambda s: None, 90, (0, "minor"))
     assert seen and all(k == (0, "minor") for k in seen)
+
+
+def test_the_log_says_what_the_llm_understood(monkeypatch):
+    def fake(*a, **k):
+        return 120, [(60 + i, i, 1) for i in range(8)], "a rising motif, climax in bar 2", "D minor", "a calm mood, so slow and low"
+
+    monkeypatch.setattr(t, "llm_melody", fake)
+    lines = []
+    t.compose("x", 2, "4/4", 3, "7B", lines.append, 90, (0, "major"))
+    text = "\n".join(lines)
+    assert "understood: a calm mood" in text
+    assert "suggested 120 bpm; your 90 bpm is used" in text
+    assert "fitted to your C major" in text
+    assert "plan for phrase 1: a rising motif" in text
+
+
+def test_the_log_explains_how_each_engine_uses_the_prompt():
+    for engine, needle in [("theory", "does not read sentences"), ("llm", "writes every one"), ("hybrid", "never sees")]:
+        lines = []
+        t.explain_prompt("a sad tune", engine, None, 80, 8, 3, "7B", lines.append)
+        text = "\n".join(lines)
+        assert needle in text and "Your prompt" in text
+    lines = []
+    t.explain_prompt("a sad tune", "theory", None, 80, 8, 3, "7B", lines.append)
+    assert "sad" in "\n".join(lines) and "minor" in "\n".join(lines)

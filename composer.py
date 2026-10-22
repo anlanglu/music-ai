@@ -12,6 +12,7 @@ How it works (the way a student of composition would):
 Everything is in scale degrees until the very end, so the melody cannot leave its key. Returns notes as
 (pitch, start_beat, dur_beats) in quarter-note beats, monophonic, on a sixteenth-note grid.
 """
+import re
 import math
 
 from plan import (  # the scales, the chord progressions and the phrase plan live in plan.py: every engine uses them
@@ -48,6 +49,17 @@ _COMPOUND_CELLS = [  # 6/8, 12/8: the beat is a dotted quarter (1.5)
 ]
 _MOODS_MINOR = ("sad", "melanchol", "dark", "tense", "mysterious", "somber", "sorrow", "lonely", "haunting", "ominous", "dramatic")
 _MOODS_MAJOR = ("happy", "bright", "playful", "hopeful", "upbeat", "joy", "cheerful", "sunny", "triumph", "festive", "gentle")
+
+
+def mood_of(prompt):
+    """(the word, 'minor'|'major') for the first mood word in a prompt that suggests a mode, else None."""
+    p = (prompt or "").lower()
+    for words, mode in ((_MOODS_MINOR, "minor"), (_MOODS_MAJOR, "major")):
+        for w in words:
+            m = re.search(rf"\w*{w}\w*", p)
+            if m:
+                return m.group(0), mode
+    return None
 
 
 def auto_key(prompt, rng):
