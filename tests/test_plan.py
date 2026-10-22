@@ -311,6 +311,9 @@ def test_modes_have_the_right_notes_and_signatures():
     assert notation._sharps((7, "mixolydian")) == 0 and notation._sharps((9, "minor")) == 0
     assert notation._sharps((7, "lydian")) == 2, "G lydian has the notes of D major"
     assert notation._sharps((9, "dorian")) == 1, "A dorian has the notes of G major"
+    assert notation._sharps((11, "locrian")) == 0
+    assert t.scale_pcs((11, "locrian")) == {11, 0, 2, 4, 5, 7, 9}, "B locrian is the white notes"
+    assert plan.chord_name(11, "locrian", 0) == "B diminished"
     assert t.parse_key("a dreamy tune in D Dorian") == (2, "dorian")
     assert t.parse_key("something in F# lydian") == (6, "lydian")
     assert t.parse_key("in A aeolian") == (9, "minor") and t.parse_key("C ionian") == (0, "major")
@@ -318,7 +321,7 @@ def test_modes_have_the_right_notes_and_signatures():
 
 def test_a_modal_plan_uses_the_modes_chords():
     import random
-    for mode in ("dorian", "phrygian", "lydian", "mixolydian"):
+    for mode in ("dorian", "phrygian", "lydian", "mixolydian", "locrian"):
         p = plan.build_plan(8, "4/4", (2, mode), random.Random(3))
         assert p["key"] == (2, mode) and len(p["chords"]) == 8 and p["chords"][-1] == 0
         assert all(0 <= c < 7 for c in p["chords"])

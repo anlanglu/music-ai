@@ -258,7 +258,7 @@ struct ContentView: View {
             Picker("Mode", selection: $vm.keyMode) {
                 ForEach(Mode.all, id: \.id) { Text($0.name).tag($0.id) }
             }
-            .help("The scale built on that home note. Major and minor are the usual two. Dorian, Phrygian, Lydian and Mixolydian each change one or two notes to get a different colour (Lydian: bright and dreamy; Dorian: minor but warmer; Mixolydian: major but bluesy; Phrygian: dark, Spanish). Auto: a mode named in your prompt, otherwise major or minor to suit the mood.")
+            .help("The scale built on that home note. Major and minor are the usual two. Dorian, Phrygian, Lydian, Mixolydian and Locrian each change notes to get a different colour (Lydian: bright and dreamy; Dorian: minor but warmer; Mixolydian: major but bluesy; Phrygian: dark, Spanish; Locrian: unstable and tense, rarely used for a whole tune). Auto: a mode named in your prompt, otherwise major or minor to suit the mood.")
             HStack {
                 Text("Tempo"); Spacer()
                 TextField("80", text: $vm.bpmText)
@@ -407,7 +407,7 @@ struct ContentView: View {
                     readout: strict.wrappedValue >= 10 ? "Strict" : strict.wrappedValue <= 0 ? "Relaxed" : "\(Int(strict.wrappedValue))",
                     help: "How closely \(what) keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
             knobRow("Modal flavor", flavor, 0...10, auto: autoBinding(auto, "flavor"),
-                    help: "Only for Dorian, Phrygian, Lydian and Mixolydian. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
+                    help: "Only for the modes other than major and minor. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th, Locrian's flat 5th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
             Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: phrasing) {
                 Text("Flowing").tag(0)

@@ -35,15 +35,15 @@ SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10, 11]     # natural minor plus the raised 7th
 MODES = {
     "major": DEG_MAJOR, "minor": DEG_MINOR,
     "dorian": [0, 2, 3, 5, 7, 9, 10], "phrygian": [0, 1, 3, 5, 7, 8, 10],
-    "lydian": [0, 2, 4, 6, 7, 9, 11], "mixolydian": [0, 2, 4, 5, 7, 9, 10],
+    "lydian": [0, 2, 4, 6, 7, 9, 11], "mixolydian": [0, 2, 4, 5, 7, 9, 10], "locrian": [0, 1, 3, 5, 6, 8, 10],
 }
-MODE_ORDER = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian"]
+MODE_ORDER = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian"]
 MODE_ALIASES = {"ionian": "major", "aeolian": "minor", "maj": "major", "min": "minor"}
 # the major key with the same notes, as semitones below the mode's tonic (for the key signature)
-PARENT_MAJOR_BELOW = {"major": 0, "minor": 9, "dorian": 2, "phrygian": 4, "lydian": 5, "mixolydian": 7}
+PARENT_MAJOR_BELOW = {"major": 0, "minor": 9, "dorian": 2, "phrygian": 4, "lydian": 5, "mixolydian": 7, "locrian": 11}
 # the note that gives a mode its sound: (semitones above the tonic, what it is called)
 FLAVOR = {"dorian": (9, "the raised 6th"), "phrygian": (1, "the flat 2nd"), "lydian": (6, "the raised 4th"),
-          "mixolydian": (10, "the flat 7th")}
+          "mixolydian": (10, "the flat 7th"), "locrian": (6, "the flat 5th")}
 
 
 def is_modal(mode):
@@ -72,6 +72,9 @@ MODAL_PROGRESSIONS = {
                  "cont": [[3, 1, 6, 3], [6, 1, 0, 3]], "final": [[0, 1, 6, 0], [0, 6, 1, 0]]},
     "lydian": {"ante": [[0, 1, 0, 4], [0, 0, 1, 4]], "cons": [[0, 1, 4, 0], [0, 4, 1, 0]],
                "cont": [[1, 4, 0, 1], [4, 1, 5, 0]], "final": [[0, 1, 4, 0], [0, 4, 1, 0]]},
+    # Locrian's tonic chord is diminished and unstable, so the harmony leans on the major chords II, V and VI instead
+    "locrian": {"ante": [[0, 1, 0, 4], [0, 0, 1, 4]], "cons": [[0, 1, 4, 0], [0, 5, 1, 0]],
+                "cont": [[3, 1, 5, 3], [1, 4, 5, 0]], "final": [[0, 1, 5, 0], [0, 4, 1, 0]]},
     "mixolydian": {"ante": [[0, 6, 0, 6], [0, 3, 6, 6]], "cons": [[0, 6, 3, 0], [0, 3, 6, 0]],
                    "cont": [[3, 6, 0, 3], [5, 3, 6, 0]], "final": [[0, 6, 3, 0], [0, 3, 6, 0]]},
 }
@@ -124,7 +127,8 @@ def chord_name(tonic, mode, degree):
         third = scale[d] + 4
     else:
         third = scale[(d + 2) % 7] + (12 if (d + 2) >= 7 else 0)
-    quality = "minor" if (third - scale[d]) % 12 == 3 else "major"
+    fifth = scale[(d + 4) % 7] + (12 if (d + 4) >= 7 else 0)
+    quality = "diminished" if fifth - scale[d] == 6 else "minor" if (third - scale[d]) % 12 == 3 else "major"
     return f"{_NOTE_NAMES[root]} {quality}"
 
 

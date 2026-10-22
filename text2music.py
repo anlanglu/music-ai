@@ -395,7 +395,7 @@ def parse_key(prompt):
     A lone lowercase 'a' is the article, not the note, so A must be capitalised. When a prompt names more than one
     ('C major scale in C lydian'), a modal one (dorian, lydian...) wins over major or minor, as the more specific."""
     found = []
-    for m in re.finditer(r"\b([A-Ga-g])\s?(#|sharp|♯|b|flat|♭)?[ -]?(major|minor|maj|min|ionian|aeolian|dorian|phrygian|lydian|mixolydian)\b",
+    for m in re.finditer(r"\b([A-Ga-g])\s?(#|sharp|♯|b|flat|♭)?[ -]?(major|minor|maj|min|ionian|aeolian|dorian|phrygian|lydian|mixolydian|locrian)\b",
                          prompt or "", re.I):
         letter, acc, mode = m.groups()
         if letter == "a" and not (acc or "").strip():
@@ -413,7 +413,7 @@ def parse_key(prompt):
 def parse_mode(prompt):
     """A mode named in a prompt with or without a note ('in lydian mode', 'a dorian tune'), else None. Used to override
     the mode of whatever key the prompt or the app gave, and to set the mode when no note is named."""
-    m = re.search(r"\b(dorian|phrygian|lydian|mixolydian|ionian|aeolian)\b", prompt or "", re.I)
+    m = re.search(r"\b(dorian|phrygian|lydian|mixolydian|locrian|ionian|aeolian)\b", prompt or "", re.I)
     if not m:
         return None
     name = m.group(1).lower()

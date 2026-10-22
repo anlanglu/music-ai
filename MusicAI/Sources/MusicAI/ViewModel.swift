@@ -79,7 +79,7 @@ struct KeyChoice: Hashable, Identifiable {
 enum Mode {
     static let all: [(id: String, name: String)] = [
         ("auto", "Auto (from prompt)"), ("major", "Major (Ionian)"), ("minor", "Minor (Aeolian)"), ("dorian", "Dorian"),
-        ("phrygian", "Phrygian"), ("lydian", "Lydian"), ("mixolydian", "Mixolydian"),
+        ("phrygian", "Phrygian"), ("lydian", "Lydian"), ("mixolydian", "Mixolydian"), ("locrian", "Locrian"),
     ]
 }
 

@@ -39,7 +39,7 @@ A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody s
 | **Phrase endings** | each phrase finishes on a note that sounds like a stopping place, like a full stop |
 | **Recurring theme** | the opening idea comes back at the start of each phrase, moved onto its chord (off by default) |
 | **Avoid scale runs** | how much one-way runs up or down the scale are cut short, independent of Smooth ↔ Jumpy |
-| **Modal flavor** | with a mode (Dorian, Phrygian, Lydian, Mixolydian) chosen next to the Key: how often the note that gives the mode its sound is used |
+| **Modal flavor** | with a mode (Dorian, Phrygian, Lydian, Mixolydian, Locrian) chosen next to the Key: how often the note that gives the mode its sound is used |
 
 The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
