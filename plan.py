@@ -310,6 +310,21 @@ def presets():
                        "shape": ["Stepwise", "Balanced", "Angular"]}}
 
 
+def shape_amount_knobs(amount):
+    """The shape numbers for a point on the Stepwise (0) .. Balanced (1) .. Angular (2) line: the presets, blended.
+    This is what the single 'Melodic shape' slider sends."""
+    x = max(0.0, min(2.0, float(amount)))
+    lo, hi, t = (None, SHAPE_BIAS[1], x) if x <= 1 else (SHAPE_BIAS[1], SHAPE_BIAS[2], x - 1)
+    return {name: round((lo[name] if lo else 0.0) * (1 - t) + hi[name] * t, 3) for name in hi}
+
+
+def form_from_knobs(k):
+    """How much of the plan is in use, read from the strengths: the idea coming back needs the whole plan (3), a
+    cadence needs the phrases (2), a chord preference needs the harmony (1); all three at zero is a free melody."""
+    k = knobs(k)
+    return 3 if k["motif"] > 0 else 2 if k["cadence"] > 0 else 1 if k["chord"] > 0 else 0
+
+
 def form_label(form):
     """The name of a setting of the 'form' slider."""
     return FORM_LABELS[max(0, min(3, int(form)))]

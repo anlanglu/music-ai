@@ -121,3 +121,14 @@ def test_round_trip_create_approve_rename_reopen(backend):
     assert kinds.count("candidate") == 3, "the melody options come back"
     done = [e for e in ev if e["type"] == "done"]
     assert done and "piece01-" in done[-1]["full"], "the approved piece comes back"
+
+
+def test_the_app_sends_one_shape_slider_and_the_plan_strengths(backend):
+    """What the app's sliders send: shape_amount and knobs, with no form or shape of their own."""
+    req = {k: v for k, v in MELODY.items() if k != "shape"}
+    for amount, knobs in [(0.0, {"chord": 0.0, "cadence": 0.0, "motif": 0.0, "beat": 0.5}),
+                          (1.4, {"chord": 2.2, "cadence": 5.0, "motif": 0.0, "beat": 0.5}),
+                          (2.0, {"chord": 2.2, "cadence": 5.0, "motif": 8.0, "beat": 3.0})]:
+        backend.send(**req, shape_amount=amount, knobs=knobs)
+        ev = backend.until({"melodies_done", "error"})
+        assert ev[-1]["type"] == "melodies_done", (amount, ev[-1])

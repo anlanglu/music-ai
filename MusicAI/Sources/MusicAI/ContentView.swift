@@ -126,9 +126,9 @@ struct ContentView: View {
                 Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
                     .help("When a key was chosen for the melody, the added parts only use notes from that key")
                 if vm.accompMode == .auto { autoControls } else { oneByOneControls }
-
-                DisclosureGroup("Advanced", isExpanded: $vm.showAdvanced) { advanced.padding(.top, 8) }
-                    .padding(.top, 4)
+                DisclosureGroup("Generation settings", isExpanded: $vm.showGeneration) {
+                    generationSettings.padding(.top, 8)
+                }
             }
             .padding(.trailing, 10)
         }
@@ -282,41 +282,39 @@ struct ContentView: View {
             }
             Slider(value: $vm.complexity, in: 1...5, step: 1)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Melodic shape").font(.callout)
-                Picker("Melodic shape", selection: $vm.shape) {
-                    Text("Stepwise").tag(0)
-                    Text("Balanced").tag(1)
-                    Text("Angular").tag(2)
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                .onChange(of: Int(vm.shape)) { _, new in vm.applyShape(new) }
-                .help("How much the line moves by leaps and changes direction instead of running up and down the scale. Applies to Hybrid and Theory composer. Stepwise: as before. Choosing a shape sets the sliders under Advanced; moving one of them on its own keeps your change.")
+            Picker("Anticipation model", selection: $vm.size) {
+                ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Phrasing").font(.callout)
-                Picker("Phrasing", selection: $vm.phrasing) {
-                    Text("Flowing").tag(0)
-                    Text("Balanced").tag(1)
-                    Text("Spacious").tag(2)
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                .help("Rests between ideas and phrases. Flowing: the melody never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
+            .pickerStyle(.segmented)
+            .disabled(vm.engine != "hybrid")
+            .help("The Anticipatory Music Transformer used by the Hybrid engine, and later for the accompaniment. Larger is slower and usually better.")
+            Picker("Melody LLM", selection: $vm.llm) {
+                Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
+                Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
             }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Form").font(.callout); Spacer()
-                    Text(["Free", "Harmony", "Cadences", "Full"][Int(vm.form)]).foregroundStyle(.secondary)
-                }
-                Slider(value: $vm.form, in: 0...3, step: 1)
-                .onChange(of: Int(vm.form)) { _, new in vm.applyForm(new) }
-                .help("How much of a written plan the melody follows. Free: the melody wanders. Harmony: every bar has a chord, and the melody prefers its notes. Cadences: each phrase ends on a chord tone. Full: the opening idea comes back at the start of every phrase. Choosing one sets the sliders under Advanced.")
+            .disabled(vm.engine == "theory")
+            .help("Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
+
+            Divider()
+            Text("Character of the melody").font(.callout)
+            knobRow("Melodic shape", $vm.shapeAmount, 0...2, readout: shapeWord(vm.shapeAmount),
+                    help: "Stepwise: the line walks up and down the scale. Angular: it leaps and turns. This one slider sets how much the melody avoids scale runs, repeated notes and a few pitches, and how much it likes leaps. Applies to Hybrid and Theory composer.")
+            knobRow("Sit on the beat", $vm.knobBeat, 0...3,
+                    help: "How strongly note beginnings prefer the beat, and the barline twice as much. Hybrid engine.")
+            knobRow("Follow the chords", $vm.knobChord, 0...8,
+                    help: "How strongly the melody prefers the notes of the chord under each bar. Zero ignores the harmony; the accompaniment then follows the key alone. Hybrid engine.")
+            knobRow("Land on the cadence", $vm.knobCadence, 0...15,
+                    help: "How strongly each phrase is pulled towards the note it ends on, so it arrives somewhere. Hybrid engine.")
+            knobRow("Bring the idea back", $vm.knobMotif, 0...20,
+                    help: "How strongly the opening idea returns at the start of every later phrase, moved onto that phrase's chord. Zero: it never does. Hybrid engine.")
+            Text("Rests between ideas").font(.callout)
+            Picker("Phrasing", selection: $vm.phrasing) {
+                Text("Flowing").tag(0)
+                Text("Balanced").tag(1)
+                Text("Spacious").tag(2)
             }
-            Button(vm.showAdvanced ? "Hide the fine-tuning sliders" : "Fine-tune with sliders…") {
-                vm.showAdvanced.toggle()
-            }
-            .buttonStyle(.link).font(.caption)
-            .help("Shape and Form are presets. The sliders under Advanced set the numbers behind them.")
+            .pickerStyle(.segmented).labelsHidden()
+            .help("Rests between ideas and phrases. Flowing: the melody never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
             Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
                 .help("Changes only the final note, so the melody ends on the tonic")
 
@@ -328,89 +326,37 @@ struct ContentView: View {
         }
     }
 
-    private var advanced: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Model", selection: $vm.size) {
-                ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
-            }.pickerStyle(.segmented)
-            Picker("Melody LLM", selection: $vm.llm) {
-                Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
-                Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+    /// A labelled slider with its value beside it.
+    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
+                         readout: String? = nil, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title); Spacer()
+                Text(readout ?? (value.wrappedValue == 0 ? "off" : value.wrappedValue.formatted(.number.precision(.fractionLength(1)))))
+                    .monospacedDigit().foregroundStyle(.secondary)
             }
-            .disabled(vm.engine == "theory")
-            .help("Models download once and are kept on disk; the app never asks again. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
+            Slider(value: value, in: range)
+        }
+        .help(help)
+    }
+
+    private func shapeWord(_ v: Double) -> String {
+        v < 0.5 ? "Stepwise" : v < 1.5 ? "Balanced" : "Angular"
+    }
+
+    /// Settings of the accompaniment generator, kept out of the way.
+    private var generationSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Toggle("Read part directions with an LLM", isOn: $vm.llmDirections)
                 .help("On: free-text directions are understood by the language model. Off: only a fixed set of keywords is recognised.")
             Toggle("Enforce meter (snap added parts to the beat grid)", isOn: $vm.enforceMeter)
             LabeledContent("Top-p \(vm.topP, specifier: "%.2f")") { Slider(value: $vm.topP, in: 0.5...1) }
+                .help("Lower is safer and more repetitive; higher is more adventurous.")
             LabeledContent("Retries \(Int(vm.attempts))") { Slider(value: $vm.attempts, in: 1...20, step: 1) }
+                .help("How many times a part is regenerated if it is too sparse.")
             LabeledContent("Min notes/s \(vm.minDensity, specifier: "%.1f")") {
                 Slider(value: $vm.minDensity, in: 0...5, step: 0.5)
             }
-
-            Divider()
-            Text("The melody's shape, in numbers").font(.callout)
-            Text("These are the settings behind Melodic shape and Form. Move one and it stays moved; choosing a shape or a form again puts the others back.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-
-            LabeledContent("Avoid scale runs") {
-                knobSlider($vm.knobRun, "run", 0...5)
-            }
-            .help("How much the melody is discouraged from running up and down the scale in one direction.")
-            LabeledContent("Like leaps") {
-                knobSlider($vm.knobLeap, "leap", 0...4)
-            }
-            .help("How much the melody likes to jump by a third or more instead of stepping.")
-            LabeledContent("Avoid repeats") {
-                knobSlider($vm.knobRepeat, "repeat", 0...4)
-            }
-            .help("How much the melody is discouraged from repeating the same note.")
-            LabeledContent("Like varied pitches") {
-                knobSlider($vm.knobVariety, "variety", 0...4)
-            }
-            .help("How much the melody is discouraged from sticking to a handful of pitches.")
-            LabeledContent("Sit on the beat") {
-                knobSlider($vm.knobBeat, "beat", 0...3)
-            }
-            .help("How strongly the melody's note beginnings prefer the beat, and the barline twice as much.")
-
-            Divider()
-            Text("The plan, in numbers").font(.callout)
-            Text("These three only do anything once Form is set far enough: Follow the chords from Harmony on, Land on the cadence from Cadences on, Bring the idea back from Full on.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            LabeledContent("Follow the chords") {
-                knobSlider($vm.knobChord, "chord", 0...8)
-            }
-            .help("How strongly the melody prefers the notes of the chord of the bar it is in. Zero ignores the harmony.")
-            LabeledContent("Land on the cadence") {
-                knobSlider($vm.knobCadence, "cadence", 0...15)
-            }
-            .help("How strongly each phrase is pulled towards the note it ends on, so the phrase arrives somewhere.")
-            LabeledContent("Bring the idea back") {
-                knobSlider($vm.knobMotif, "motif", 0...20)
-            }
-            .help("How strongly the opening idea is pulled back at the start of each later phrase. Higher means closer to a literal repeat.")
-            LabeledContent("How exact the idea is") {
-                knobSlider($vm.knobSigma, "sigma", 0.4...3)
-            }
-            .help("How wide the pull is, in semitones. Narrow keeps the idea's notes; wide lets the melody paraphrase it.")
-            LabeledContent("How near it must land") {
-                knobSlider($vm.knobTol, "tol", 0.25...4)
-            }
-            .help("How near a note has to land to the target, in beats. Wider catches more notes but also reaches further from the idea.")
-        }
-    }
-
-    /// A slider for one musical setting, which remembers that the user moved it.
-    /// Only the user's own drags count: a preset setting the value must not mark it as moved. The number beside it
-    /// shows the value in use.
-    private func knobSlider(_ value: Binding<Double>, _ name: String, _ range: ClosedRange<Double>) -> some View {
-        let mine = Binding<Double>(get: { value.wrappedValue },
-                                   set: { value.wrappedValue = $0; vm.markOverridden(name) })
-        return HStack {
-            Slider(value: mine, in: range)
-            Text(value.wrappedValue, format: .number.precision(.fractionLength(1)))
-                .monospacedDigit().frame(width: 36, alignment: .trailing).foregroundStyle(.secondary)
         }
     }
 

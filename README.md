@@ -11,7 +11,7 @@ everything runs on your Mac, with no cloud service and no account.
 ## What it does
 
 1. **Melody first.** Prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
-   ideas), **Melodic shape** (stepwise vs. angular) and **Form** (how much of a written plan the melody follows).
+   ideas) and five sliders for the line's character (see below).
    You get N options to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead.
    The ending can be forced to resolve on the tonic.
 2. **Then accompaniment**, either all at once (up to 16 instruments) or one instrument at a time: type a free-text
@@ -22,39 +22,23 @@ everything runs on your Mac, with no cloud service and no account.
 4. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
 
-## Form: how much of a plan the melody follows
+## The character of the melody
 
-A melody with no shape behind it wanders. The **Form** slider puts one there, in four steps:
-
-| Form | What the melody does |
-|---|---|
-| **Free** | no plan: the melody wanders, as before |
-| **Harmony** | every bar has a chord, and the melody prefers its notes (but may pass through others) |
-| **Cadences** | and every phrase ends on a chord tone, so the phrases arrive somewhere |
-| **Full** | and the opening idea comes back, transposed onto each phrase's chord, at the start of every phrase |
-
-The same plan is kept with the session, so the accompaniment is harmonised with the melody instead of separately.
-`plan.py` holds the plan: the phrases, the chord of every bar, where each phrase cadences, and the motif.
-
-### Turning the knobs yourself
-
-**Form** and **Melodic shape** are presets. Under **Advanced** every number behind them is a slider of its own:
+A melody with no shape behind it wanders. Five sliders in the Melody section put one there:
 
 | Slider | What it does |
 |---|---|
-| Avoid scale runs | how much the line is discouraged from running up and down the scale in one direction |
-| Like leaps | how much it prefers jumping a third or more to stepping |
-| Avoid repeats | how much it is discouraged from repeating a note |
-| Like varied pitches | how much it is discouraged from sticking to a handful of pitches |
-| Sit on the beat | how strongly the note beginnings prefer the beat (and the barline twice as much) |
-| Follow the chords | how strongly the melody prefers the chord of the bar it is in |
-| Land on the cadence | how strongly each phrase is pulled towards the note it ends on |
-| Bring the idea back | how strongly the opening idea is pulled back at the start of each later phrase |
-| How exact the idea is | how wide that pull is: narrow keeps the idea's notes, wide lets it paraphrase them |
-| How near it must land | how near a note has to land to be pulled, in beats |
+| **Melodic shape** | Stepwise to Angular: how much the line avoids scale runs, repeats and a few pitches, and likes leaps (one slider that blends the old presets) |
+| **Sit on the beat** | how strongly note beginnings prefer the beat (and the barline twice as much) |
+| **Follow the chords** | every bar has a chord, and the melody prefers its notes |
+| **Land on the cadence** | every phrase is pulled towards the note it ends on, so it arrives somewhere |
+| **Bring the idea back** | the opening idea returns, moved onto each phrase's chord (off by default) |
 
-Moving a slider keeps your change; choosing a shape or a form again puts the other sliders back. The tables live in
-`plan.py` and the app fetches them from the backend at startup, so there is only one copy of them.
+The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
+harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
+The accompaniment generator's own settings (top-p, retries, minimum density, meter, LLM directions) are under
+**Generation settings** in the Accompaniment section. The command line keeps the older `--form 0..3` and `--shape 0..2`
+presets, and the backend still accepts `form`, `shape` and individual `knobs`; the app sends `shape_amount` and four strengths.
 
 ## Requirements and install
 
@@ -115,7 +99,7 @@ the full log is at `~/Library/Logs/Composer/backend.log`.
 ## Status and limitations
 
 - Nobody has formally evaluated how the output sounds; quality measures in the repo are statistical proxies.
-- The **Form** slider and the knobs under **Advanced** are new: the plan the melody follows was measured with
+- The plan sliders are new: the plan the melody follows was measured with
   `review/bench_plan.py` (harmonic fit, cadences and motif recurrence over 24 melodies), not by ear. The motif comes back
   as a *paraphrase* — the shape of the opening idea with the model's own rhythm — not as a literal repeat.
 - The plan's harmony is diatonic and functional (the same progressions the theory composer uses). It cannot express

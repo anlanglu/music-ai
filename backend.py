@@ -1,7 +1,7 @@
 """JSON-lines backend for the Swift app. Reads one JSON request per stdin line, writes events to stdout.
 
 Requests (one JSON object per line, "cmd" selects the stage):
-  {"cmd":"melodies", prompt, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size, form, knobs}
+  {"cmd":"melodies", prompt, shape_amount (0..2), knobs {chord,cadence,motif,beat,...}, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size, form, knobs}
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
   {"cmd":"notation", "path":..., "title":..., "paged":false}
@@ -144,6 +144,14 @@ def handle(r):
         announce()
         restore(r["path"])
     elif cmd == "melodies":
+        # the app sends one 'shape_amount' and the strengths of the plan; the preset numbers (form, shape) are the
+        # command line's. An explicit knob always wins over the blended shape.
+        knobs = dict(r.get("knobs") or {})
+        shape = int(r.get("shape", 1))
+        if r.get("shape_amount") is not None:
+            shape = int(round(max(0.0, min(2.0, float(r["shape_amount"])))))
+            knobs = {**plan.shape_amount_knobs(r["shape_amount"]), **knobs}
+        form = int(r["form"]) if r.get("form") is not None else (plan.form_from_knobs(knobs) if r.get("knobs") else 2)
         if current_session() is None and r.get("session_name"):
             new_session(r["session_name"])
             announce()
@@ -154,7 +162,7 @@ def handle(r):
             r.get("melody_engine", "hybrid"), log=log, on_candidate=candidate_event,
             key=(int(r["key"][0]), r["key"][1]) if r.get("key") else None,
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
-            shape=int(r.get("shape", 1)), form=int(r.get("form", 2)), knobs=knobs,
+            shape=shape, form=form, knobs=knobs,
         )
         send(type="melodies_done")
     elif cmd == "add_part":  # stage 2, one instrument at a time: several options for the chosen instrument

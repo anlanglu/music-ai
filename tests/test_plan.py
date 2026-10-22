@@ -277,3 +277,18 @@ def test_the_key_can_be_read_from_the_plan_alone(tmp_path):
         assert t.key_for_file(t.current_session() / "x") == (9, "minor")
     finally:
         t.OUT_DIR = tmp_path.parent / "output"
+
+
+def test_the_shape_slider_blends_the_presets():
+    assert plan.shape_amount_knobs(1) == {k: v for k, v in plan.SHAPE_BIAS[1].items()}
+    assert plan.shape_amount_knobs(2) == plan.SHAPE_BIAS[2]
+    assert all(v == 0 for v in plan.shape_amount_knobs(0).values())
+    mid = plan.shape_amount_knobs(1.5)
+    assert plan.SHAPE_BIAS[1]["run"] < mid["run"] < plan.SHAPE_BIAS[2]["run"]
+
+
+def test_the_form_is_read_from_the_strengths():
+    assert plan.form_from_knobs({"chord": 0, "cadence": 0, "motif": 0}) == 0
+    assert plan.form_from_knobs({"chord": 2, "cadence": 0, "motif": 0}) == 1
+    assert plan.form_from_knobs({"chord": 0, "cadence": 3, "motif": 0}) == 2
+    assert plan.form_from_knobs({"motif": 4}) == 3

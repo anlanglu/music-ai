@@ -41,44 +41,8 @@ struct SessionInfo: Identifiable {
     var id: URL { path }
 }
 
-/// The musical settings the app can turn. The values come from the backend (plan.py), so the tables live in one place.
-struct Knobs: Codable {
-    var chord: Double?
-    var cadence: Double?
-    var motif: Double?
-    var sigma: Double?
-    var tol: Double?
-    var run: Double?
-    var leap: Double?
-    var repeatAvoid: Double?   // the backend calls it "repeat", which is a Swift keyword
-    var variety: Double?
-    var beat: Double?
-
-    enum CodingKeys: String, CodingKey {
-        case chord, cadence, motif, sigma, tol, run, leap, variety, beat
-        case repeatAvoid = "repeat"
-    }
-
-    /// The values that are set, for sending back to the backend.
-    var asDictionary: [String: Double] {
-        var out: [String: Double] = [:]
-        let all: [(String, Double?)] = [("chord", chord), ("cadence", cadence), ("motif", motif), ("sigma", sigma),
-                                       ("tol", tol), ("run", run), ("leap", leap), ("repeat", repeatAvoid),
-                                       ("variety", variety), ("beat", beat)]
-        for (name, value) in all where value != nil { out[name] = value! }
-        return out
-    }
-}
-
-/// The presets the shape and form controls start from.
-struct Presets: Codable {
-    var defaults: Knobs
-    var form: [String: Knobs]
-    var shape: [String: Knobs]
-}
-
 enum BackendEvent {
-    case ready(Presets?)
+    case ready
     case log(String)
     case candidate(Candidate)
     case melodiesDone
@@ -213,7 +177,7 @@ final class Backend {
         guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let type = obj["type"] as? String else { return nil }
         switch type {
-        case "ready": return .ready(try? JSONDecoder().decode(Presets.self, from: JSONSerialization.data(withJSONObject: obj["presets"] ?? [:])))
+        case "ready": return .ready
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone
