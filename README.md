@@ -14,7 +14,7 @@ everything runs on your Mac, with no cloud service and no account.
    ideas) and six sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
-2. **Expand the melody (optional).** Pick an option and add 4 or 8 bars at a time, as new options to choose from, as often
+2. **Expand the melody (optional).** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
    as you like (with Undo). Each expansion has its own settings: length, complexity, the six sliders and a free-text
    direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
    continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
@@ -79,7 +79,7 @@ Try it without the app (uses the language model; it downloads on first use):
 | `backend.py` | JSON-lines server the app talks to |
 | `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
-| `expand.py` | step 2: grow a melody by 4 or 8 bars (LLM or Anticipation) |
+| `expand.py` | step 2: grow a melody by 2–16 bars (LLM or Anticipation) |
 | `texture.py` | rule-based accompaniment patterns |
 | `direction.py`, `llmjson.py` | free-text directions and tolerant LLM-JSON parsing |
 | `playable.py` | instrument ranges and polyphony |

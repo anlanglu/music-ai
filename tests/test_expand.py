@@ -65,7 +65,7 @@ def first_melody(backend, **over):
     return [e for e in ev if e["type"] == "candidate"]
 
 
-@pytest.mark.parametrize("bars", [4, 8])
+@pytest.mark.parametrize("bars", [2, 4, 6, 8])
 def test_expanding_with_the_llm_adds_bars_and_keeps_the_original(backend, bars):
     chosen = first_melody(backend)[0]
     backend.send(cmd="expand", source_midi=chosen["path"], bars=bars, engine="llm", count=2, complexity=3, seed=3,

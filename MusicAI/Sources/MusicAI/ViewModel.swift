@@ -105,15 +105,21 @@ final class ViewModel: ObservableObject {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
         harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
         themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
+        copySettingsToExpansion()
+    }
+    /// Step 2 starts from step 1's settings; after that each step keeps its own.
+    private func copySettingsToExpansion() {
         expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
         expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider
+        expandComplexity = complexity; expandCount = optionCount
+        expandPhrasing = phrasing; expandResolve = resolveEnding
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
     @Published var llm = "7B"
 
     // Step 2: expanding the chosen melody. It has its own settings, because each expansion can want a different character.
-    @Published var expandBars = 4                  // 4 or 8 bars added at a time
+    @Published var expandBars = 4.0                // bars added at a time
     @Published var expandEngine = "hybrid"         // "hybrid" (Anticipation continues it) or "llm"
     @Published var expandComplexity = 3.0
     @Published var expandCount = 3.0
@@ -124,6 +130,8 @@ final class ViewModel: ObservableObject {
     @Published var expandEndings = 3.33
     @Published var expandTheme = 0.0
     @Published var expandRuns = 5.0
+    @Published var expandPhrasing = 1
+    @Published var expandResolve = true
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     var expandSliderValues: [String: Double] {
@@ -318,6 +326,7 @@ final class ViewModel: ObservableObject {
                 selectedID = candidates.first?.id     // so Expand can go straight on from it; click another to switch
                 status = "Option 1 is selected. Pick the one you like, then expand again or add the accompaniment."
             } else {
+                copySettingsToExpansion()
                 status = candidates.count == 1 ? "Melody ready — expand it, add the accompaniment, or generate again."
                                                : "Pick the melody you like, or generate new options."
             }
@@ -486,11 +495,11 @@ final class ViewModel: ObservableObject {
         selectedID = nil
         expandJustRan = true
         busy = true
-        status = "Expanding the melody by \(expandBars) bars…"
+        status = "Expanding the melody by \(Int(expandBars)) bars…"
         send([
-            "cmd": "expand", "source_midi": c.url.path, "bars": expandBars, "engine": expandEngine,
+            "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
-            "sliders": expandSliderValues, "direction": expandDirection, "resolve": resolveEnding, "phrasing": phrasing,
+            "sliders": expandSliderValues, "direction": expandDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
         ])
     }
 

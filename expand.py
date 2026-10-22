@@ -1,4 +1,4 @@
-"""Step 2: grow a melody by 4 or 8 bars at a time.
+"""Step 2: grow a melody a few bars at a time.
 
 Step 1 (text2music.make_melodies) has the language model write a whole melody. This takes one of those melodies, or one
 that was already expanded, and adds bars to the end of it, as several options to choose from. Each expansion has its own
@@ -167,7 +167,8 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
 
     bb = t.bar_beats(sig)
     num, den = (int(x) for x in sig.split("/"))
-    ctx_bars = min(old_bars, CONTEXT_BARS)
+    room = int(95 * tempo / 60 / bb) - add_bars          # the model's clock tops out at 100 s
+    ctx_bars = max(1, min(old_bars, CONTEXT_BARS, room))
     ctx_beats = ctx_bars * bb
     edge = old_bars * bb - ctx_beats
     ctx = [(p, s - edge, dd) for p, s, dd in notes if s >= edge - 1e-6]

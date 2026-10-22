@@ -102,16 +102,6 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 14) {
                 stageHeader("1", "Melody")
                 melodyControls
-                Button(action: vm.generateMelodies) {
-                    HStack {
-                        if vm.busy && vm.orchestration == nil && vm.selected == nil { ProgressView().controlSize(.small) }
-                        Text(vm.candidates.isEmpty ? "Generate melodies" : "Regenerate melodies").frame(maxWidth: .infinity)
-                    }
-                }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .tint(vm.candidates.isEmpty ? .accentColor : .gray)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!vm.ready || vm.busy || !vm.hasPrompt)
 
                 Divider().padding(.vertical, 4)
 
@@ -237,16 +227,16 @@ struct ContentView: View {
         }
     }
 
+    // MARK: The settings both melody steps share
+    //
+    // Step 1 (write a melody) and step 2 (expand it) show the same controls in the same order; each step only hides
+    // what does not apply to it: step 1 also asks for the instrument, time signature, key and tempo, and step 2 asks
+    // which engine continues the melody. Each step keeps its own values, and step 2 starts from step 1's.
+
     private var melodyControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextEditor(text: $vm.prompt)
-                .font(.body)
-                .frame(height: 80)
-                .padding(4)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-
-            HStack { Text("Bars"); Spacer(); Text("\(Int(vm.bars))").monospacedDigit() }
-            Slider(value: $vm.bars, in: 2...16, step: 1)
+            describeBox("Describe the melody", text: $vm.prompt, height: 80)
+            barsRow("Bars", $vm.bars)
 
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
@@ -260,7 +250,6 @@ struct ContentView: View {
                 ForEach(KeyChoice.all) { Text($0.name).tag(Optional($0)) }
             }
             .help("Every melody note stays in this key. Auto: a key named in your prompt (such as 'in D minor'), otherwise the language model picks one that suits it.")
-
             HStack {
                 Text("Tempo"); Spacer()
                 TextField("80", text: $vm.bpmText)
@@ -273,106 +262,57 @@ struct ContentView: View {
                 Text("bpm").foregroundStyle(.secondary)
             }
 
-            HStack {
-                Text("Complexity"); Spacer()
-                Text(["Simple", "Easy", "Varied", "Rich", "Virtuosic"][Int(vm.complexity) - 1])
-            }
-            Slider(value: $vm.complexity, in: 1...5, step: 1)
+            complexityRow($vm.complexity)
+            llmPicker
+            characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
+                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider,
+                              phrasing: $vm.phrasing, resolve: $vm.resolveEnding, what: "the melody")
+            optionsRow($vm.optionCount)
 
-            Picker("Melody LLM", selection: $vm.llm) {
-                Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
-                Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+            Button(action: vm.generateMelodies) {
+                HStack {
+                    if vm.busy && vm.orchestration == nil && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
+                    Text(vm.candidates.isEmpty ? "Generate melodies" : "Regenerate melodies").frame(maxWidth: .infinity)
+                }
             }
-            .help("The language model that writes the melody, and the expansions if you choose LLM only. Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
-
-            Divider()
-            Text("Character of the melody").font(.callout)
-            knobRow("Smooth ↔ Jumpy", $vm.shapeSlider, 0...10, readout: shapeWord(vm.shapeSlider),
-                    help: "How the tune moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
-            knobRow("Avoid scale runs", $vm.runsSlider, 0...10,
-                    help: "How much the melody is kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn. Zero: runs are fine. Independent of Smooth ↔ Jumpy, so a smooth tune can still avoid runs.")
-            knobRow("Steady pulse", $vm.pulseSlider, 0...10,
-                    help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
-            knobRow("Fit the harmony", $vm.harmonySlider, 0...10,
-                    help: "Every bar is given a chord underneath. High: the melody mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
-            knobRow("Phrase endings", $vm.endingsSlider, 0...10,
-                    help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
-            knobRow("Recurring theme", $vm.themeSlider, 0...10,
-                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
-            Text("Pauses between phrases").font(.callout)
-            Picker("Phrasing", selection: $vm.phrasing) {
-                Text("Flowing").tag(0)
-                Text("Balanced").tag(1)
-                Text("Spacious").tag(2)
-            }
-            .pickerStyle(.segmented).labelsHidden()
-            .help("Rests between ideas and phrases. Flowing: the melody never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
-            Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
-                .help("Changes only the final note, so the melody ends on the tonic")
-
-            HStack { Text("Options to choose from"); Spacer(); Text("\(Int(vm.optionCount))").monospacedDigit() }
-            Slider(value: $vm.optionCount, in: 1...8, step: 1)
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .tint(vm.candidates.isEmpty ? .accentColor : .gray)
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!vm.ready || vm.busy || !vm.hasPrompt)
 
             Button("Import MIDI as the melody…", action: vm.importMIDI)
                 .disabled(!vm.ready || vm.busy)
         }
     }
 
-    /// A labelled slider with its value beside it.
-    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
-                         readout: String? = nil, help: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(title); Spacer()
-                Text(readout ?? (value.wrappedValue == 0 ? "off" : value.wrappedValue.formatted(.number.precision(.fractionLength(1)))))
-                    .monospacedDigit().foregroundStyle(.secondary)
-            }
-            Slider(value: value, in: range)
-        }
-        .help(help)
-    }
-
-    private func shapeWord(_ v: Double) -> String {
-        v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
-    }
-
-    /// Step 2: add bars to the chosen melody, with its own settings.
+    /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
     private var expandControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Choose a melody above, then grow it 4 or 8 bars at a time. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Pick a melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Picker("Add", selection: $vm.expandBars) {
-                Text("4 bars").tag(4)
-                Text("8 bars").tag(8)
-            }
-            .pickerStyle(.segmented)
+            describeBox("What should the new bars do? (optional)", text: $vm.expandDirection, height: 54,
+                        example: "e.g. build to a climax, then calm down")
+                .help("Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
+            barsRow("Bars to add", $vm.expandBars)
+
             Picker("Written by", selection: $vm.expandEngine) {
                 Text("Hybrid: LLM + Anticipation").tag("hybrid")
                 Text("LLM only").tag("llm")
             }
             .help("Hybrid: the Anticipation model continues the melody, steered by the sliders; its rhythms are the more natural. LLM only: the language model continues it phrase by phrase and reads your direction.")
-            HStack {
-                Text("Complexity"); Spacer()
-                Text(["Simple", "Easy", "Varied", "Rich", "Virtuosic"][Int(vm.expandComplexity) - 1])
-            }
-            Slider(value: $vm.expandComplexity, in: 1...5, step: 1)
-            knobRow("Smooth ↔ Jumpy", $vm.expandShape, 0...10, readout: shapeWord(vm.expandShape),
-                    help: "How the new bars move. Smooth: small steps. Jumpy: leaps and turns.")
-            knobRow("Avoid scale runs", $vm.expandRuns, 0...10, help: "How much the new bars are kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn.")
-            knobRow("Steady pulse", $vm.expandPulse, 0...10, help: "How strongly notes start on the beat.")
-            knobRow("Fit the harmony", $vm.expandHarmony, 0...10, help: "How strongly the new bars use each bar's chord. The chords carry on from the melody, and the accompaniment follows them.")
-            knobRow("Phrase endings", $vm.expandEndings, 0...10, help: "How strongly each new phrase ends on a stopping note.")
-            knobRow("Recurring theme", $vm.expandTheme, 0...10, help: "How strongly the melody's opening idea comes back at the start of each new phrase.")
-            TextField("Direction, e.g. build to a climax, then calm down", text: $vm.expandDirection, axis: .vertical)
-                .textFieldStyle(.roundedBorder).lineLimit(1...3)
-                .help("Optional. Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
-            HStack { Text("Options to choose from"); Spacer(); Text("\(Int(vm.expandCount))").monospacedDigit() }
-            Slider(value: $vm.expandCount, in: 1...6, step: 1)
+
+            complexityRow($vm.expandComplexity)
+            if vm.expandEngine == "llm" { llmPicker }
+            characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
+                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme,
+                              phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, what: "the new bars")
+            optionsRow($vm.expandCount)
+
             HStack {
                 Button(action: vm.expandMelody) {
                     HStack {
                         if vm.busy && vm.selected == nil && !vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
-                        Text("Expand by \(vm.expandBars) bars").frame(maxWidth: .infinity)
+                        Text("Expand by \(Int(vm.expandBars)) bars").frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
@@ -389,6 +329,99 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func describeBox(_ title: String, text: Binding<String>, height: CGFloat, example: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: text)
+                .font(.body).frame(height: height).padding(4)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            if let example, text.wrappedValue.isEmpty {
+                Text(example).font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func barsRow(_ title: String, _ value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack { Text(title); Spacer(); Text("\(Int(value.wrappedValue))").monospacedDigit() }
+            Slider(value: value, in: 2...16, step: 1)
+        }
+    }
+
+    private func complexityRow(_ value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("Complexity"); Spacer()
+                Text(["Simple", "Easy", "Varied", "Rich", "Virtuosic"][Int(value.wrappedValue) - 1])
+            }
+            Slider(value: value, in: 1...5, step: 1)
+        }
+    }
+
+    private func optionsRow(_ value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack { Text("Options to choose from"); Spacer(); Text("\(Int(value.wrappedValue))").monospacedDigit() }
+            Slider(value: value, in: 1...8, step: 1)
+        }
+    }
+
+    private var llmPicker: some View {
+        Picker("Melody LLM", selection: $vm.llm) {
+            Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
+            Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+        }
+        .help("The language model that writes the melody, and the expansions if you choose LLM only. Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
+    }
+
+    /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
+    private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
+                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>,
+                                   phrasing: Binding<Int>, resolve: Binding<Bool>, what: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            Text("Character of \(what)").font(.callout)
+            knobRow("Smooth ↔ Jumpy", shape, 0...10, readout: shapeWord(shape.wrappedValue),
+                    help: "How \(what) moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
+            knobRow("Avoid scale runs", runs, 0...10,
+                    help: "How much \(what) is kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn. Zero: runs are fine. Independent of Smooth ↔ Jumpy, so a smooth tune can still avoid runs.")
+            knobRow("Steady pulse", pulse, 0...10,
+                    help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
+            knobRow("Fit the harmony", harmony, 0...10,
+                    help: "Every bar is given a chord underneath. High: \(what) mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
+            knobRow("Phrase endings", endings, 0...10,
+                    help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
+            knobRow("Recurring theme", theme, 0...10,
+                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
+            Text("Pauses between phrases").font(.callout)
+            Picker("Phrasing", selection: phrasing) {
+                Text("Flowing").tag(0)
+                Text("Balanced").tag(1)
+                Text("Spacious").tag(2)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            .help("Rests between ideas and phrases. Flowing: it never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
+            Toggle("Resolve ending (finish on the home note)", isOn: resolve)
+                .help("Changes only the final note, so it ends on the tonic")
+        }
+    }
+
+    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
+                         readout: String? = nil, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title); Spacer()
+                Text(readout ?? (value.wrappedValue == 0 ? "off" : value.wrappedValue.formatted(.number.precision(.fractionLength(1)))))
+                    .monospacedDigit().foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: range)
+        }
+        .help(help)
+    }
+
+    private func shapeWord(_ v: Double) -> String {
+        v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
     }
 
     // MARK: Right column
