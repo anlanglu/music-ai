@@ -307,11 +307,12 @@ def test_modes_have_the_right_notes_and_signatures():
     assert t.scale_pcs((5, "lydian")) == {5, 7, 9, 11, 0, 2, 4}, "F lydian is the white notes"
     assert t.scale_pcs((7, "mixolydian")) == {7, 9, 11, 0, 2, 4, 5}
     assert t.scale_pcs((4, "phrygian")) == {4, 5, 7, 9, 11, 0, 2}
-    assert notation._sharps((2, "dorian")) == 0 and notation._sharps((5, "lydian")) == 0       # white notes
-    assert notation._sharps((7, "mixolydian")) == 0 and notation._sharps((9, "minor")) == 0
-    assert notation._sharps((7, "lydian")) == 2, "G lydian has the notes of D major"
-    assert notation._sharps((9, "dorian")) == 1, "A dorian has the notes of G major"
-    assert notation._sharps((11, "locrian")) == 0
+    # a mode takes the signature of its tonic's major or minor key; the notes that make it a mode are accidentals
+    assert notation._sharps((2, "lydian")) == 2, "D lydian shows D major's two sharps (its G sharp is an accidental)"
+    assert notation._sharps((2, "mixolydian")) == 2 and notation._sharps((7, "lydian")) == 1
+    assert notation._sharps((2, "dorian")) == -1 and notation._sharps((2, "phrygian")) == -1, "D minor's one flat"
+    assert notation._sharps((9, "minor")) == 0 and notation._sharps((9, "dorian")) == 0
+    assert notation._sharps((11, "locrian")) == 2, "B minor's two sharps"
     assert t.scale_pcs((11, "locrian")) == {11, 0, 2, 4, 5, 7, 9}, "B locrian is the white notes"
     assert plan.chord_name(11, "locrian", 0) == "B diminished"
     assert t.parse_key("a dreamy tune in D Dorian") == (2, "dorian")
