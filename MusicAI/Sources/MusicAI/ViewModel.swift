@@ -311,7 +311,8 @@ final class ViewModel: ObservableObject {
             busy = false
             if expandJustRan {
                 expandJustRan = false
-                status = "Pick the expanded melody you like, then expand it again or add the accompaniment."
+                selectedID = candidates.first?.id     // so Expand can go straight on from it; click another to switch
+                status = "Option 1 is selected. Pick the one you like, then expand again or add the accompaniment."
             } else {
                 status = candidates.count == 1 ? "Melody ready — expand it, add the accompaniment, or generate again."
                                                : "Pick the melody you like, or generate new options."

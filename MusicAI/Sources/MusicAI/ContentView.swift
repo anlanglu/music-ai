@@ -337,7 +337,7 @@ struct ContentView: View {
     /// Step 2: add bars to the chosen melody, with its own settings.
     private var expandControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Choose a melody above, then grow it 4 or 8 bars at a time. Each expansion has its own settings, and the options replace the list so you can pick one and expand again.")
+            Text("Choose a melody above, then grow it 4 or 8 bars at a time. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Picker("Add", selection: $vm.expandBars) {
                 Text("4 bars").tag(4)
