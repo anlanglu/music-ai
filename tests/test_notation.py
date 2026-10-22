@@ -37,3 +37,26 @@ def test_paged_layout_has_a4_pages(out_dir):
     path = make_midi(out_dir, 73, bars=16, name="paged")
     html = open(notation.render(str(path), "Paged", paged=True), encoding="utf-8").read()
     assert 'class="page' in html or "class='page" in html
+
+
+def test_the_dynamics_are_printed_as_markings_and_hairpins(tmp_path):
+    """A melody that starts soft and ends loud shows a marking where it settles at a new level, with a hairpin between."""
+    import re
+    import mido
+
+    notes = [(60 + (i % 5), float(i), 1.0) for i in range(32)]            # 8 bars of 4/4
+    path = tmp_path / "m.mid"
+    t.write_melody_midi(path, 100, notes, 73, "4/4", 32)
+    mid = mido.MidiFile(str(path))
+    for trk in mid.tracks:
+        seen = 0
+        for m in trk:
+            if m.type == "note_on" and m.velocity > 0:
+                m.velocity = 45 if seen < 16 else 100                    # soft for four bars, then loud
+                seen += 1
+    mid.save(str(path))
+    notation.render(path, "dyn")
+    xml = (tmp_path / "m.musicxml").read_text()
+    marks = re.findall(r"<dynamics[^>]*>\s*<(\w+)\s*/>", xml)
+    assert marks[0] in ("pp", "p") and marks[-1] in ("f", "ff"), marks
+    assert "<wedge" in xml, "a crescendo hairpin between the two levels"

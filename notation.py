@@ -7,7 +7,7 @@ from pathlib import Path
 
 import mido
 import verovio
-from music21 import chord, clef, converter, key, layout, meter, note, stream
+from music21 import chord, clef, converter, dynamics, key, layout, meter, note, stream
 
 import plan
 from text2music import GM_NAMES, TMP_DIR, key_for_file
@@ -97,8 +97,45 @@ def _respell(part, sharps):
                     p.name, p.octave = alt.name, alt.octave
 
 
-def _finish(part, sharps, sig):
-    """Add key / time signature, then bar the part up and fill the gaps with rests."""
+# How hard a note was played (MIDI velocity) -> the dynamic marking printed for it
+_MARKS = [(48, "pp"), (62, "p"), (74, "mp"), (86, "mf"), (98, "f")]      # anything louder is ff
+_ORDER = ["pp", "p", "mp", "mf", "f", "ff"]
+
+
+def _mark(velocity):
+    for limit, label in _MARKS:
+        if velocity < limit:
+            return label
+    return "ff"
+
+
+def _mark_dynamics(staff):
+    """Print the dynamics the MIDI plays at: a marking when the loudness settles at a new level (never closer than two bars
+    to the last one, so a few louder notes do not clutter the page), and a hairpin from one marking to the next."""
+    measures = list(staff.getElementsByClass(stream.Measure))
+    loud = lambda m: [el.volume.velocity for el in m.recurse().notes if el.volume.velocity]
+    marks, last, last_i = [], None, -9
+    for i, m in enumerate(measures):
+        here = loud(m)
+        if not here:
+            continue
+        window = here + (loud(measures[i + 1]) if i + 1 < len(measures) else [])
+        label = _mark(sum(window) / len(window))                  # looking one bar ahead smooths out a single accent
+        if label != last and (last is None or i - last_i >= 2):
+            first = next(el for el in m.recurse().notes if el.volume.velocity)
+            marks.append((i, label, first))
+            last, last_i = label, i
+    for i, label, first in marks:
+        measures[i].insert(first.offset, dynamics.Dynamic(label))
+    for (i, a, first), (j, b, _) in zip(marks, marks[1:]):
+        before = [el for el in measures[j - 1].recurse().notes]
+        if before and a != b:
+            cls = dynamics.Crescendo if _ORDER.index(b) > _ORDER.index(a) else dynamics.Diminuendo
+            staff.insert(0, cls(first, before[-1]))
+
+
+def _finish(part, sharps, sig, marks=True):
+    """Add key / time signature, then bar the part up and fill the gaps with rests, and print its dynamics."""
     _respell(part, sharps)
     part.insert(0, key.KeySignature(sharps))
     part.insert(0, meter.TimeSignature(sig.ratioString))
@@ -107,6 +144,8 @@ def _finish(part, sharps, sig):
     part.makeTies(inPlace=True)
     for m in part.getElementsByClass(stream.Measure):
         m.splitAtDurations(recurse=False)  # a gap-filling rest like 2.5 quarters must become 2 + 0.5
+    if marks:
+        _mark_dynamics(part)
     return part
 
 
@@ -124,6 +163,7 @@ def _split_hands(elements):
                 continue
             new = note.Note(group[0]) if len(group) == 1 else chord.Chord(group)
             new.quarterLength = el.quarterLength
+            new.volume.velocity = el.volume.velocity          # how hard it was played, for the dynamic markings
             target.append((el.offset, new))
     return upper, lower
 
@@ -161,12 +201,12 @@ def render(midi_path, title=None, scale=45, paged=False):
         elements = [el for el in p.flatten().notes if el.quarterLength > 0]
         if program in GRAND_STAFF:
             staves = []
-            for placed, which in zip(_split_hands(elements), (clef.TrebleClef(), clef.BassClef())):
+            for k, (placed, which) in enumerate(zip(_split_hands(elements), (clef.TrebleClef(), clef.BassClef()))):
                 st = stream.PartStaff()
                 for off, el in placed:
                     st.insert(off, el)
                 st.insert(0, which)
-                staves.append(_finish(st, sharps, sig))
+                staves.append(_finish(st, sharps, sig, marks=(k == 0)))     # the markings go on the upper staff
             staves[0].partName = label
             staves[0].partAbbreviation = label[:4] + "."
             groups.append(staves)
