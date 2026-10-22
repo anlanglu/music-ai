@@ -72,8 +72,7 @@ Requests (one JSON object per line): `melodies`, `import`, `add_part`, `approve_
 `parts_done`, `part_approved`, `notation`, `notation_error`, `session`, `sessions`, `error`. Notes in events are
 `[channel, pitch, start_s, end_s]`. The protocol is untyped on both sides (dict access in Python, hand-decoded in Swift).
 
-Two optional fields ride along on any request: `seed` (an integer, to make the run repeatable) and `knobs` (the
-individual musical settings, see 3.3a). The `ready` event carries `presets`, the tables the app's sliders start from.
+`seed` (an integer, to make the run repeatable) may ride along on any request. A `melodies` request carries `sliders` (five numbers, 0 to 10; see section 4d). The `ready` event carries `sliders`, where the app's sliders start.
 
 ## 3. The parts worth reading closely
 
