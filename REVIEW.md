@@ -450,3 +450,7 @@ and the melody LLM. The accompaniment settings moved to **Generation settings** 
 derives how much of the plan is in use from the three strengths (`plan.form_from_knobs`); `form`, `shape` and `knobs` still work
 for the CLI and old clients. `sigma` and `tol` are no longer reachable from the app (defaults). References to "the Form slider"
 above describe the state before this change.
+
+The **Generation settings** group was then removed too: LLM directions (the keyword matcher is already the automatic fallback),
+meter enforcement (off gives off-grid notes that engrave badly), retries and minimum density (safeguards against an empty or sparse
+sample, not musical choices) and top-p (a direction's "safe"/"adventurous" already sets it) now use fixed defaults in the app.

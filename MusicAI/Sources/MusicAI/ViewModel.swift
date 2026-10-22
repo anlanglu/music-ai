@@ -109,7 +109,6 @@ final class ViewModel: ObservableObject {
     @Published var playable = true
     @Published var inKey = true
     @Published var partDirection = ""
-    @Published var llmDirections = true   // an LLM reads the direction; off = fixed keyword vocabulary only
     @Published var directionNote = ""   // what the backend understood from the direction
     @Published var accompMode: AccompMode = AccompMode(rawValue: UserDefaults.standard.string(forKey: "accompMode") ?? "") ?? .auto {
         didSet { UserDefaults.standard.set(accompMode.rawValue, forKey: "accompMode") }
@@ -123,11 +122,6 @@ final class ViewModel: ObservableObject {
     @Published var partHistory: [Orchestration?] = []   // the piece before each approval, for Undo
     @Published var partsAdded: [String] = []
     @Published var size = "small"
-    @Published var topP = 0.98
-    @Published var attempts = 8.0
-    @Published var minDensity = 1.5
-    @Published var enforceMeter = true
-    @Published var showGeneration = false
 
     @Published var status = "Starting backend…"
     @Published var log = ""
@@ -450,7 +444,6 @@ final class ViewModel: ObservableObject {
         status = "Adding accompaniment…"
         send([
             "cmd": "orchestrate", "source_midi": c.url.path, "ensemble": Int(ensemble), "size": size,
-            "top_p": topP, "attempts": Int(attempts), "min_density": minDensity, "enforce_meter": enforceMeter,
             "playable": playable, "in_key": inKey,
         ])
     }
@@ -475,10 +468,9 @@ final class ViewModel: ObservableObject {
         status = "Writing \(Int(partOptionCount)) \(partInstrument.name.lowercased()) options…"
         send([
             "cmd": "add_part", "source_midi": source.path, "program": partInstrument.program,
-            "count": Int(partOptionCount), "size": size, "top_p": topP, "attempts": Int(attempts),
-            "enforce_meter": enforceMeter, "playable": playable, "in_key": inKey,
+            "count": Int(partOptionCount), "size": size,
+            "playable": playable, "in_key": inKey,
             "texture": partInstrument.texture, "style": pianoStyle, "direction": partDirection,
-            "llm_directions": llmDirections,
         ])
     }
 

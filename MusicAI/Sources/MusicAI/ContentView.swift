@@ -126,9 +126,6 @@ struct ContentView: View {
                 Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
                     .help("When a key was chosen for the melody, the added parts only use notes from that key")
                 if vm.accompMode == .auto { autoControls } else { oneByOneControls }
-                DisclosureGroup("Generation settings", isExpanded: $vm.showGeneration) {
-                    generationSettings.padding(.top, 8)
-                }
             }
             .padding(.trailing, 10)
         }
@@ -342,22 +339,6 @@ struct ContentView: View {
 
     private func shapeWord(_ v: Double) -> String {
         v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
-    }
-
-    /// Settings of the accompaniment generator, kept out of the way.
-    private var generationSettings: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("Read part directions with an LLM", isOn: $vm.llmDirections)
-                .help("On: free-text directions are understood by the language model. Off: only a fixed set of keywords is recognised.")
-            Toggle("Enforce meter (snap added parts to the beat grid)", isOn: $vm.enforceMeter)
-            LabeledContent("Top-p \(vm.topP, specifier: "%.2f")") { Slider(value: $vm.topP, in: 0.5...1) }
-                .help("Lower is safer and more repetitive; higher is more adventurous.")
-            LabeledContent("Retries \(Int(vm.attempts))") { Slider(value: $vm.attempts, in: 1...20, step: 1) }
-                .help("How many times a part is regenerated if it is too sparse.")
-            LabeledContent("Min notes/s \(vm.minDensity, specifier: "%.1f")") {
-                Slider(value: $vm.minDensity, in: 0...5, step: 0.5)
-            }
-        }
     }
 
     // MARK: Right column

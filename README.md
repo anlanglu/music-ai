@@ -36,8 +36,8 @@ A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody s
 
 The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
-The accompaniment generator's own settings (top-p, retries, minimum density, meter, LLM directions) are under
-**Generation settings** in the Accompaniment section. The command line keeps the older `--form 0..3` and `--shape 0..2`
+The accompaniment generator's own settings (sampling randomness, retries, minimum density, beat-grid snapping, LLM
+directions) are no longer in the app: they have fixed, sensible values, and the backend and CLI still accept them. The command line keeps the older `--form 0..3` and `--shape 0..2`
 presets, and the backend still accepts `form`, `shape` and individual `knobs`; the app sends `shape_amount` and four strengths.
 
 ## Requirements and install
