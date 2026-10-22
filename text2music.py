@@ -609,10 +609,16 @@ def guidance_text(sliders, motif=None):
     if s["shape"] < 2.5:
         out.append("Shape: move mostly by step (seconds, sometimes thirds), with no leap larger than a fourth; smooth and singable.")
     elif s["shape"] > 7.5:
-        out.append("Shape: angular. Use frequent leaps of a fourth or more, often answered by a step the other way, and "
-                   "never run more than three notes in one direction along the scale.")
+        out.append("Shape: angular. Use frequent leaps of a fourth or more, often answered by a step the other way.")
     else:
-        out.append("Shape: a mix of steps and leaps; never run more than four notes in one direction along the scale.")
+        out.append("Shape: a mix of steps and leaps.")
+    if s["runs"] > 7.5:
+        out.append("Scale runs: never play more than three notes in a row in one direction along the scale; break up any "
+                   "run with a leap or a turn.")
+    elif s["runs"] > 5.5:
+        out.append("Scale runs: never play more than four notes in a row in one direction along the scale.")
+    elif s["runs"] > 2.5:
+        out.append("Scale runs: avoid long runs; no more than five notes in a row in one direction.")
     if s["pulse"] < 2.5:
         out.append("Rhythm: loose and syncopated; start many notes off the beat and tie across the barline.")
     elif s["pulse"] > 7.5:
@@ -1350,7 +1356,8 @@ def main():
     for name, text in [("smooth-jumpy", "0 smooth .. 10 jumpy"), ("pulse", "how strongly notes start on the beat"),
                        ("harmony", "how much the melody fits each bar's chord"),
                        ("endings", "how strongly phrases end on a stopping note"),
-                       ("theme", "how strongly the opening idea returns in each phrase")]:
+                       ("theme", "how strongly the opening idea returns in each phrase"),
+                       ("runs", "how much one-way runs up or down the scale are avoided")]:
         ap.add_argument("--" + name, type=float, default=None, help=f"{text} (0..10; default {plan.SLIDER_DEFAULTS[name.replace('-', '_').replace('smooth_jumpy', 'shape')]})")
     ap.add_argument("--seed", type=int, default=None, help="random seed, for repeatable output")
     ap.add_argument("--no-resolve", action="store_true", help="don't force the melody to end on the tonic")
@@ -1369,7 +1376,7 @@ def main():
         candidates=a.candidates, source_midi=a.source_midi,
         bpm=max(40, min(a.bpm, 220)), resolve=not a.no_resolve, playable=not a.no_playable, key=parse_key(a.key or ""),
         phrasing=a.phrasing, sliders=plan.clean_sliders({"shape": a.smooth_jumpy, "pulse": a.pulse, "harmony": a.harmony,
-                                                         "endings": a.endings, "theme": a.theme}),
+                                                         "endings": a.endings, "theme": a.theme, "runs": a.runs}),
     )
 
 

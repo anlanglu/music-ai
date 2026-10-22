@@ -107,3 +107,9 @@ def test_the_sliders_are_said_to_the_llm_in_words():
     assert "Theme" not in t.guidance_text({"theme": 8})                  # no motif yet, so nothing to restate
     assert "opening idea" in t.guidance_text({"theme": 8}, [(60, 0, 1)])
     assert "Theme" not in t.guidance_text({"theme": 0}, [(60, 0, 1)])
+
+
+def test_the_runs_slider_is_said_to_the_llm_and_zero_says_nothing():
+    assert "three notes" in t.guidance_text({"runs": 10})
+    assert "Scale runs" not in t.guidance_text({"runs": 0})
+    assert "Scale runs" in t.guidance_text({"shape": 0, "runs": 10}), "a smooth tune can still avoid runs"

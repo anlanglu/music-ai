@@ -96,15 +96,17 @@ final class ViewModel: ObservableObject {
     @Published var harmonySlider = 2.75 // the melody fits each bar's chord
     @Published var endingsSlider = 3.33 // phrases end on a stopping note
     @Published var themeSlider = 0.0    // the opening idea returns in each phrase
+    @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
     var sliderValues: [String: Double] {
-        ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider, "endings": endingsSlider, "theme": themeSlider]
+        ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider, "endings": endingsSlider, "theme": themeSlider,
+         "runs": runsSlider]
     }
     private func applySliderDefaults(_ d: [String: Double]) {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
         harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
-        themeSlider = d["theme"] ?? themeSlider
+        themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
         expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
-        expandEndings = endingsSlider; expandTheme = themeSlider
+        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
@@ -121,10 +123,12 @@ final class ViewModel: ObservableObject {
     @Published var expandHarmony = 2.75
     @Published var expandEndings = 3.33
     @Published var expandTheme = 0.0
+    @Published var expandRuns = 5.0
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     var expandSliderValues: [String: Double] {
-        ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony, "endings": expandEndings, "theme": expandTheme]
+        ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony, "endings": expandEndings, "theme": expandTheme,
+         "runs": expandRuns]
     }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.
     var canExpand: Bool { ready && !busy && selected != nil && orchestration == nil && partsAdded.isEmpty && partOptions.isEmpty }

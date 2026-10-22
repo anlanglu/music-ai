@@ -295,11 +295,11 @@ def shape_amount_knobs(amount):
 
 # What the app's sliders (and the command line's) send: all run 0..10, and this is the one place that turns them into
 # the numbers the sampler uses. The defaults are what the app did before they were sliders.
-SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0}
+SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0, "runs": 5.0}
 
 
 def clean_sliders(sliders=None):
-    """The five slider positions, each clamped to 0..10; missing or None ones take their defaults."""
+    """The six slider positions, each clamped to 0..10; missing or None ones take their defaults."""
     s = dict(SLIDER_DEFAULTS)
     for name, v in (sliders or {}).items():
         if name in s and v is not None:
@@ -312,7 +312,8 @@ def from_sliders(sliders=None):
     the melodic shape level (0..2), how much of the plan is in use, and the sampler's strengths."""
     s = clean_sliders(sliders)
     knobs_ = {**shape_amount_knobs(s["shape"] / 5), "chord": s["harmony"] * 0.8, "cadence": s["endings"] * 1.5,
-              "motif": s["theme"] * 2.0, "beat": s["pulse"] * 0.3}
+              "motif": s["theme"] * 2.0, "beat": s["pulse"] * 0.3,
+              "run": round(s["runs"] * 0.3, 3)}     # penalty on one-way scale runs; 5 = what the shape slider gave
     return {"shape": int(round(s["shape"] / 5)), "form": form_from_knobs(knobs_), "knobs": knobs_}
 
 

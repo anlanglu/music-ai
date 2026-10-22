@@ -291,3 +291,10 @@ def test_the_form_is_read_from_the_strengths():
     assert plan.form_from_knobs({"chord": 2, "cadence": 0, "motif": 0}) == 1
     assert plan.form_from_knobs({"chord": 0, "cadence": 3, "motif": 0}) == 2
     assert plan.form_from_knobs({"motif": 4}) == 3
+
+
+def test_the_runs_slider_is_independent_of_shape():
+    assert abs(plan.from_sliders()["knobs"]["run"] - 1.5) < 1e-6, "the default is what the shape slider gave at balanced"
+    smooth_no_runs = plan.from_sliders({"shape": 0, "runs": 10})["knobs"]["run"]
+    jumpy_runs_ok = plan.from_sliders({"shape": 10, "runs": 0})["knobs"]["run"]
+    assert smooth_no_runs == 3.0 and jumpy_runs_ok == 0.0

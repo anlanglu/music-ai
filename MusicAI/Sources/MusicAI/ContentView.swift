@@ -289,6 +289,8 @@ struct ContentView: View {
             Text("Character of the melody").font(.callout)
             knobRow("Smooth ↔ Jumpy", $vm.shapeSlider, 0...10, readout: shapeWord(vm.shapeSlider),
                     help: "How the tune moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
+            knobRow("Avoid scale runs", $vm.runsSlider, 0...10,
+                    help: "How much the melody is kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn. Zero: runs are fine. Independent of Smooth ↔ Jumpy, so a smooth tune can still avoid runs.")
             knobRow("Steady pulse", $vm.pulseSlider, 0...10,
                     help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
             knobRow("Fit the harmony", $vm.harmonySlider, 0...10,
@@ -356,6 +358,7 @@ struct ContentView: View {
             Slider(value: $vm.expandComplexity, in: 1...5, step: 1)
             knobRow("Smooth ↔ Jumpy", $vm.expandShape, 0...10, readout: shapeWord(vm.expandShape),
                     help: "How the new bars move. Smooth: small steps. Jumpy: leaps and turns.")
+            knobRow("Avoid scale runs", $vm.expandRuns, 0...10, help: "How much the new bars are kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn.")
             knobRow("Steady pulse", $vm.expandPulse, 0...10, help: "How strongly notes start on the beat.")
             knobRow("Fit the harmony", $vm.expandHarmony, 0...10, help: "How strongly the new bars use each bar's chord. The chords carry on from the melody, and the accompaniment follows them.")
             knobRow("Phrase endings", $vm.expandEndings, 0...10, help: "How strongly each new phrase ends on a stopping note.")
