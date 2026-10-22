@@ -29,6 +29,33 @@ DEG_MINOR = [0, 2, 3, 5, 7, 8, 10]
 SCALE_MAJOR = [0, 2, 4, 5, 7, 9, 11]
 SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10, 11]     # natural minor plus the raised 7th (the leading tone)
 
+# The modes. Each is a seven-degree scale (semitones above the tonic). "minor" is the natural minor (aeolian) and
+# "major" is ionian; the other four are the modal flavours. Their pitch classes are exactly these seven, except that
+# a minor key also allows the raised 7th (so that a cadence has a leading tone).
+MODES = {
+    "major": DEG_MAJOR, "minor": DEG_MINOR,
+    "dorian": [0, 2, 3, 5, 7, 9, 10], "phrygian": [0, 1, 3, 5, 7, 8, 10],
+    "lydian": [0, 2, 4, 6, 7, 9, 11], "mixolydian": [0, 2, 4, 5, 7, 9, 10],
+}
+MODE_ORDER = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian"]
+MODE_ALIASES = {"ionian": "major", "aeolian": "minor", "maj": "major", "min": "minor"}
+# the major key with the same notes, as semitones below the mode's tonic (for the key signature)
+PARENT_MAJOR_BELOW = {"major": 0, "minor": 9, "dorian": 2, "phrygian": 4, "lydian": 5, "mixolydian": 7}
+# the note that gives a mode its sound: (semitones above the tonic, what it is called)
+FLAVOR = {"dorian": (9, "the raised 6th"), "phrygian": (1, "the flat 2nd"), "lydian": (6, "the raised 4th"),
+          "mixolydian": (10, "the flat 7th")}
+
+
+def is_modal(mode):
+    """True for dorian, phrygian, lydian and mixolydian: the modes that have a characteristic note."""
+    return mode in FLAVOR
+
+
+def mode_family(mode):
+    """'major' or 'minor': which of the two a mode's chords behave like (its tonic triad)."""
+    return "major" if MODES.get(mode, DEG_MAJOR)[2] == 4 else "minor"
+
+
 # Chord progressions per phrase role, as scale degrees of the chord roots (0 = I / i ... 4 = V ...).
 PROGRESSIONS = {
     "ante": [[0, 3, 1, 4], [0, 5, 3, 4], [0, 2, 3, 4], [0, 0, 3, 4]],     # a question: ends on the dominant
@@ -36,17 +63,29 @@ PROGRESSIONS = {
     "cont": [[5, 3, 0, 4], [3, 4, 5, 2], [1, 4, 0, 5], [3, 0, 4, 5]],     # contrast: leaves home, ends away from it
     "final": [[0, 3, 4, 0], [0, 5, 1, 0], [0, 1, 4, 0], [3, 5, 4, 0]],
 }
+# Modal progressions: the chord that carries the mode's sound (IV in dorian, II in lydian, bII in phrygian, bVII in
+# mixolydian) and no dominant-tonic cadence, which would pull the tune back to major or minor.
+MODAL_PROGRESSIONS = {
+    "dorian": {"ante": [[0, 3, 0, 6], [0, 0, 3, 6]], "cons": [[0, 3, 6, 0], [0, 6, 3, 0]],
+               "cont": [[3, 6, 0, 3], [1, 3, 6, 0]], "final": [[0, 3, 6, 0], [0, 6, 3, 0]]},
+    "phrygian": {"ante": [[0, 1, 0, 6], [0, 0, 1, 6]], "cons": [[0, 1, 6, 0], [0, 6, 1, 0]],
+                 "cont": [[3, 1, 6, 3], [6, 1, 0, 3]], "final": [[0, 1, 6, 0], [0, 6, 1, 0]]},
+    "lydian": {"ante": [[0, 1, 0, 4], [0, 0, 1, 4]], "cons": [[0, 1, 4, 0], [0, 4, 1, 0]],
+               "cont": [[1, 4, 0, 1], [4, 1, 5, 0]], "final": [[0, 1, 4, 0], [0, 4, 1, 0]]},
+    "mixolydian": {"ante": [[0, 6, 0, 6], [0, 3, 6, 6]], "cons": [[0, 6, 3, 0], [0, 3, 6, 0]],
+                   "cont": [[3, 6, 0, 3], [5, 3, 6, 0]], "final": [[0, 6, 3, 0], [0, 3, 6, 0]]},
+}
 CADENCE_TARGETS = {"ante": [4, 1], "cons": [0, 2], "cont": [4, 2, 5], "final": [0]}   # scale degrees to end a phrase on
 
 
 def deg_scale(mode):
     """The seven degrees of a mode, used for chord arithmetic."""
-    return DEG_MAJOR if mode == "major" else DEG_MINOR
+    return MODES.get(mode, DEG_MAJOR)
 
 
 def key_scale(mode):
     """The pitch classes a note may be in, relative to the tonic."""
-    return SCALE_MAJOR if mode == "major" else SCALE_MINOR
+    return SCALE_MINOR if mode == "minor" else MODES.get(mode, DEG_MAJOR)
 
 
 def key_pcs(tonic, mode):
@@ -157,16 +196,16 @@ def phrase_plan(bars):
     return list(zip(lens, roles))
 
 
-def chord_progression(role, length, rng):
+def chord_progression(role, length, rng, mode="major"):
     """The chord degrees of one phrase of `length` bars."""
-    prog = list(rng.choice(PROGRESSIONS[role]))
+    prog = list(rng.choice(MODAL_PROGRESSIONS.get(mode, PROGRESSIONS)[role]))
     if length != 4:
         prog = (prog[: length - 1] + [prog[-1]]) if length > 1 else [prog[-1]]
     return prog[:length]
 
 
 def build_plan(bars, sig, key, rng=None, level=3):
-    """The phrases, harmony and cadences of a piece. `key` is (tonic pitch class, 'major'|'minor').
+    """The phrases, harmony and cadences of a piece. `key` is (tonic pitch class, mode name: see MODES).
     `rng` is anything with a .choice method; the global random module is used by default, so a seeded run is
     repeatable."""
     rng = random if rng is None else rng
@@ -176,7 +215,7 @@ def build_plan(bars, sig, key, rng=None, level=3):
     chords, phrases, cadences, boundaries = [], [], [], []
     bar = 0
     for i, (length, role) in enumerate(groups):
-        prog = chord_progression(role, length, rng)
+        prog = chord_progression(role, length, rng, key[1])
         chords += prog
         end_beat = (bar + length) * bb
         phrases.append({
@@ -295,11 +334,11 @@ def shape_amount_knobs(amount):
 
 # What the app's sliders (and the command line's) send: all run 0..10, and this is the one place that turns them into
 # the numbers the sampler uses. The defaults are what the app did before they were sliders.
-SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0, "runs": 5.0}
+SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0, "runs": 5.0, "flavor": 5.0}
 
 
 def clean_sliders(sliders=None):
-    """The six slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
+    """The seven slider positions, each clamped to 0..10; missing or None ones take their defaults. A slider sent as "auto"
     (or listed under the "auto" key, which is how a cleaned set remembers it) keeps its default number for the
     sampler, and is named in s["auto"] so that the LLM is not given an instruction for it."""
     s = dict(SLIDER_DEFAULTS)
@@ -323,6 +362,55 @@ def from_sliders(sliders=None):
               "motif": s["theme"] * 2.0, "beat": s["pulse"] * 0.3,
               "run": round(s["runs"] * 0.3, 3)}     # penalty on one-way scale runs; 5 = what the shape slider gave
     return {"shape": int(round(s["shape"] / 5)), "form": form_from_knobs(knobs_), "knobs": knobs_}
+
+
+def flavor_notes(notes, key, strength, span=(0, 127)):
+    """Make a modal melody sound like its mode. The notes are already in the mode's scale, but the one note that gives it
+    its sound (the raised 4th of lydian, the raised 6th of dorian...) may not appear at all. This brings it in: at
+    strength 0 nothing changes; the stronger the setting, the more of the notes next to it (a step above or below, on
+    strong beats or held longest) become it, up to about one note in six. A note is only moved by a step, never the
+    first note of the melody, the last, or one on the cadence."""
+    tonic, mode = key
+    if mode not in FLAVOR or strength <= 0 or len(notes) < 4:
+        return notes
+    semis, _ = FLAVOR[mode]
+    flav = (tonic + semis) % 12
+    scale = {(tonic + x) % 12 for x in MODES[mode]}
+    want = max(1, round(len(notes) * strength / 10 * 0.16))
+    have = sum(1 for p, _, _ in notes if p % 12 == flav)
+    need = want - have
+    if need <= 0:
+        return notes
+    out = list(notes)
+
+    def neighbour(p):
+        """The flavour note one scale step from p, or None."""
+        for d in (1, -1, 2, -2):
+            q = p + d
+            if q % 12 == flav and span[0] <= q <= span[1]:
+                # only a true scale neighbour: no scale note sits between p and q
+                between = [x for x in range(min(p, q) + 1, max(p, q)) if x % 12 in scale]
+                if not between:
+                    return q
+        return None
+
+    def rank(i):
+        p, s, d = out[i]
+        return (-(1 if abs(s % 1) < 1e-6 else 0) - d, i)        # strong (on the beat) and long first
+
+    order = sorted(range(1, len(out) - 1), key=rank)
+    last_chosen = -9
+    for i in order:
+        if need <= 0:
+            break
+        if abs(i - last_chosen) < 2:
+            continue                                            # not two flavour notes side by side
+        q = neighbour(out[i][0])
+        if q is not None and out[i][0] % 12 != flav:
+            out[i] = (q, out[i][1], out[i][2])
+            last_chosen = i
+            need -= 1
+    return out
 
 
 def form_from_knobs(k):

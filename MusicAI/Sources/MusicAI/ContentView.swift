@@ -254,7 +254,11 @@ struct ContentView: View {
                 Divider()
                 ForEach(KeyChoice.all) { Text($0.name).tag(Optional($0)) }
             }
-            .help("Every melody note stays in this key. Auto: a key named in your prompt (such as 'in D minor'), otherwise the language model picks one that suits it.")
+            .help("The home note. Every melody note stays in the key's scale. Auto: a key named in your prompt (such as 'in D minor'), otherwise the language model picks one that suits it.")
+            Picker("Mode", selection: $vm.keyMode) {
+                ForEach(Mode.all, id: \.id) { Text($0.name).tag($0.id) }
+            }
+            .help("The scale built on that home note. Major and minor are the usual two. Dorian, Phrygian, Lydian and Mixolydian each change one or two notes to get a different colour (Lydian: bright and dreamy; Dorian: minor but warmer; Mixolydian: major but bluesy; Phrygian: dark, Spanish). Auto: a mode named in your prompt, otherwise major or minor to suit the mood.")
             HStack {
                 Text("Tempo"); Spacer()
                 TextField("80", text: $vm.bpmText)
@@ -270,7 +274,7 @@ struct ContentView: View {
             complexityRow($vm.complexity)
             llmPicker
             characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
-                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider,
+                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider,
                               phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
             optionsRow($vm.optionCount)
 
@@ -309,7 +313,7 @@ struct ContentView: View {
             complexityRow($vm.expandComplexity)
             if vm.expandEngine == "llm" { llmPicker }
             characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
-                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme,
+                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor,
                               phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
             optionsRow($vm.expandCount)
 
@@ -382,7 +386,7 @@ struct ContentView: View {
 
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
     private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
-                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>,
+                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>,
                                    phrasing: Binding<Int>, resolve: Binding<Bool>, auto: Binding<Set<String>>, what: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Divider()
@@ -399,6 +403,8 @@ struct ContentView: View {
                     help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
             knobRow("Recurring theme", theme, 0...10, auto: autoBinding(auto, "theme"),
                     help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
+            knobRow("Modal flavor", flavor, 0...10, auto: autoBinding(auto, "flavor"),
+                    help: "Only for Dorian, Phrygian, Lydian and Mixolydian. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
             Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: phrasing) {
                 Text("Flowing").tag(0)

@@ -49,7 +49,7 @@ ANT = "stanford-crfm/music-{size}-800k"
 SYSTEM = """You are a composer. Reply with ONLY a JSON object, no prose, in this form:
 {"reading": "<one sentence: what you understood the request to ask for (mood, imagery, character) and how you used it: tempo, key, rhythm, contour>",
  "plan": "<one or two sentences: the motif, how it develops, where the climax is>",
- "key": "<tonic> <major|minor>, the key the notes are actually in (e.g. D minor)", "tempo": <bpm int>,
+ "key": "<tonic> <mode>, the key the notes are actually in (e.g. D minor, or G lydian when a mode is asked for)", "tempo": <bpm int>,
  "notes": [[midi_pitch, start_beat, duration_beats], ...]}
 Rules: a single monophonic melody in {sig} time (one bar = {bar_beats:g} quarter-note beats), pitches
 {lo}-{hi}, start_beat and duration_beats in quarter-note beats (multiples of 0.25), notes sorted by
@@ -391,7 +391,8 @@ _PC = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
 def parse_key(prompt):
     """Tonic pitch class (and mode) named in a prompt like 'a sad tune in D minor' or 'Bb major', else None.
     A lone lowercase 'a' is the article, not the note, so A must be capitalised."""
-    for m in re.finditer(r"\b([A-Ga-g])\s?(#|sharp|♯|b|flat|♭)?[ -]?(major|minor|maj|min)\b", prompt or ""):
+    for m in re.finditer(r"\b([A-Ga-g])\s?(#|sharp|♯|b|flat|♭)?[ -]?(major|minor|maj|min|ionian|aeolian|dorian|phrygian|lydian|mixolydian)\b",
+                         prompt or "", re.I):
         letter, acc, mode = m.groups()
         if letter == "a" and not (acc or "").strip():
             continue
@@ -400,7 +401,8 @@ def parse_key(prompt):
             tonic += 1
         elif acc and acc.lower() in ("b", "flat", "♭"):
             tonic -= 1
-        return tonic % 12, ("major" if mode.lower().startswith("maj") else "minor")
+        mode = mode.lower()
+        return tonic % 12, plan.MODE_ALIASES.get(mode, mode)
     return None
 
 
@@ -413,7 +415,7 @@ def key_label(key):
 
 def scale_pcs(key):
     """Pitch classes that belong to a key (tonic pitch class, 'major'|'minor')."""
-    return {(key[0] + x) % 12 for x in (_SCALE_MAJOR if key[1] == "major" else _SCALE_MINOR)}
+    return plan.key_pcs(key[0], key[1])
 
 
 def snap_to_key(notes, key, span=(0, 127)):
@@ -602,7 +604,7 @@ def retime(path, tempo, sig):
     out.save(str(path))
 
 
-def guidance_text(sliders, motif=None):
+def guidance_text(sliders, motif=None, key=None):
     """The character sliders (0..10), said to the LLM in words. A language model cannot be told 'smoothness 3'; it can
     be told what the line should do."""
     s = plan.clean_sliders(sliders)
@@ -635,6 +637,14 @@ def guidance_text(sliders, motif=None):
         how = "nearly note for note" if s["theme"] > 6 else "recognisably but varied"
         out.append(f"Theme: begin each phrase with the piece's opening idea {json.dumps([[p, st, d] for p, st, d in motif])} "
                    f"(start_beat, duration_beats), moved to fit that phrase's chord, {how}.")
+    if key and plan.is_modal(key[1]) and "flavor" not in auto and s["flavor"] > 2.5:
+        semis, what = plan.FLAVOR[key[1]]
+        note = PC_NAMES[(key[0] + semis) % 12]
+        if s["flavor"] > 7.5:
+            out.append(f"Mode: this is {key_label(key)}, not major or minor. Make {what} ({note}) prominent: use it on strong "
+                       f"beats and held notes, several times in every phrase, and avoid a dominant-to-tonic cadence.")
+        else:
+            out.append(f"Mode: this is {key_label(key)}, not major or minor. Use {what} ({note}) regularly so the mode is heard.")
     return "\n".join(out)
 
 
@@ -699,7 +709,7 @@ def compose(prompt, bars, sig, level, llm, log, bpm=None, key=None, harmony=None
             try:
                 if sl is not None and sl["theme"] > 0 and motif is None and all_notes:
                     motif = [n for n in all_notes if n[1] < bb]      # the first bar written is the piece's idea
-                guide = guidance_text(sl, motif) if sl is not None else ""
+                guide = guidance_text(sl, motif, key) if sl is not None else ""
                 ask = prompt
                 if extra:     # the user's instruction comes first, and is spread over the parts of the addition
                     ask = (f"INSTRUCTION FROM THE USER for these new bars, which comes before everything else, including "
@@ -841,6 +851,8 @@ def finish_melody(notes, bars, sig, program, enforce, resolve, phrasing, sliders
     notes = [(fold_pitch(p, program), s_, d) for p, s_, d in notes]
     if enforce:
         notes = snap_to_key(notes, enforce, span)
+        if plan.is_modal(enforce[1]):
+            notes = plan.flavor_notes(notes, enforce, sl["flavor"], span)    # bring in the note that gives the mode its sound
     notes = apply_breaths(notes, bars, sig, phrasing)
     if enforce and theplan is not None and sl["endings"] > 0:
         notes = plan.resolve_phrase_endings(notes, theplan, enforce, span)
@@ -850,9 +862,10 @@ def finish_melody(notes, bars, sig, program, enforce, resolve, phrasing, sliders
 
 
 def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=None, resolve=True, key=None,
-                      phrasing=1, sliders=None, theplan=None):
+                      phrasing=1, sliders=None, theplan=None, mode=None):
     """Yield `count` melodies as dicts {notes, tempo, score}, each written in full by the language model.
-    The key is the one given, else one named in the prompt, else one the LLM picks for the whole batch."""
+    The key is the one given, else one named in the prompt, else one the LLM picks for the whole batch. `mode` (a name
+    from plan.MODES) overrides the mode of whichever key that is."""
     total_beats = bars * bar_beats(sig)
     target = COMPLEXITY[level][1]
     sl = plan.clean_sliders(sliders)
@@ -860,6 +873,9 @@ def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=No
     explain_prompt(prompt, key, bpm or 90, bars, level, llm, log)
     if not enforce:
         enforce = pick_key(prompt, llm, log)
+    if mode and mode in plan.MODES and enforce[1] != mode:
+        enforce = (enforce[0], mode)
+        log(f"  ▸ Mode: {key_label(enforce)}.")
     if theplan is None and plan.from_sliders(sl)["form"] > 0:
         theplan = plan.build_plan(bars, sig, enforce)
     for _ in range(count):
@@ -871,11 +887,11 @@ def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=No
 
 
 def best_melody(prompt, bars, sig, level, llm, program, candidates, tempo_hint, log, resolve=True, key=None, phrasing=1,
-                sliders=None):
+                sliders=None, mode=None):
     """Best-scoring melody out of `candidates` (the command-line one-shot mode)."""
     best = None
     for k, c in enumerate(melody_candidates(prompt, bars, sig, level, llm, program, candidates, log, tempo_hint, resolve,
-                                            key, phrasing, sliders), 1):
+                                            key, phrasing, sliders, mode=mode), 1):
         log(f"      melody candidate {k}/{candidates}: {len(c['notes'])} notes, score {c['score']:.1f}")
         if best is None or c["score"] > best["score"]:
             best = c
@@ -885,7 +901,7 @@ def best_melody(prompt, bars, sig, level, llm, program, candidates, tempo_hint, 
 
 
 def make_melodies(prompt, bars=8, program=0, sig="4/4", complexity=3, llm="7B", count=4, name=None, log=print,
-                  on_candidate=None, bpm=None, resolve=True, key=None, phrasing=1, sliders=None):
+                  on_candidate=None, bpm=None, resolve=True, key=None, phrasing=1, sliders=None, mode=None):
     """Stage 1: write `count` melody options to output/<name>-optN.mid. Returns a list of dicts
     {index, path, tempo, sig, score}; on_candidate(dict) is called as each one is ready."""
     folder = ensure_session(prompt)
@@ -893,7 +909,8 @@ def make_melodies(prompt, bars=8, program=0, sig="4/4", complexity=3, llm="7B", 
     total_beats = bars * bar_beats(sig)
     out = []
     log(f"Composing {count} melody options...")
-    for c in melody_candidates(prompt, bars, sig, complexity, llm, program, count, log, bpm, resolve, key, phrasing, sliders):
+    for c in melody_candidates(prompt, bars, sig, complexity, llm, program, count, log, bpm, resolve, key, phrasing, sliders,
+                               mode=mode):
         if not out:    # the first one has chosen the key and the plan, which the accompaniment will follow
             _write_meta(folder, key=list(c["key"]), prompt=prompt, level=complexity,
                         plan=plan_json(c["plan"], plan.from_sliders(sliders)["form"]) if c["plan"] else None,

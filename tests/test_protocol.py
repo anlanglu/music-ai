@@ -74,7 +74,7 @@ def test_unknown_session_path_is_an_error_not_a_crash(backend, tmp_path):
 
 def test_the_ready_event_carries_where_the_sliders_start(backend):
     sliders = backend.ready["sliders"]
-    assert set(sliders) == {"shape", "pulse", "harmony", "endings", "theme", "runs"}
+    assert set(sliders) == {"shape", "pulse", "harmony", "endings", "theme", "runs", "flavor"}
     assert all(0 <= v <= 10 for v in sliders.values())
 
 
@@ -115,3 +115,10 @@ def test_round_trip_create_approve_rename_reopen(backend):
     assert kinds.count("candidate") == 3, "the melody options come back"
     done = [e for e in ev if e["type"] == "done"]
     assert done and "piece01-" in done[-1]["full"], "the approved piece comes back"
+
+
+def test_a_mode_can_be_asked_for_with_or_without_a_tonic(backend):
+    for extra in [dict(key=[2, "dorian"]), dict(key=[], mode="lydian"), dict(key=[7, "auto"], mode="auto")]:
+        backend.send(**{**MELODY, **extra})
+        ev = backend.until({"melodies_done", "error"})
+        assert ev[-1]["type"] == "melodies_done", (extra, ev[-1])

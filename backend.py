@@ -1,7 +1,7 @@
 """JSON-lines backend for the Swift app. Reads one JSON request per stdin line, writes events to stdout.
 
 Requests (one JSON object per line, "cmd" selects the stage):
-  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,runs: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, count}
+  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,runs: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
@@ -122,6 +122,22 @@ def restore(path):
         send(type="done", melody=str(latest), full=str(latest), notes=notes_of(latest), programs=list(programs_of(latest)))
 
 
+def chosen_mode(r):
+    """The mode asked for ("auto" or none: leave it to the prompt)."""
+    m = str(r.get("mode") or "auto").lower()
+    return m if m in plan.MODES else None
+
+
+def chosen_key(r):
+    """The key asked for, as (tonic, mode): a tonic from the app, with the mode chosen or, on Auto, the one the prompt's
+    mood suggests (minor for sad words, major otherwise)."""
+    k = r.get("key")
+    if not k:
+        return None
+    mode = chosen_mode({"mode": k[1] if len(k) > 1 else None}) or chosen_mode(r) or plan.mode_for(r.get("prompt", ""))
+    return int(k[0]), mode
+
+
 def handle(r):
     cmd = r.get("cmd", "orchestrate")
     if r.get("seed") is not None:
@@ -153,7 +169,7 @@ def handle(r):
             r["prompt"], int(r.get("bars", 8)), int(r.get("program", 0)),
             r.get("sig", "4/4"), int(r.get("complexity", 3)), r.get("llm", "7B"), int(r.get("count", 4)),
             log=log, on_candidate=candidate_event,
-            key=(int(r["key"][0]), r["key"][1]) if r.get("key") else None,
+            key=chosen_key(r), mode=chosen_mode(r),
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
             sliders=r.get("sliders"),
         )

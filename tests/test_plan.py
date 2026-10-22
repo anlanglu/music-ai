@@ -298,3 +298,43 @@ def test_the_runs_slider_is_independent_of_shape():
     smooth_no_runs = plan.from_sliders({"shape": 0, "runs": 10})["knobs"]["run"]
     jumpy_runs_ok = plan.from_sliders({"shape": 10, "runs": 0})["knobs"]["run"]
     assert smooth_no_runs == 3.0 and jumpy_runs_ok == 0.0
+
+
+def test_modes_have_the_right_notes_and_signatures():
+    import notation
+    import text2music as t
+    assert t.scale_pcs((2, "dorian")) == {2, 4, 5, 7, 9, 11, 0}, "D dorian is the white notes"
+    assert t.scale_pcs((5, "lydian")) == {5, 7, 9, 11, 0, 2, 4}, "F lydian is the white notes"
+    assert t.scale_pcs((7, "mixolydian")) == {7, 9, 11, 0, 2, 4, 5}
+    assert t.scale_pcs((4, "phrygian")) == {4, 5, 7, 9, 11, 0, 2}
+    assert notation._sharps((2, "dorian")) == 0 and notation._sharps((5, "lydian")) == 0       # white notes
+    assert notation._sharps((7, "mixolydian")) == 0 and notation._sharps((9, "minor")) == 0
+    assert notation._sharps((7, "lydian")) == 2, "G lydian has the notes of D major"
+    assert notation._sharps((9, "dorian")) == 1, "A dorian has the notes of G major"
+    assert t.parse_key("a dreamy tune in D Dorian") == (2, "dorian")
+    assert t.parse_key("something in F# lydian") == (6, "lydian")
+    assert t.parse_key("in A aeolian") == (9, "minor") and t.parse_key("C ionian") == (0, "major")
+
+
+def test_a_modal_plan_uses_the_modes_chords():
+    import random
+    for mode in ("dorian", "phrygian", "lydian", "mixolydian"):
+        p = plan.build_plan(8, "4/4", (2, mode), random.Random(3))
+        assert p["key"] == (2, mode) and len(p["chords"]) == 8 and p["chords"][-1] == 0
+        assert all(0 <= c < 7 for c in p["chords"])
+        assert plan.chord_name(2, mode, 0)
+
+
+def test_flavor_brings_in_the_characteristic_note():
+    # D dorian: its raised 6th is B. A tune with no B gets some; strength 0 changes nothing; major keys are left alone.
+    notes = [(62 + (0, 2, 3, 5, 7, 5, 3, 2)[i % 8], float(i), 1.0) for i in range(16)]
+    notes[0] = (62, 0.0, 1.0)
+    assert not any(p % 12 == 11 for p, _, _ in notes)
+    assert plan.flavor_notes(notes, (2, "dorian"), 0) == notes
+    some = plan.flavor_notes(notes, (2, "dorian"), 5)
+    more = plan.flavor_notes(notes, (2, "dorian"), 10)
+    count = lambda ns: sum(1 for p, _, _ in ns if p % 12 == 11)
+    assert 0 < count(some) <= count(more)
+    assert all({p % 12 for p, _, _ in ns} <= {2, 4, 5, 7, 9, 11, 0} for ns in (some, more)), "still in the mode"
+    assert some[0] == notes[0] and some[-1] == notes[-1], "the first and last notes stay"
+    assert plan.flavor_notes(notes, (2, "major"), 10) == notes

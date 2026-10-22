@@ -10,7 +10,7 @@ import math
 import mido
 
 from playable import fold_pitch, limits
-from plan import DEG_MAJOR as _MAJOR, DEG_MINOR as _MINOR
+from plan import DEG_MAJOR as _MAJOR, DEG_MINOR as _MINOR, deg_scale, key_pcs, mode_family
 from plan import chord_triple
 
 STYLES = ["block", "arpeggio", "alberti", "oompah", "sustained", "bassline", "walking", "pulse", "double"]
@@ -45,7 +45,7 @@ def piece_notes(path):
 
 def _chords(tonic, mode):
     """Diatonic triads of the key: (root pitch class, third, fifth, prior weight). Minor also allows a major V."""
-    scale = _MAJOR if mode == "major" else _MINOR
+    scale = deg_scale(mode)
     triads = []
     for d in range(7):
         root = scale[d]
@@ -53,7 +53,7 @@ def _chords(tonic, mode):
         fifth = scale[(d + 4) % 7] + (12 if (d + 4) >= 7 else 0)
         triads.append((root, third - root, fifth - root, d))
     prior = {"major": {0: 1.0, 4: 0.8, 3: 0.7, 5: 0.6, 1: 0.4, 2: 0.3, 6: 0.1},
-             "minor": {0: 1.0, 4: 0.6, 3: 0.7, 5: 0.6, 2: 0.5, 6: 0.4, 1: 0.1}}[mode]
+             "minor": {0: 1.0, 4: 0.6, 3: 0.7, 5: 0.6, 2: 0.5, 6: 0.4, 1: 0.1}}[mode_family(mode)]
     out = [((tonic + r) % 12, t, f, prior[d], d) for r, t, f, d in triads]
     if mode == "minor":  # harmonic-minor dominant: major triad on the 5th degree
         out.append(((tonic + 7) % 12, 4, 7, 0.8, 4))
@@ -74,7 +74,7 @@ def choose_chords(notes, key, seg_beats, total_beats, plan_chords=None, bar_beat
             out.append(chord_triple(tonic, mode, plan_chords[min(bar, len(plan_chords) - 1)]))
         return out
     chords = _chords(tonic, mode)
-    scale_pcs = {(tonic + s) % 12 for s in (_MAJOR if mode == "major" else _MINOR)}
+    scale_pcs = {(tonic + s) % 12 for s in deg_scale(mode)}
     n_seg = max(1, math.ceil(total_beats / seg_beats - 1e-9))
     emit = []
     for k in range(n_seg):
@@ -157,7 +157,7 @@ def _double(notes, key, program, d, variant):
     alts = [interval, -12 if interval != -12 else 12, 12 if interval != 12 else -24, -24 if interval != -24 else 24]
     shift = alts[variant % len(alts)]
     tonic, mode = key
-    pcs = {(tonic + x) % 12 for x in (_MAJOR if mode == "major" else _MINOR + [11])}
+    pcs = key_pcs(tonic, mode)
     out = []
     for p, st, du, prog in sorted((n for n in notes if n[3] == mel), key=lambda n: n[1]):
         q = p + shift

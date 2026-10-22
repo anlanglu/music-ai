@@ -9,6 +9,7 @@ import mido
 import verovio
 from music21 import chord, clef, converter, key, layout, meter, note, stream
 
+import plan
 from text2music import GM_NAMES, TMP_DIR, key_for_file
 
 
@@ -75,9 +76,9 @@ _MAJOR_SHARPS = {0: 0, 7: 1, 2: 2, 9: 3, 4: 4, 11: 5, 6: 6, 1: -5, 8: -4, 3: -3,
 def _sharps(key):
     """Key signature (+ sharps / - flats) of a (tonic pitch class, mode) key."""
     tonic, mode = key
-    if mode == "major":
-        return _MAJOR_SHARPS[tonic]
-    return -6 if tonic == 3 else _MAJOR_SHARPS[(tonic + 3) % 12]   # E-flat minor, not D-sharp minor
+    if mode == "minor" and tonic == 3:
+        return -6                                                  # E-flat minor, not D-sharp minor
+    return _MAJOR_SHARPS[(tonic - plan.PARENT_MAJOR_BELOW.get(mode, 0)) % 12]    # the major key with the same notes
 
 
 def _respell(part, sharps):

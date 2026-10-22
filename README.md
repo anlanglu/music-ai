@@ -11,11 +11,11 @@ everything runs on your Mac, with no cloud service and no account.
 ## What it does
 
 1. **Melody first.** Prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
-   ideas) and six sliders for the line's character (see below). The language model writes every bar. You get N options
+   ideas) and seven sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
 2. **Expand the melody (optional).** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
-   as you like (with Undo). Each expansion has its own settings: length, complexity, the six sliders and a free-text
+   as you like (with Undo). Each expansion has its own settings: length, complexity, the seven sliders and a free-text
    direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
    continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
@@ -39,11 +39,12 @@ A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody s
 | **Phrase endings** | each phrase finishes on a note that sounds like a stopping place, like a full stop |
 | **Recurring theme** | the opening idea comes back at the start of each phrase, moved onto its chord (off by default) |
 | **Avoid scale runs** | how much one-way runs up or down the scale are cut short, independent of Smooth ↔ Jumpy |
+| **Modal flavor** | with a mode (Dorian, Phrygian, Lydian, Mixolydian) chosen next to the Key: how often the note that gives the mode its sound is used |
 
 The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
 The accompaniment's sampling settings (randomness, retries, minimum density, beat-grid snapping, LLM directions) are fixed
-constants in `text2music.py`, not options. The command line has the same six sliders as flags: `--smooth-jumpy`, `--pulse`,
+constants in `text2music.py`, not options. The command line has the same seven sliders as flags: `--smooth-jumpy`, `--pulse`,
 `--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
 numbers, for the app and the command line alike.
 

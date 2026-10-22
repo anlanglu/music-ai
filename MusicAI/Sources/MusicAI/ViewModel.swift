@@ -65,18 +65,22 @@ struct HistoryEntry: Identifiable {
     var snapshot: Snapshot
 }
 
-/// A musical key the melody can be forced into (tonic pitch class 0-11, mode).
+/// A key's tonic (pitch class 0-11). The mode is chosen separately, so any tonic can be combined with any mode.
 struct KeyChoice: Hashable, Identifiable {
     let name: String
     let tonic: Int
-    let mode: String
     var id: String { name }
-    static let all: [KeyChoice] = {
-        let major = [("C", 0), ("D♭", 1), ("D", 2), ("E♭", 3), ("E", 4), ("F", 5), ("F♯", 6), ("G", 7), ("A♭", 8), ("A", 9), ("B♭", 10), ("B", 11)]
-        let minor = [("C", 0), ("C♯", 1), ("D", 2), ("E♭", 3), ("E", 4), ("F", 5), ("F♯", 6), ("G", 7), ("G♯", 8), ("A", 9), ("B♭", 10), ("B", 11)]
-        return major.map { KeyChoice(name: "\($0.0) major", tonic: $0.1, mode: "major") }
-             + minor.map { KeyChoice(name: "\($0.0) minor", tonic: $0.1, mode: "minor") }
-    }()
+    static let all: [KeyChoice] = [("C", 0), ("C♯ / D♭", 1), ("D", 2), ("E♭", 3), ("E", 4), ("F", 5), ("F♯ / G♭", 6),
+                                   ("G", 7), ("A♭", 8), ("A", 9), ("B♭", 10), ("B", 11)]
+        .map { KeyChoice(name: $0.0, tonic: $0.1) }
+}
+
+/// The scales the melody can be written in. "auto" leaves it to the prompt: minor for a sad request, major otherwise.
+enum Mode {
+    static let all: [(id: String, name: String)] = [
+        ("auto", "Auto (from prompt)"), ("major", "Major (Ionian)"), ("minor", "Minor (Aeolian)"), ("dorian", "Dorian"),
+        ("phrygian", "Phrygian"), ("lydian", "Lydian"), ("mixolydian", "Mixolydian"),
+    ]
 }
 
 extension Instrument {
@@ -107,7 +111,8 @@ final class ViewModel: ObservableObject {
     @Published var sig = "4/4"
     static let timeSigs = ["4/4", "3/4", "2/4", "6/8", "5/4", "7/8", "12/8"]
     @Published var bpmText = "80"
-    @Published var keyChoice: KeyChoice?   // nil = Auto: use a key named in the prompt, else none
+    @Published var keyChoice: KeyChoice?   // nil = Auto: use a key named in the prompt, else the LLM picks one
+    @Published var keyMode = "auto"        // "auto", or one of Mode.all
     @Published var resolveEnding = true
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
     // The five character sliders, each 0...10. The backend turns them into the sampler's numbers, and tells the app
@@ -118,23 +123,26 @@ final class ViewModel: ObservableObject {
     @Published var endingsSlider = 3.33 // phrases end on a stopping note
     @Published var themeSlider = 0.0    // the opening idea returns in each phrase
     @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
+    @Published var flavorSlider = 5.0   // how much the mode's own note (Lydian #4, Dorian ♮6...) is brought out
     /// Sliders left on Auto are sent as "auto": the backend gives the LLM no instruction for them.
     @Published var autoSliders: Set<String> = []
     var sliderValues: [String: Any] {
         let v: [String: Double] = ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider,
-                                   "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider]
+                                   "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider,
+                                   "flavor": flavorSlider]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = autoSliders.contains($1.key) ? "auto" : $1.value }
     }
     private func applySliderDefaults(_ d: [String: Double]) {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
         harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
         themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
+        flavorSlider = d["flavor"] ?? flavorSlider
         copySettingsToExpansion()
     }
     /// Step 2 starts from step 1's settings; after that each step keeps its own.
     private func copySettingsToExpansion() {
         expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
-        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider
+        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider
         expandComplexity = complexity; expandCount = optionCount
         expandPhrasing = phrasing; expandResolve = resolveEnding; expandAuto = autoSliders
     }
@@ -154,6 +162,7 @@ final class ViewModel: ObservableObject {
     @Published var expandEndings = 3.33
     @Published var expandTheme = 0.0
     @Published var expandRuns = 5.0
+    @Published var expandFlavor = 5.0
     @Published var expandPhrasing = 1
     @Published var expandResolve = true
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
@@ -162,7 +171,8 @@ final class ViewModel: ObservableObject {
     @Published var expandAuto: Set<String> = []
     var expandSliderValues: [String: Any] {
         let v: [String: Double] = ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony,
-                                   "endings": expandEndings, "theme": expandTheme, "runs": expandRuns]
+                                   "endings": expandEndings, "theme": expandTheme, "runs": expandRuns,
+                                   "flavor": expandFlavor]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
     }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.
@@ -490,7 +500,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
-            "key": keyChoice.map { [$0.tonic, $0.mode] as [Any] } ?? [], "complexity": Int(complexity), "llm": llm,
+            "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
             "sliders": sliderValues,
         ])
