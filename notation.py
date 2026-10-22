@@ -35,22 +35,33 @@ def _part_programs(path):
 
 
 # Each instrument's usual notation (concert pitch). Anything not listed is a single treble staff.
-GRAND_STAFF = set(range(0, 9)) | set(range(16, 21)) | {12, 46} | set(range(48, 55)) | set(range(88, 96))
+GRAND_STAFF = set(range(0, 9)) | set(range(16, 24)) | {12, 46} | set(range(48, 55)) | set(range(88, 96))
 BASS_CLEF = set(range(32, 40)) | {42, 43, 47, 57, 58, 70}   # basses, cello, contrabass, timpani, trombone, tuba, bassoon
 ALTO_CLEF = {41}                                           # viola
+TENOR_TOO = {42, 57, 70}                                   # cello, trombone, bassoon use tenor clef for their upper range
 TREBLE_8VB = set(range(24, 32))                            # guitars sound an octave below written
 SPLIT = 60                                                 # grand staff: middle C and up -> treble staff
 
 
 def _clef_for(program, mean_pitch):
     """Usual clef for the instrument, but never one that leaves the part on a pile of ledger lines: a bass-clef
-    instrument that is playing high (e.g. a cello carrying the melody) moves to tenor / treble clef."""
+    instrument that is playing high (e.g. a cello carrying the melody) moves to tenor / treble clef; a horn that is
+    playing low moves to bass clef; the piccolo and glockenspiel, which sound 1 and 2 octaves above written, get the
+    clefs that say so."""
     if program in BASS_CLEF:
         if mean_pitch >= 60:
             return clef.TrebleClef()
-        if program == 42 and mean_pitch >= 50:
+        if program in TENOR_TOO and mean_pitch >= 50:
             return clef.TenorClef()
         return clef.BassClef()
+    if program == 60:                                       # French horn: treble, bass for its low register
+        return clef.BassClef() if mean_pitch < 50 else clef.TrebleClef()
+    if program == 72:                                       # piccolo
+        return clef.Treble8vaClef()
+    if program == 9:                                        # glockenspiel
+        two = clef.TrebleClef()
+        two.octaveChange = 2
+        return two
     if program in ALTO_CLEF:
         return clef.AltoClef()
     if program in TREBLE_8VB:
