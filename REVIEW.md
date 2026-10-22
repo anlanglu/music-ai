@@ -439,3 +439,14 @@ Specific questions:
 - Are the Swift and Python halves of the protocol in agreement on optional fields and defaults (`phrasing`, `shape`, `key`,
   `bpm`, `resolve`, `llm_directions`)?
 - Where would you split `text2music.py` first?
+
+### 4d. Menu clean-up (after the third round)
+
+The app's Form slider and Melodic shape picker were presets over the same numbers the Advanced sliders set, so the same
+idea was controlled twice and a "which slider did the user move" memory reconciled them. They are gone from the app:
+the Melody section has one **Melodic shape** slider (the stepwise/balanced/angular presets blended, `plan.shape_amount_knobs`),
+**Sit on the beat**, **Follow the chords**, **Land on the cadence**, **Bring the idea back**, **Phrasing**, the Anticipation model
+and the melody LLM. The accompaniment settings moved to **Generation settings** in the Accompaniment section. The backend
+derives how much of the plan is in use from the three strengths (`plan.form_from_knobs`); `form`, `shape` and `knobs` still work
+for the CLI and old clients. `sigma` and `tol` are no longer reachable from the app (defaults). References to "the Form slider"
+above describe the state before this change.

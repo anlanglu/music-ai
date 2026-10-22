@@ -27,7 +27,7 @@ environment and the model cache on the target Mac, then building the app next to
 | Model | Used for | Size |
 |---|---|---|
 | `stanford-crfm/music-small-800k` | Anticipatory Music Transformer, default | 0.5 GB |
-| `stanford-crfm/music-medium-800k` | optional, "Model" in Advanced | 1.3 GB |
+| `stanford-crfm/music-medium-800k` | optional, "Anticipation model" in the Melody section | 1.3 GB |
 | `stanford-crfm/music-large-800k` | optional | 2.9 GB |
 | `mlx-community/Qwen2.5-7B-Instruct-4bit` | language model for melodies and directions, default | 4.0 GB |
 | `mlx-community/Qwen2.5-3B-Instruct-4bit` | lightweight fallback for reading directions | 1.6 GB |
