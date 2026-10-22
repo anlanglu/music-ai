@@ -12,7 +12,7 @@ def until(stops):
 until({'ready'})
 for engine in ('theory','hybrid'):
     for shape in (0,2):
-        send({'cmd':'melodies','prompt':'a hopeful tune in G major','bars':8,'program':73,'size':'small','sig':'4/4','complexity':3,'llm':'7B','count':4,'melody_engine':engine,'bpm':96,'resolve':True,'phrasing':1,'shape':shape,'seed':1,'key':[7,'major']})
+        send({'cmd':'melodies','prompt':'a hopeful tune in G major','bars':8,'program':73,'size':'small','sig':'4/4','complexity':3,'llm':'7B','count':4,'melody_engine':engine,'bpm':96,'resolve':True,'phrasing':1,'sliders':{'shape':shape*5},'seed':1,'key':[7,'major']})
         evs=until({'melodies_done','error'})
         err=[e for e in evs if e['type']=='error']
         if err: print(engine,shape,'ERROR',err[0]); continue

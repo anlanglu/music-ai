@@ -175,7 +175,7 @@ Every number behind the two presets is a knob the app can turn (`plan.DEFAULT_KN
 They travel in one request field, `"knobs": {...}`, and only the ones that are set are sent. **Form** and **Melodic
 shape** are presets: picking one *sets* the sliders, and moving a slider afterwards keeps that one value when the next
 preset is chosen. The tables stay in `plan.py`; the backend sends them to the app in the `ready` event
-(`plan.presets()`), so the app does not keep a second copy of them.
+(`plan.SLIDER_DEFAULTS`), so the app does not keep a second copy of them.
 
 Two rules keep this honest:
 - **The Form setting decides *whether* a part of the plan is used; the knobs decide *how strongly*.** A knob cannot
@@ -454,3 +454,11 @@ above describe the state before this change.
 The **Generation settings** group was then removed too: LLM directions (the keyword matcher is already the automatic fallback),
 meter enforcement (off gives off-grid notes that engrave badly), retries and minimum density (safeguards against an empty or sparse
 sample, not musical choices) and top-p (a direction's "safe"/"adventurous" already sets it) now use fixed defaults in the app.
+
+Finally, everything the app does not use was removed from the backend and the command line: the requests no longer take
+`top_p`, `attempts`, `min_density`, `enforce_meter`, `beat_boost`, `llm_directions`, `form`, `shape`, `shape_amount` or
+`knobs`, and `text2music.py` no longer has `--top-p`, `--attempts`, `--min-density`, `--no-meter`, `--beat-boost`, `--shape`
+or `--form`. A melody request carries `sliders` {shape, pulse, harmony, endings, theme}, each 0..10, and `plan.from_sliders`
+turns them into the sampler's numbers; the `ready` event tells the app where they start. The command line has the same five
+as flags. Sampling safeguards are constants (`TOP_P`, `ATTEMPTS`, `MIN_DENSITY`, `BEAT_BOOST`). The Python functions still
+take `shape`, `form` and `knobs` (the review scripts and tests call them).

@@ -148,8 +148,7 @@ session folder afterwards. The JSON-lines backend can be tried directly with `.v
 | Option | What it does |
 |---|---|
 | `--melody-engine hybrid\|llm\|theory` | which composer writes the melody |
-| `--form 0..3` | how much of a written plan the melody follows: 0 free, 1 harmony, 2 cadences, 3 the whole plan (the app has sliders instead: Follow the chords, Land on the cadence, Bring the idea back) |
-| `--shape 0..2` | melodic shape: stepwise, balanced, angular |
+| `--smooth-jumpy`, `--pulse`, `--harmony`, `--endings`, `--theme` (each 0..10) | the same five sliders as the app's Melody section |
 | `--phrasing 0..2` | rests between ideas and phrases: flowing, balanced, spacious |
 | `--key "D minor"` | force a key instead of guessing one from the prompt |
 | `--seed N` | make the run repeatable (the same seed gives the same music) |

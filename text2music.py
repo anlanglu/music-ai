@@ -30,6 +30,11 @@ TMP_DIR = OUT_DIR / ".tmp"                    # scratch files (seed melodies, no
 # How much of the piece's plan the melody follows (see plan.py): the harmony of every bar, the motif restated at
 # each phrase, and a cadence at the end of every phrase. The "Form" slider in the app sets this.
 DEFAULT_FORM = 2               # 0 free, 1 harmony, 2 cadences, 3 the whole plan
+# How the accompaniment is sampled. Fixed on purpose: they are safeguards, not musical choices.
+TOP_P = 0.98         # nucleus sampling: nearly the model's own distribution (a part direction may make it safer or bolder)
+ATTEMPTS = 8         # resamples when the model returns nothing or a very sparse part
+MIN_DENSITY = 1.5    # notes per second below which an automatic accompaniment counts as sparse
+BEAT_BOOST = 1.0     # how strongly onsets favour the beat (a part direction may change it)
 PLAN_TARGET_TOL = 1.0          # how far (in beats) a note may land from a target and still be pulled
 PLAN_TARGET_SIGMA = 1.0        # how wide the pull is, in semitones (measured: a narrow pull brings the idea back,
                                # a wide one lets the model's own preferences win)
@@ -831,7 +836,7 @@ def melody_candidates(prompt, bars, sig, level, llm, program, size, count, engin
             yield {"notes": notes, "tempo": tempo, "score": melody_score(notes, total_beats, target)[0]}
 
 
-def hybrid_melody(prompt, bars, sig, level, llm, program, size, top_p, candidates, tempo_hint, log, resolve=True, key=None,
+def hybrid_melody(prompt, bars, sig, level, llm, program, size, candidates, tempo_hint, log, resolve=True, key=None,
                   engine="hybrid", phrasing=1, shape=1, form=DEFAULT_FORM, theplan=None, knobs=None):
     """Best-scoring melody out of `candidates` (used by the command-line one-shot mode; any engine)."""
     best = None
@@ -946,9 +951,8 @@ def instrument_name(program):
     return "Drums" if program == DRUMS else GM_NAMES[program]
 
 
-def add_part_options(source_midi, program, count=3, size="small", top_p=0.98, attempts=8, enforce_meter=True,
-                     beat_boost=1.0, playable=True, name=None, log=print, on_candidate=None, texture_style=None, in_key=True,
-                     direction="", llm_directions=True):
+def add_part_options(source_midi, program, count=3, size="small", playable=True, name=None, log=print,
+                     on_candidate=None, texture_style=None, in_key=True, direction=""):
     """Write `count` alternative parts for ONE instrument, each as a complete piece: the existing piece (held fixed)
     plus a freshly generated part for `program`. Files go to <session>/parts/. on_candidate(info) fires as each is
     ready. Approving an option just means using its file as the piece for the next round."""
@@ -966,7 +970,7 @@ def add_part_options(source_midi, program, count=3, size="small", top_p=0.98, at
         context = f"{key_label(k0) if k0 else 'unknown key'}, {s0}, {t0} bpm. Already playing: {', '.join(names) or 'nothing'}."
     except Exception:
         pass
-    d = interpret_direction(direction, instrument_name(program), context, log, llm_directions)
+    d = interpret_direction(direction, instrument_name(program), context, log)
     if not d["empty"]:
         log("      " + dr.describe(d))
     style = d["style"] or texture_style   # a pattern named in the direction overrides the pattern picker
@@ -1003,12 +1007,12 @@ def add_part_options(source_midi, program, count=3, size="small", top_p=0.98, at
     # sits, how long its notes are, whether it leans on or away from the beat, whether it answers the melody
     # instead of playing with it, and how adventurous the sampling is.
     dens, reg, ln = d["density"], d["register"], d["length"]
-    boost = {-2: -2.5, -1: -1.5, 1: 2.0, 2: 3.5}.get(d["rhythm"], beat_boost)
+    boost = {-2: -2.5, -1: -1.5, 1: 2.0, 2: 3.5}.get(d["rhythm"], BEAT_BOOST)
     grid = {
-        "step": (q / 4 if dens > 0 else q / 2) if enforce_meter else 1,
+        "step": q / 4 if dens > 0 else q / 2,
         "beat": q * 1.5 if den == 8 and num % 3 == 0 else q, "bar": q * bar_beats(sig),
         "max_gap": q * {-2: 6, -1: 4, 0: 2, 1: 1, 2: 0.5}[dens], "max_chord": 1 if dens < 0 else max(1, poly),
-        "beat_boost": boost if enforce_meter else 0.0, "bar_boost": boost * 2 if enforce_meter else 0.0,
+        "beat_boost": boost, "bar_boost": boost * 2,
     }
     if dens < 0:
         grid["min_gap"] = int(q * {-2: 3, -1: 2}[dens])   # leave room between onsets
@@ -1030,7 +1034,7 @@ def add_part_options(source_midi, program, count=3, size="small", top_p=0.98, at
     pool = sampler_pool([program], free=True, ranges=ranges) if playable else {"allowed": [program], "free": True}
     if ranges and not playable:
         pool["ranges"] = ranges
-    top_p = {-2: 0.6, -1: 0.85, 1: 1.0, 2: 1.0}.get(d["adventurous"], top_p)
+    top_p = {-2: 0.6, -1: 0.85, 1: 1.0, 2: 1.0}.get(d["adventurous"], TOP_P)
     skey = key_for_file(source_midi) if in_key else None
     if skey and program != DRUMS:
         pool["pitch_classes"] = scale_pcs(skey)
@@ -1050,7 +1054,7 @@ def add_part_options(source_midi, program, count=3, size="small", top_p=0.98, at
     out = []
     for k in range(1, count + 1):
         best = []
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, ATTEMPTS + 1):
             part = generate(model, 0, length, inputs=[], controls=controls, top_p=top_p, grid=grid, instruments=pool)
             n = len(part) // 3
             if n > len(best) // 3:
@@ -1162,13 +1166,13 @@ def approve_part(candidate_path, label):
     return dest
 
 
-def interpret_direction(text, instrument, context, log=print, use_llm=True, model_key=None):
+def interpret_direction(text, instrument, context, log=print, model_key=None):
     """Free-text direction -> controls. A language model reads it (so "something dreamy that floats underneath" works);
-    the keyword matcher is the fallback when the LLM is off, unavailable, or returns nothing usable."""
+    the keyword matcher is the fallback when the LLM is unavailable or returns nothing usable."""
     import direction as dr
 
     keywords = dr.parse(text)
-    if keywords["empty"] or not use_llm:
+    if keywords["empty"]:
         return keywords
     from mlx_lm import generate
 
@@ -1195,15 +1199,10 @@ def make_music(
     bars=8,
     program=0,
     size="small",
-    top_p=0.98,
-    attempts=8,
-    min_density=1.5,
     melody_only=False,
     name=None,
     log=print,
     sig="4/4",
-    enforce_meter=True,
-    beat_boost=1.0,
     complexity=3,
     llm="7B",
     ensemble=0,
@@ -1262,7 +1261,7 @@ def make_music(
         theplan = plan.build_plan(bars, sig, thekey) if thekey and plan.form_weights(form) else None
         if thekey:
             _write_meta(folder, key=list(thekey))     # the accompaniment and the sheet music follow this key
-        notes, tempo = hybrid_melody(prompt, bars, sig, complexity, llm, program, size, top_p,
+        notes, tempo = hybrid_melody(prompt, bars, sig, complexity, llm, program, size,
                                      candidates if melody_engine != "llm" else 1, bpm, log, resolve, key,
                                      melody_engine, phrasing, shape, form, theplan, knobs)
         if theplan is not None:
@@ -1288,11 +1287,9 @@ def make_music(
         "beat": q * 1.5 if den == 8 and num % 3 == 0 else q,
         "bar": q * bar_beats(sig),
         "max_gap": q * (1 if ensemble >= 4 else 2),  # keep a large ensemble busy
-        "beat_boost": beat_boost,
-        "bar_boost": beat_boost * 2,
-    } if enforce_meter else None
-    if grid is None and ensemble >= 4:
-        grid = {"step": 1, "beat": q, "bar": q * bar_beats(sig), "max_gap": q}
+        "beat_boost": BEAT_BOOST,
+        "bar_boost": BEAT_BOOST * 2,
+    }
 
     pool = None
     if ensemble > 0:
@@ -1301,7 +1298,7 @@ def make_music(
         log(f"      ensemble: {len(present)} source/melody + {len(chosen)} added instruments")
     elif playable:  # model's choice of instruments, but each still held to its own range and polyphony
         pool = sampler_pool([i for i in range(129) if i not in present], free=True)
-    if pool is not None and playable and grid is not None:
+    if pool is not None and playable:
         grid["max_chord"] = min(24, max(4, 3 * len(pool["allowed"])))  # per-instrument limits do the real work
     skey = key_for_file(melody_path) if in_key else None   # the key the melody was generated in, if one was chosen
     if skey and pool is not None:
@@ -1318,12 +1315,12 @@ def make_music(
     log("[3/3] Generating accompaniment (this can take a few minutes)...")
     # The model sometimes picks a first event past the end of the clip and returns nothing (or a
     # very sparse part), so resample until the accompaniment has a reasonable note density.
-    min_notes = int(min_density * length)
+    min_notes = int(MIN_DENSITY * length)
     if ensemble > 0:  # a big ensemble should give every instrument a real part, not a single note each
         min_notes = max(min_notes, 6 * len(pool["allowed"]))
     best = []
-    for attempt in range(1, attempts + 1):
-        accomp = generate(model, 0, length, inputs=events, controls=melody, top_p=top_p, grid=grid, instruments=pool)
+    for attempt in range(1, ATTEMPTS + 1):
+        accomp = generate(model, 0, length, inputs=events, controls=melody, top_p=TOP_P, grid=grid, instruments=pool)
         n = len(accomp) // 3
         if n > len(best) // 3:
             best = accomp
@@ -1331,7 +1328,7 @@ def make_music(
             break
         log(f"      attempt {attempt}: only {n} accompaniment notes (want >= {min_notes}), retrying")
     if not best:
-        raise RuntimeError("Anticipation produced no accompaniment; try more attempts")
+        raise RuntimeError("Anticipation produced no accompaniment; try again")
     if playable:
         best, (folded, trimmed, dropped) = make_playable(best)
         log(f"      playability pass: {folded} notes folded into range, {trimmed} overlaps trimmed, {dropped} dropped")
@@ -1353,11 +1350,6 @@ def main():
     ap.add_argument("--sig", default="4/4", choices=TIME_SIGS, help="time signature")
     ap.add_argument("--program", type=int, default=0, help="GM program for the melody (0=piano, 40=violin, 73=flute)")
     ap.add_argument("--size", default="small", choices=["small", "medium", "large"], help="Anticipation model size")
-    ap.add_argument("--top-p", type=float, default=0.98)
-    ap.add_argument("--attempts", type=int, default=8, help="max resamples if the accompaniment is empty/sparse")
-    ap.add_argument("--min-density", type=float, default=1.5, help="min accompaniment notes per second")
-    ap.add_argument("--no-meter", action="store_true", help="don't constrain the accompaniment to the metrical grid")
-    ap.add_argument("--beat-boost", type=float, default=1.0, help="how strongly onsets favour beats (0 = grid only)")
     ap.add_argument("--complexity", type=int, default=3, choices=[1, 2, 3, 4, 5], help="melody complexity (1 simple .. 5 virtuosic)")
     ap.add_argument("--llm", default="7B", choices=list(LLMS), help="melody LLM (14B downloads ~8 GB on first use)")
     ap.add_argument("--ensemble", type=int, default=0, help="accompaniment instruments, 1-15 (0 = model's choice)")
@@ -1367,9 +1359,11 @@ def main():
     ap.add_argument("--source-midi", default=None, help="orchestrate this MIDI file instead of generating a melody")
     ap.add_argument("--key", default=None, help='force a key, e.g. "D minor" or "Bb major"')
     ap.add_argument("--phrasing", type=int, default=1, choices=[0, 1, 2], help="rests between ideas: 0 flowing, 1 balanced, 2 spacious")
-    ap.add_argument("--shape", type=int, default=1, choices=[0, 1, 2], help="melodic shape: 0 stepwise, 1 balanced, 2 angular")
-    ap.add_argument("--form", type=int, default=DEFAULT_FORM, choices=[0, 1, 2, 3],
-                    help="how much of the piece's plan the melody follows: 0 free, 1 harmony, 2 cadences, 3 the whole plan")
+    for name, text in [("smooth-jumpy", "0 smooth .. 10 jumpy"), ("pulse", "how strongly notes start on the beat"),
+                       ("harmony", "how much the melody fits each bar's chord"),
+                       ("endings", "how strongly phrases end on a stopping note"),
+                       ("theme", "how strongly the opening idea returns in each phrase")]:
+        ap.add_argument("--" + name, type=float, default=None, help=f"{text} (0..10; default {plan.SLIDER_DEFAULTS[name.replace('-', '_').replace('smooth_jumpy', 'shape')]})")
     ap.add_argument("--seed", type=int, default=None, help="random seed, for repeatable output")
     ap.add_argument("--no-resolve", action="store_true", help="don't force the melody to end on the tonic")
     ap.add_argument("--no-playable", action="store_true", help="skip the instrument range / polyphony limits")
@@ -1380,13 +1374,15 @@ def main():
     if a.seed is not None:
         seed_everything(a.seed)
     new_session(a.session, a.prompt)  # each command-line run is its own session
+    sl = plan.from_sliders({"shape": a.smooth_jumpy, "pulse": a.pulse, "harmony": a.harmony, "endings": a.endings,
+                            "theme": a.theme})
     make_music(
-        a.prompt, a.bars, a.program, a.size, a.top_p, a.attempts, a.min_density, a.melody_only, a.name,
-        sig=a.sig, enforce_meter=not a.no_meter, beat_boost=a.beat_boost,
+        a.prompt, a.bars, a.program, a.size, a.melody_only, a.name,
+        sig=a.sig,
         complexity=a.complexity, llm=a.llm, ensemble=a.ensemble,
         melody_engine=a.melody_engine, candidates=a.candidates, source_midi=a.source_midi,
         bpm=max(40, min(a.bpm, 220)), resolve=not a.no_resolve, playable=not a.no_playable, key=parse_key(a.key or ""),
-        phrasing=a.phrasing, shape=a.shape, form=a.form,
+        phrasing=a.phrasing, shape=sl["shape"], form=sl["form"], knobs=sl["knobs"],
     )
 
 

@@ -42,7 +42,7 @@ struct SessionInfo: Identifiable {
 }
 
 enum BackendEvent {
-    case ready
+    case ready([String: Double])
     case log(String)
     case candidate(Candidate)
     case melodiesDone
@@ -177,7 +177,7 @@ final class Backend {
         guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let type = obj["type"] as? String else { return nil }
         switch type {
-        case "ready": return .ready
+        case "ready": return .ready((obj["sliders"] as? [String: Double]) ?? [:])
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone

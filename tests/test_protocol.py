@@ -43,7 +43,7 @@ def backend(tmp_path):
 
 
 MELODY = dict(cmd="melodies", prompt="a bright tune", bars=4, program=73, sig="4/4", complexity=3, count=3,
-              melody_engine="theory", bpm=100, key=[7, "major"], phrasing=1, shape=1, seed=11)
+              melody_engine="theory", bpm=100, key=[7, "major"], phrasing=1, seed=11)
 
 
 def test_theory_melodies_come_back_as_candidates(backend):
@@ -72,27 +72,21 @@ def test_unknown_session_path_is_an_error_not_a_crash(backend, tmp_path):
     assert backend.until({"sessions"})[-1]["type"] == "sessions"
 
 
-def test_the_ready_event_carries_the_presets_the_sliders_start_from(backend):
-    presets = backend.ready["presets"]
-    assert set(presets["form"]) == {"0", "1", "2", "3"}
-    assert set(presets["shape"]) == {"0", "1", "2"}
-    assert presets["defaults"]["chord"] > 0
-    assert presets["labels"]["form"][0] == "Free"
+def test_the_ready_event_carries_where_the_sliders_start(backend):
+    sliders = backend.ready["sliders"]
+    assert set(sliders) == {"shape", "pulse", "harmony", "endings", "theme"}
+    assert all(0 <= v <= 10 for v in sliders.values())
 
 
-def test_a_request_can_turn_the_knobs(backend):
-    backend.send(**MELODY, form=3, knobs={"motif": 0.0, "cadence": 0.0})
-    ev = backend.until({"melodies_done", "error"})
-    assert ev[-1]["type"] == "melodies_done", ev[-1]
-    backend.send(**MELODY, form=3, knobs={"motif": 20.0, "cadence": 15.0})
-    ev = backend.until({"melodies_done", "error"})
-    assert ev[-1]["type"] == "melodies_done", ev[-1]
-
-
-def test_a_nonsense_knob_is_ignored_rather_than_crashing(backend):
-    backend.send(**MELODY, form=3, knobs={"nonsense": 5, "motif": None})
-    ev = backend.until({"melodies_done", "error"})
-    assert ev[-1]["type"] == "melodies_done", ev[-1]
+def test_the_app_sends_the_five_sliders(backend):
+    """What the app's sliders send: five numbers from 0 to 10, at either end and out of range."""
+    req = {k: v for k, v in MELODY.items() if k != "shape"}
+    for sliders in [{"shape": 0, "pulse": 0, "harmony": 0, "endings": 0, "theme": 0},
+                    {"shape": 10, "pulse": 10, "harmony": 10, "endings": 10, "theme": 10},
+                    {"shape": 99, "nonsense": 5, "theme": None}, {}]:
+        backend.send(**req, sliders=sliders)
+        ev = backend.until({"melodies_done", "error"})
+        assert ev[-1]["type"] == "melodies_done", (sliders, ev[-1])
 
 
 def test_round_trip_create_approve_rename_reopen(backend):
@@ -121,14 +115,3 @@ def test_round_trip_create_approve_rename_reopen(backend):
     assert kinds.count("candidate") == 3, "the melody options come back"
     done = [e for e in ev if e["type"] == "done"]
     assert done and "piece01-" in done[-1]["full"], "the approved piece comes back"
-
-
-def test_the_app_sends_one_shape_slider_and_the_plan_strengths(backend):
-    """What the app's sliders send: shape_amount and knobs, with no form or shape of their own."""
-    req = {k: v for k, v in MELODY.items() if k != "shape"}
-    for amount, knobs in [(0.0, {"chord": 0.0, "cadence": 0.0, "motif": 0.0, "beat": 0.5}),
-                          (1.4, {"chord": 2.2, "cadence": 5.0, "motif": 0.0, "beat": 0.5}),
-                          (2.0, {"chord": 2.2, "cadence": 5.0, "motif": 8.0, "beat": 3.0})]:
-        backend.send(**req, shape_amount=amount, knobs=knobs)
-        ev = backend.until({"melodies_done", "error"})
-        assert ev[-1]["type"] == "melodies_done", (amount, ev[-1])

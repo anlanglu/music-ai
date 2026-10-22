@@ -294,15 +294,15 @@ struct ContentView: View {
 
             Divider()
             Text("Character of the melody").font(.callout)
-            knobRow("Smooth ↔ Jumpy", $vm.shapeAmount, 0...10, readout: shapeWord(vm.shapeAmount),
+            knobRow("Smooth ↔ Jumpy", $vm.shapeSlider, 0...10, readout: shapeWord(vm.shapeSlider),
                     help: "How the tune moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
-            knobRow("Steady pulse", $vm.knobBeat, 0...10,
+            knobRow("Steady pulse", $vm.pulseSlider, 0...10,
                     help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
-            knobRow("Fit the harmony", $vm.knobChord, 0...10,
+            knobRow("Fit the harmony", $vm.harmonySlider, 0...10,
                     help: "Every bar is given a chord underneath. High: the melody mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
-            knobRow("Phrase endings", $vm.knobCadence, 0...10,
+            knobRow("Phrase endings", $vm.endingsSlider, 0...10,
                     help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
-            knobRow("Recurring theme", $vm.knobMotif, 0...10,
+            knobRow("Recurring theme", $vm.themeSlider, 0...10,
                     help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
             Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: $vm.phrasing) {

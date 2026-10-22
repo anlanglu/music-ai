@@ -218,7 +218,6 @@ def plan_regions(plan, tempo, start_tick=0):
 
 # How much of the plan a melody follows, from free (0) to the whole plan (3). The weights are in logit units: the
 # model's own preferences are worth a few, so these are a firm but not absolute hand.
-FORM_LABELS = ["Free", "Harmony", "Cadences", "Full"]
 
 # The knobs the app can turn. Each is a number the user can move; the shape and form presets below are just
 # starting points for them. The defaults are what the app used before the knobs existed.
@@ -261,22 +260,6 @@ def knobs(over=None):
     return out
 
 
-def form_knobs(form):
-    """The knob values the Form slider sets."""
-    base = dict(DEFAULT_KNOBS)
-    base.update(FORM_WEIGHTS.get(max(0, min(3, int(form))), {}))
-    return base
-
-
-def shape_knobs(shape):
-    """The knob values the Melodic shape picker sets."""
-    base = dict(DEFAULT_KNOBS)
-    bias = SHAPE_BIAS.get(max(0, min(3, int(shape))), None)
-    if bias:
-        base.update(bias)
-    return base
-
-
 def form_weights(form, k=None):
     """What a melody is told to do at each setting of the 'form' slider:
     0 free (no plan at all), 1 the harmony of every bar, 2 plus a cadence at the end of every phrase,
@@ -301,15 +284,6 @@ def shape_weights(shape, k=None):
     return bias or None
 
 
-def presets():
-    """Everything the app needs to show the sliders: the defaults, and what each preset sets them to."""
-    return {"defaults": dict(DEFAULT_KNOBS),
-            "form": {str(f): form_knobs(f) for f in range(4)},
-            "shape": {str(s): shape_knobs(s) for s in range(3)},
-            "labels": {"form": list(FORM_LABELS),
-                       "shape": ["Stepwise", "Balanced", "Angular"]}}
-
-
 def shape_amount_knobs(amount):
     """The shape numbers for a point on the Stepwise (0) .. Balanced (1) .. Angular (2) line: the presets, blended.
     This is what the single 'Melodic shape' slider sends."""
@@ -318,16 +292,28 @@ def shape_amount_knobs(amount):
     return {name: round((lo[name] if lo else 0.0) * (1 - t) + hi[name] * t, 3) for name in hi}
 
 
+# What the app's sliders (and the command line's) send: all run 0..10, and this is the one place that turns them into
+# the numbers the sampler uses. The defaults are what the app did before they were sliders.
+SLIDER_DEFAULTS = {"shape": 5.0, "pulse": 1.67, "harmony": 2.75, "endings": 3.33, "theme": 0.0}
+
+
+def from_sliders(sliders=None):
+    """The slider positions (0..10; any that are missing or None take their defaults) -> {shape, form, knobs}:
+    the melodic shape level for the theory composer, how much of the plan is in use, and the sampler's strengths."""
+    s = dict(SLIDER_DEFAULTS)
+    for name, v in (sliders or {}).items():
+        if name in s and v is not None:
+            s[name] = max(0.0, min(10.0, float(v)))
+    knobs_ = {**shape_amount_knobs(s["shape"] / 5), "chord": s["harmony"] * 0.8, "cadence": s["endings"] * 1.5,
+              "motif": s["theme"] * 2.0, "beat": s["pulse"] * 0.3}
+    return {"shape": int(round(s["shape"] / 5)), "form": form_from_knobs(knobs_), "knobs": knobs_}
+
+
 def form_from_knobs(k):
     """How much of the plan is in use, read from the strengths: the idea coming back needs the whole plan (3), a
     cadence needs the phrases (2), a chord preference needs the harmony (1); all three at zero is a free melody."""
     k = knobs(k)
     return 3 if k["motif"] > 0 else 2 if k["cadence"] > 0 else 1 if k["chord"] > 0 else 0
-
-
-def form_label(form):
-    """The name of a setting of the 'form' slider."""
-    return FORM_LABELS[max(0, min(3, int(form)))]
 
 
 def cadence_pitch(plan, phrase_index, near):

@@ -36,9 +36,10 @@ A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody s
 
 The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
-The accompaniment generator's own settings (sampling randomness, retries, minimum density, beat-grid snapping, LLM
-directions) are no longer in the app: they have fixed, sensible values, and the backend and CLI still accept them. The command line keeps the older `--form 0..3` and `--shape 0..2`
-presets, and the backend still accepts `form`, `shape` and individual `knobs`; the app sends `shape_amount` and four strengths.
+The accompaniment's sampling settings (randomness, retries, minimum density, beat-grid snapping, LLM directions) are fixed
+constants in `text2music.py`, not options. The command line has the same five sliders as flags: `--smooth-jumpy`, `--pulse`,
+`--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
+numbers, for the app and the command line alike.
 
 ## Requirements and install
 

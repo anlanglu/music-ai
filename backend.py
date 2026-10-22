@@ -1,15 +1,14 @@
 """JSON-lines backend for the Swift app. Reads one JSON request per stdin line, writes events to stdout.
 
 Requests (one JSON object per line, "cmd" selects the stage):
-  {"cmd":"melodies", prompt, shape_amount (0..2), knobs {chord,cadence,motif,beat,...}, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size, form, knobs}
+  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic,"major"|"minor"], complexity, llm, melody_engine, count, size}
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
   {"cmd":"notation", "path":..., "title":..., "paged":false}
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
-  {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, top_p, attempts, min_density, enforce_meter}
-Any request may also carry "seed": <int> to make that run repeatable, and "knobs": {...} to turn the individual
-musical settings (see plan.DEFAULT_KNOBS).
-Events:   ready{presets} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
+  {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size}
+Any request may also carry "seed": <int> to make that run repeatable.
+Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
           session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
@@ -144,14 +143,7 @@ def handle(r):
         announce()
         restore(r["path"])
     elif cmd == "melodies":
-        # the app sends one 'shape_amount' and the strengths of the plan; the preset numbers (form, shape) are the
-        # command line's. An explicit knob always wins over the blended shape.
-        knobs = dict(r.get("knobs") or {})
-        shape = int(r.get("shape", 1))
-        if r.get("shape_amount") is not None:
-            shape = int(round(max(0.0, min(2.0, float(r["shape_amount"])))))
-            knobs = {**plan.shape_amount_knobs(r["shape_amount"]), **knobs}
-        form = int(r["form"]) if r.get("form") is not None else (plan.form_from_knobs(knobs) if r.get("knobs") else 2)
+        sl = plan.from_sliders(r.get("sliders"))      # the five 0..10 sliders -> the numbers the sampler uses
         if current_session() is None and r.get("session_name"):
             new_session(r["session_name"])
             announce()
@@ -162,17 +154,15 @@ def handle(r):
             r.get("melody_engine", "hybrid"), log=log, on_candidate=candidate_event,
             key=(int(r["key"][0]), r["key"][1]) if r.get("key") else None,
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
-            shape=shape, form=form, knobs=knobs,
+            shape=sl["shape"], form=sl["form"], knobs=sl["knobs"],
         )
         send(type="melodies_done")
     elif cmd == "add_part":  # stage 2, one instrument at a time: several options for the chosen instrument
         begin()
         add_part_options(
             r["source_midi"], int(r["program"]), int(r.get("count", 3)), r.get("size", "small"),
-            float(r.get("top_p", 0.98)), int(r.get("attempts", 8)), bool(r.get("enforce_meter", True)),
-            float(r.get("beat_boost", 1.0)), bool(r.get("playable", True)), log=log, on_candidate=part_event,
+            bool(r.get("playable", True)), log=log, on_candidate=part_event,
             in_key=bool(r.get("in_key", True)), direction=r.get("direction", ""),
-            llm_directions=bool(r.get("llm_directions", True)),
             texture_style=(r.get("style") or "mix") if r.get("texture") else None,
         )
         send(type="parts_done")
@@ -205,9 +195,7 @@ def handle(r):
     else:  # orchestrate: keep the chosen melody exactly, add the accompaniment
         begin()
         melody, full = make_music(
-            "", size=r.get("size", "small"), top_p=float(r.get("top_p", 0.98)),
-            attempts=int(r.get("attempts", 8)), min_density=float(r.get("min_density", 1.5)),
-            log=log, enforce_meter=bool(r.get("enforce_meter", True)), beat_boost=float(r.get("beat_boost", 1.0)),
+            "", size=r.get("size", "small"), log=log,
             ensemble=int(r.get("ensemble", 0)), source_midi=r["source_midi"],
             playable=bool(r.get("playable", True)), in_key=bool(r.get("in_key", True)),
         )
@@ -216,8 +204,8 @@ def handle(r):
 
 
 def main():
-    # the presets the app's sliders start from, so the tables live in one place (plan.py)
-    send(type="ready", presets=plan.presets())
+    # where the app's sliders start, so the defaults live in one place (plan.py)
+    send(type="ready", sliders=plan.SLIDER_DEFAULTS)
     for line in sys.stdin:
         if not line.strip():
             continue

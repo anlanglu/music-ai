@@ -132,7 +132,7 @@ def main():
     for form in sorted(agg):
         rows = agg[form]
         n = len(rows)
-        print(f"{plan.form_label(form):12s} {n:3d} {sum(r['notes'] for r in rows) / n:6.1f} "
+        print(f"{["Free", "Harmony", "Cadences", "Full"][form]:12s} {n:3d} {sum(r['notes'] for r in rows) / n:6.1f} "
               f"{sum(r['in_chord'] for r in rows) / n:8.0f}% "
               f"{sum(r['cad'] for r in rows):4d}/{sum(r['cad_tot'] for r in rows):<4d} "
               f"{sum(r['anchors'] for r in rows):7d}/{sum(r['anchors_tot'] for r in rows):<7d} "

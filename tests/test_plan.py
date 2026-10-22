@@ -60,10 +60,6 @@ def test_the_form_slider_goes_from_free_to_the_whole_plan():
     assert plan.form_weights(3)["motif"] >= plan.form_weights(2).get("motif", 0)
 
 
-def test_the_form_label_names_the_setting():
-    assert [plan.form_label(i) for i in range(4)] == ["Free", "Harmony", "Cadences", "Full"]
-
-
 # ---- the knobs the app can turn
 def test_the_knobs_start_at_the_defaults():
     k = plan.knobs()
@@ -96,13 +92,16 @@ def test_a_knob_overrides_the_shape_preset():
     assert plan.shape_weights(0, {"run": 1.0})["run"] == 1.0, "but an explicit knob turns it on"
 
 
-def test_the_presets_the_app_starts_from():
-    p = plan.presets()
-    assert set(p["form"]) == {"0", "1", "2", "3"}
-    assert set(p["shape"]) == {"0", "1", "2"}
-    assert p["form"]["3"]["motif"] == plan.DEFAULT_KNOBS["motif"]
-    assert p["shape"]["2"]["run"] == plan.SHAPE_BIAS[2]["run"]
-    assert p["labels"]["form"] == plan.FORM_LABELS
+def test_the_sliders_turn_into_the_samplers_numbers():
+    d = plan.from_sliders()
+    assert d["shape"] == 1 and d["form"] == 2, "the defaults are what the app did before the sliders"
+    assert abs(d["knobs"]["chord"] - 2.2) < 0.01 and abs(d["knobs"]["cadence"] - 5.0) < 0.01
+    assert abs(d["knobs"]["beat"] - 0.5) < 0.01 and d["knobs"]["motif"] == 0
+    top = plan.from_sliders({"shape": 10, "pulse": 10, "harmony": 10, "endings": 10, "theme": 10})
+    assert top["shape"] == 2 and top["form"] == 3 and top["knobs"]["motif"] == 20.0
+    free = plan.from_sliders({"shape": 0, "harmony": 0, "endings": 0, "theme": 0})
+    assert free["shape"] == 0 and free["form"] == 0
+    assert plan.from_sliders({"shape": 99, "theme": -4, "nonsense": 1})["knobs"]["motif"] == 0, "clamped, unknowns ignored"
 
 
 def test_a_seeded_run_gives_the_same_plan():
