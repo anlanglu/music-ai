@@ -135,11 +135,16 @@ def session_info(path):
             "files": len(files)}
 
 
-def _unique_dir(stamp, name):
-    path = OUT_DIR / f"{stamp}_{slugify(name)}"
+def default_session_name():
+    return "Session " + time.strftime("%Y-%m-%d %H:%M")
+
+
+def _unique_dir(name):
+    """output/<name as a folder name>, with -2, -3... added if that folder is taken."""
+    path = OUT_DIR / slugify(name)
     k = 2
     while path.exists():
-        path = OUT_DIR / f"{stamp}_{slugify(name)}-{k}"
+        path = OUT_DIR / f"{slugify(name)}-{k}"
         k += 1
     return path
 
@@ -156,13 +161,14 @@ def drop_if_empty(path):
 
 
 def new_session(name=None, prompt=""):
-    """Start a fresh session folder: output/<YYYY-MM-DD_HHMM>_<name>/. Defaults the name to the prompt."""
+    """Start a fresh session folder: output/<name>/. The name defaults to "Session <date> <time>"; the folder is
+    named after it, and renaming the session renames the folder."""
     global _session
     drop_if_empty(_session)
-    name = (name or prompt or "Untitled session").strip()
+    name = (name or "").strip() or default_session_name()
     name = name if len(name) <= 60 else name[:57].rstrip() + "..."
     OUT_DIR.mkdir(exist_ok=True)
-    path = _unique_dir(time.strftime("%Y-%m-%d_%H%M"), name)
+    path = _unique_dir(name)
     path.mkdir()
     _write_meta(path, name=name, created=time.strftime("%Y-%m-%d %H:%M:%S"))
     _session = path
@@ -205,11 +211,11 @@ def rename_session(name):
     global _session
     if _session is None:
         raise RuntimeError("There is no session to rename yet")
-    name = name.strip() or "Untitled session"
+    name = name.strip() or default_session_name()
     old = _session
-    stamp = old.name.split("_", 2)
-    prefix = "_".join(stamp[:2]) if len(stamp) >= 2 and stamp[0][:2] == "20" else time.strftime("%Y-%m-%d_%H%M")
-    new = _unique_dir(prefix, name) if slugify(name) != old.name.split("_", 2)[-1] else old
+    slug = slugify(name)
+    same = old.name == slug or re.fullmatch(re.escape(slug) + r"-\d+", old.name)    # already called that
+    new = old if same else _unique_dir(name)
     if new != old:
         old.rename(new)
     _write_meta(new, name=name)
@@ -229,7 +235,7 @@ def list_sessions():
             drop_if_empty(d)
             continue
         items.append(info)
-    return sorted(items, key=lambda i: i["path"], reverse=True)
+    return sorted(items, key=lambda i: (i["created"], i["path"]), reverse=True)
 
 
 def open_session(path):
@@ -1351,7 +1357,7 @@ def main():
     ap.add_argument("--no-playable", action="store_true", help="skip the instrument range / polyphony limits")
     ap.add_argument("--melody-only", action="store_true", help="Skip Anticipation, just save the LLM melody")
     ap.add_argument("--name", default=None, help="file name stem for the outputs")
-    ap.add_argument("--session", default=None, help="session (folder) name; defaults to the prompt")
+    ap.add_argument("--session", default=None, help="session (folder) name; defaults to Session <date> <time>")
     a = ap.parse_args()
     if a.seed is not None:
         seed_everything(a.seed)

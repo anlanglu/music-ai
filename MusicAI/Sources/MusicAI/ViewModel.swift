@@ -175,7 +175,7 @@ final class ViewModel: ObservableObject {
     @Published var pdfBusy = false
 
     // Sessions: one folder per project holding every file it produces
-    @Published var sessionName = ""
+    @Published var sessionName = ViewModel.defaultSessionName()
     @Published var sessionURL: URL?
     @Published var sessions: [SessionInfo] = []
     private var pdfJob: (midi: URL, destination: URL)?
@@ -398,6 +398,12 @@ final class ViewModel: ObservableObject {
 
     /// Commit the name typed in the session field. Before the first generation this just sets the name the
     /// session will be created with; afterwards it renames the folder.
+    static func defaultSessionName() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return "Session " + f.string(from: Date())
+    }
+
     func renameSession() {
         let name = sessionName.trimmingCharacters(in: .whitespaces)
         guard ready, !busy, !name.isEmpty else { return }
@@ -407,7 +413,7 @@ final class ViewModel: ObservableObject {
     func newSession() {
         guard ready, !busy else { return }
         clearWork()
-        sessionName = ""
+        sessionName = Self.defaultSessionName()
         status = "New session. Describe a melody and press Generate melodies."
         send(["cmd": "session_new"])
     }

@@ -75,7 +75,7 @@ struct ContentView: View {
     private var sessionBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "folder").foregroundStyle(.secondary)
-            TextField("Untitled session — named after your prompt unless you type a name", text: $vm.sessionName)
+            TextField("Session name", text: $vm.sessionName)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { vm.renameSession() }
                 .help("Press Return to rename. The session's folder is renamed to match.")
