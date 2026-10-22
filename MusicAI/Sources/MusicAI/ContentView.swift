@@ -115,7 +115,17 @@ struct ContentView: View {
 
                 Divider().padding(.vertical, 4)
 
-                stageHeader("2", "Accompaniment")
+                stageHeader("2", "Expand melody (optional)")
+                expandControls
+
+                Divider().padding(.vertical, 4)
+
+                stageHeader("3", "Accompaniment")
+                Picker("Music model", selection: $vm.size) {
+                    ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it with Hybrid. Small is quick; large is slower and usually better.")
                 Picker("Mode", selection: $vm.accompMode) {
                     Text("Automatic").tag(AccompMode.auto)
                     Text("One at a time").tag(AccompMode.oneByOne)
@@ -238,16 +248,6 @@ struct ContentView: View {
             HStack { Text("Bars"); Spacer(); Text("\(Int(vm.bars))").monospacedDigit() }
             Slider(value: $vm.bars, in: 2...16, step: 1)
 
-            Picker("Melody engine", selection: $vm.engine) {
-                Text("Hybrid: LLM + Anticipation").tag("hybrid")
-                Text("LLM only").tag("llm")
-                Text("Theory composer (rules, no AI)").tag("theory")
-            }
-            .help("Which generator writes the melody. Switching never loses anything: each engine makes options the same way.")
-            if vm.engine == "theory" {
-                Text("Writes phrases, chords and a developing motif by music theory. Your prompt is used only for the key and mood (e.g. “sad” → minor); set the Key below to be sure.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
             }
@@ -259,7 +259,7 @@ struct ContentView: View {
                 Divider()
                 ForEach(KeyChoice.all) { Text($0.name).tag(Optional($0)) }
             }
-            .help("Every melody note stays in this key. Auto uses a key named in your prompt, such as 'in D minor'.")
+            .help("Every melody note stays in this key. Auto: a key named in your prompt (such as 'in D minor'), otherwise the language model picks one that suits it.")
 
             HStack {
                 Text("Tempo"); Spacer()
@@ -279,18 +279,11 @@ struct ContentView: View {
             }
             Slider(value: $vm.complexity, in: 1...5, step: 1)
 
-            Picker("Music model", selection: $vm.size) {
-                ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .disabled(vm.engine != "hybrid")
-            .help("The neural network that continues the melody (Hybrid) and writes the accompaniment parts. Small is quick; large is slower and usually better. It has no effect on LLM-only or Theory melodies.")
             Picker("Melody LLM", selection: $vm.llm) {
                 Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
                 Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
             }
-            .disabled(vm.engine == "theory")
-            .help("Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
+            .help("The language model that writes the melody, and the expansions if you choose LLM only. Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
 
             Divider()
             Text("Character of the melody").font(.callout)
@@ -339,6 +332,60 @@ struct ContentView: View {
 
     private func shapeWord(_ v: Double) -> String {
         v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
+    }
+
+    /// Step 2: add bars to the chosen melody, with its own settings.
+    private var expandControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Choose a melody above, then grow it 4 or 8 bars at a time. Each expansion has its own settings, and the options replace the list so you can pick one and expand again.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Picker("Add", selection: $vm.expandBars) {
+                Text("4 bars").tag(4)
+                Text("8 bars").tag(8)
+            }
+            .pickerStyle(.segmented)
+            Picker("Written by", selection: $vm.expandEngine) {
+                Text("Hybrid: LLM + Anticipation").tag("hybrid")
+                Text("LLM only").tag("llm")
+            }
+            .help("Hybrid: the Anticipation model continues the melody, steered by the sliders; its rhythms are the more natural. LLM only: the language model continues it phrase by phrase and reads your direction.")
+            HStack {
+                Text("Complexity"); Spacer()
+                Text(["Simple", "Easy", "Varied", "Rich", "Virtuosic"][Int(vm.expandComplexity) - 1])
+            }
+            Slider(value: $vm.expandComplexity, in: 1...5, step: 1)
+            knobRow("Smooth ↔ Jumpy", $vm.expandShape, 0...10, readout: shapeWord(vm.expandShape),
+                    help: "How the new bars move. Smooth: small steps. Jumpy: leaps and turns.")
+            knobRow("Steady pulse", $vm.expandPulse, 0...10, help: "How strongly notes start on the beat.")
+            knobRow("Fit the harmony", $vm.expandHarmony, 0...10, help: "How strongly the new bars use each bar's chord. The chords carry on from the melody, and the accompaniment follows them.")
+            knobRow("Phrase endings", $vm.expandEndings, 0...10, help: "How strongly each new phrase ends on a stopping note.")
+            knobRow("Recurring theme", $vm.expandTheme, 0...10, help: "How strongly the melody's opening idea comes back at the start of each new phrase.")
+            TextField("Direction, e.g. build to a climax, then calm down", text: $vm.expandDirection, axis: .vertical)
+                .textFieldStyle(.roundedBorder).lineLimit(1...3)
+                .help("Optional. Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
+            HStack { Text("Options to choose from"); Spacer(); Text("\(Int(vm.expandCount))").monospacedDigit() }
+            Slider(value: $vm.expandCount, in: 1...6, step: 1)
+            HStack {
+                Button(action: vm.expandMelody) {
+                    HStack {
+                        if vm.busy && vm.selected == nil && !vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
+                        Text("Expand by \(vm.expandBars) bars").frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!vm.canExpand)
+                if !vm.expansionHistory.isEmpty {
+                    Button("Undo", action: vm.undoExpansion).controlSize(.large).disabled(vm.busy)
+                        .help("Go back to the options from before the last expansion")
+                }
+            }
+            if vm.selected == nil {
+                Text("Pick one of the melody options first.").font(.caption).foregroundStyle(.secondary)
+            } else if !(vm.orchestration == nil && vm.partsAdded.isEmpty && vm.partOptions.isEmpty) {
+                Text("The accompaniment has been started, so the melody can no longer change. Generate new melodies to start over.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     // MARK: Right column

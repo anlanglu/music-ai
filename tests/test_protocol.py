@@ -1,4 +1,4 @@
-"""The real backend process, driven over its JSON-lines protocol (theory engine: no model downloads)."""
+"""The real backend process, driven over its JSON-lines protocol (language model stubbed: no model downloads)."""
 import json
 import os
 import subprocess
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class Backend:
     def __init__(self, out):
         env = dict(os.environ, MUSIC_AI_OUT=str(out))
-        self.p = subprocess.Popen([sys.executable, "-u", "backend.py"], cwd=ROOT, env=env, text=True,
+        self.p = subprocess.Popen([sys.executable, "-u", "tests/stub_backend.py"], cwd=ROOT, env=env, text=True,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.ready = self.until({"ready"})[0]
 
@@ -43,10 +43,10 @@ def backend(tmp_path):
 
 
 MELODY = dict(cmd="melodies", prompt="a bright tune", bars=4, program=73, sig="4/4", complexity=3, count=3,
-              melody_engine="theory", bpm=100, key=[7, "major"], phrasing=1, seed=11)
+              bpm=100, key=[7, "major"], phrasing=1, seed=11)
 
 
-def test_theory_melodies_come_back_as_candidates(backend):
+def test_melodies_come_back_as_candidates(backend):
     backend.send(**MELODY)
     ev = backend.until({"melodies_done", "error"})
     assert ev[-1]["type"] == "melodies_done", ev[-1]

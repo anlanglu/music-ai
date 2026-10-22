@@ -4,22 +4,27 @@ A fully local, text-prompt music composition tool for macOS. Describe a melody i
 then build it up into a piece with up to 16 instruments. A native SwiftUI app (**Composer.app**) drives a Python backend;
 everything runs on your Mac, with no cloud service and no account.
 
-- Melodies come from a local language model (Qwen2.5 via MLX), the Stanford **Anticipatory Music Transformer**, or a
-  rule-based theory composer you can pick from a dropdown.
+- The melody is written by a local language model (Qwen2.5 via MLX). It can then be grown by that model or by the Stanford
+  **Anticipatory Music Transformer**, which also writes the accompaniment.
 - Output is standard MIDI (plays in Logic, GarageBand, any DAW) plus MusicXML and PDF sheet music.
 
 ## What it does
 
 1. **Melody first.** Prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
-   ideas) and five sliders for the line's character (see below).
-   You get N options to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead.
-   The ending can be forced to resolve on the tonic.
-2. **Then accompaniment**, either all at once (up to 16 instruments) or one instrument at a time: type a free-text
-   direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or undo, repeat. Parts respect
-   each instrument's real range and polyphony, and follow the melody's own chords. Piano can get chords, arpeggios,
-   Alberti bass and more under an unchanged melody.
-3. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
-4. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
+   ideas) and five sliders for the line's character (see below). The language model writes every bar. You get N options
+   to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
+   to resolve on the tonic.
+2. **Expand the melody (optional).** Pick an option and add 4 or 8 bars at a time, as new options to choose from, as often
+   as you like (with Undo). Each expansion has its own settings: length, complexity, the five sliders and a free-text
+   direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
+   continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
+   the chords carry on, so the accompaniment follows the whole.
+3. **Then accompaniment**, written by the Anticipation model, either all at once (up to 16 instruments) or one instrument
+   at a time: type a free-text direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or
+   undo, repeat. Parts respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can
+   get chords, arpeggios, Alberti bass and more under an unchanged melody.
+4. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
+5. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
 
 ## The character of the melody
@@ -41,10 +46,10 @@ constants in `text2music.py`, not options. The command line has the same five sl
 `--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
 numbers, for the app and the command line alike.
 
-The log under the results also says how the prompt was used: what is fixed (key, tempo, length), how the chosen engine
-reads the words (the theory composer takes only key and mood; Hybrid lets the LLM write the opening bar for Anticipation to
-continue; LLM-only writes every bar), and, for the LLM engines, the model's own one-sentence reading of the request, its plan
-for each phrase, and where its key or tempo was overridden by yours. Lines start with ▸.
+The log under the results also says how the prompt was used: what is fixed (key, tempo, length), the model's own
+one-sentence reading of the request, its plan for each phrase, the key it chose when you left it on Auto, and where its tempo
+or key was overridden by yours. Lines start with ▸. The sliders reach the language model as instructions in words (for
+example "never run more than three notes in one direction"); for the Anticipation model they are numbers in the sampler.
 
 ## Requirements and install
 
@@ -59,10 +64,10 @@ zsh MusicAI/build_app.sh          # builds Composer.app next to the project fold
 open Composer.app
 ```
 
-Try it without the app (no model download needed, uses the theory composer):
+Try it without the app (uses the language model; it downloads on first use):
 
 ```bash
-.venv/bin/python text2music.py "a bright tune" --melody-engine theory --melody-only --key "G major" --session try-it
+.venv/bin/python text2music.py "a bright tune" --melody-only --key "G major" --session try-it
 ```
 
 ## Layout
@@ -71,9 +76,9 @@ Try it without the app (no model download needed, uses the theory composer):
 |---|---|
 | `MusicAI/` | the SwiftUI app (SwiftPM) and the build script |
 | `backend.py` | JSON-lines server the app talks to |
-| `text2music.py` | the pipeline: sessions, melody engines, key logic, accompaniment, CLI |
+| `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
-| `composer.py` | rule-based melody composer |
+| `expand.py` | step 2: grow a melody by 4 or 8 bars (LLM or Anticipation) |
 | `texture.py` | rule-based accompaniment patterns |
 | `direction.py`, `llmjson.py` | free-text directions and tolerant LLM-JSON parsing |
 | `playable.py` | instrument ranges and polyphony |
@@ -108,7 +113,7 @@ the full log is at `~/Library/Logs/Composer/backend.log`.
 - The plan sliders are new: the plan the melody follows was measured with
   `review/bench_plan.py` (harmonic fit, cadences and motif recurrence over 24 melodies), not by ear. The motif comes back
   as a *paraphrase* — the shape of the opening idea with the model's own rhythm — not as a literal repeat.
-- The plan's harmony is diatonic and functional (the same progressions the theory composer uses). It cannot express
+- The plan's harmony is diatonic and functional (a fixed set of classical progressions). It cannot express
   a modal progression, a borrowed chord or a key change.
 - The app is not self-contained: it needs the project folder, its `.venv` and the Hugging Face model cache. It is
   ad-hoc signed, not notarized.
