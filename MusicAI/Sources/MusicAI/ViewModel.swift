@@ -147,7 +147,10 @@ final class ViewModel: ObservableObject {
     @Published var partDirection = ""
     @Published var directionNote = ""   // what the backend understood from the direction
     @Published var accompMode: AccompMode = AccompMode(rawValue: UserDefaults.standard.string(forKey: "accompMode") ?? "") ?? .auto {
-        didSet { UserDefaults.standard.set(accompMode.rawValue, forKey: "accompMode") }
+        didSet {
+            UserDefaults.standard.set(accompMode.rawValue, forKey: "accompMode")
+            if accompMode == .auto, !busy { partOptions = []; selectedPartID = nil }   // un-approved options no longer apply
+        }
     }
     // One-at-a-time mode: pick an instrument, choose among its options, approve, repeat
     @Published var partInstrument = Instrument.parts.first { $0.program == 40 } ?? Instrument.parts[0]
@@ -514,11 +517,20 @@ final class ViewModel: ObservableObject {
 
     // MARK: Stage 3: accompaniment
 
+    /// Forget one-at-a-time options and approved parts, so the main view follows the piece and not a stale option.
+    private func resetParts() {
+        partOptions = []
+        selectedPartID = nil
+        partHistory = []
+        partsAdded = []
+    }
+
     func addAccompaniment() {
         guard ready, !busy, let c = selected else { return }
         stop()
         busy = true
         orchestration = nil
+        resetParts()            // the automatic accompaniment starts again from the melody: drop any one-at-a-time work
         status = "Adding accompaniment…"
         send([
             "cmd": "orchestrate", "source_midi": c.url.path, "ensemble": Int(ensemble), "size": size,
