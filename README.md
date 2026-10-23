@@ -10,21 +10,26 @@ everything runs on your Mac, with no cloud service and no account.
 
 ## What it does
 
-1. **Melody first.** Prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
+1. **Start with a motif.** A small musical idea of one to four bars: prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
    ideas) and eight sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
-2. **Expand the melody (optional).** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
+2. **Extend the melody.** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
    as you like (with Undo). Each expansion has its own settings: length, complexity, the eight sliders and a free-text
    direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
    continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
-3. **Then accompaniment**, written by the Anticipation model, either all at once (up to 16 instruments) or one instrument
+3. **Edit the melody.** Fix what you do not like before adding parts. By hand: the piano roll becomes a note editor (add,
+   move, resize, delete), and saving redraws the sheet music. Or in words ("I don't think measure 2 leads into measure 3
+   very well, so connect them better"): the LLM is given only the bars you name, its answer is spliced in by code and
+   checked, so every other bar stays exactly as it was. If it thinks other bars would need to change as well, it asks
+   first and you decide.
+4. **Then accompaniment**, written by the Anticipation model, either all at once (up to 16 instruments) or one instrument
    at a time: type a free-text direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or
    undo, repeat. Parts respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can
    get chords, arpeggios, Alberti bass and more under an unchanged melody.
-4. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
-5. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
+5. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
+6. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
 
 ## The character of the melody
@@ -82,6 +87,7 @@ Try it without the app (uses the language model; it downloads on first use):
 | `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
 | `expand.py` | step 2: grow a melody by 2–16 bars (LLM or Anticipation) |
+| `edit.py` | step 3: change only the named bars (LLM) or save a hand edit |
 | `texture.py` | rule-based accompaniment patterns |
 | `direction.py`, `llmjson.py` | free-text directions and tolerant LLM-JSON parsing |
 | `playable.py` | instrument ranges and polyphony |

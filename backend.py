@@ -3,6 +3,8 @@
 Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,runs: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
+  {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
+  {"cmd":"save_edit", "source_midi":..., "notes":[[pitch, start_beat, duration_beats],...]}   (the melody as edited by hand)
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
   {"cmd":"notation", "path":..., "title":..., "paged":false}
@@ -12,7 +14,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
-          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | error{text}      (notes = [[channel,pitch,start,end],...])
+          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
 import json
 import os
@@ -36,6 +38,7 @@ from text2music import (  # noqa: E402
 import mixer  # noqa: E402
 import plan  # noqa: E402
 from expand import expand_melody  # noqa: E402
+from edit import edit_melody, save_edit  # noqa: E402
 
 
 def send(**ev):
@@ -184,6 +187,18 @@ def handle(r):
             r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
             on_candidate=candidate_event,
         )
+        send(type="melodies_done")
+    elif cmd == "edit":  # step 3: change only the bars the user named, as several options
+        begin()
+        edit_melody(
+            r["source_midi"], r.get("instruction", ""), r.get("bars"), int(r.get("count", 3)), r.get("llm", "7B"),
+            int(r.get("complexity", 3)), log=log, on_candidate=candidate_event,
+            on_suggestion=lambda sug, targets: send(type="edit_suggestion", bars=sug["bars"], reason=sug["reason"], targets=targets),
+        )
+        send(type="melodies_done")
+    elif cmd == "save_edit":  # step 3, by hand: write the notes as the user left them
+        begin()
+        save_edit(r["source_midi"], r["notes"], log=log, on_candidate=candidate_event)
         send(type="melodies_done")
     elif cmd == "add_part":  # stage 2, one instrument at a time: several options for the chosen instrument
         begin()

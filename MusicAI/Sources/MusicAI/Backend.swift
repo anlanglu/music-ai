@@ -58,6 +58,8 @@ enum BackendEvent {
     case done(melody: URL, full: URL?, notes: [Note], programs: [Int])
     case partCandidate(PartCandidate)
     case partsDone
+    /// The editing model says these other bars would have to change too; nothing was changed in them.
+    case editSuggestion(bars: [Int], reason: String, targets: [Int])
     case partApproved(url: URL, notes: [Note], programs: [Int])
     case mix(path: URL, channels: [MixChannel])
     case notation(midi: URL, html: URL, paged: Bool)
@@ -192,6 +194,9 @@ final class Backend {
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone
         case "parts_done": return .partsDone
+        case "edit_suggestion":
+            return .editSuggestion(bars: obj["bars"] as? [Int] ?? [], reason: obj["reason"] as? String ?? "",
+                                   targets: obj["targets"] as? [Int] ?? [])
         case "part_candidate":
             return .partCandidate(PartCandidate(
                 index: obj["index"] as? Int ?? 0,

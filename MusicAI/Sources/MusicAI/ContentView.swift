@@ -8,25 +8,52 @@ struct PianoRoll: View {
     let duration: Double
     let playhead: Double
     var highlight: Int? = nil   // when set, every other channel is dimmed so one part stands out
+    /// When set, bar lines and numbers are drawn; `chosen` bars are shaded, and clicking a bar calls `toggle`.
+    var secondsPerBar: Double? = nil
+    var chosen: Set<Int> = []
+    var toggle: ((Int) -> Void)? = nil
 
     var body: some View {
-        Canvas { ctx, size in
-            guard let lo = notes.map(\.pitch).min(), let hi = notes.map(\.pitch).max(), duration > 0 else { return }
-            let channels = Array(Set(notes.map(\.channel))).sorted()
-            let rows = Double(hi - lo + 3)
-            let rowH = size.height / rows
-            for n in notes {
-                let x = n.start / duration * size.width
-                let w = max((n.end - n.start) / duration * size.width, 2)
-                let y = Double(hi + 1 - n.pitch) * rowH
-                let color = channelColors[(channels.firstIndex(of: n.channel) ?? 0) % channelColors.count]
-                ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: rowH * 0.85), cornerRadius: 2),
-                         with: .color(color.opacity(highlight == nil || n.channel == highlight ? 0.85 : 0.25)))
+        GeometryReader { geo in
+            Canvas { ctx, size in
+                guard let lo = notes.map(\.pitch).min(), let hi = notes.map(\.pitch).max(), duration > 0 else { return }
+                let channels = Array(Set(notes.map(\.channel))).sorted()
+                let top: CGFloat = secondsPerBar == nil ? 0 : 16
+                let rows = Double(hi - lo + 3)
+                let rowH = (size.height - top) / rows
+                if let spb = secondsPerBar, spb > 0 {
+                    var bar = 1
+                    while Double(bar - 1) * spb < duration - 0.001 {
+                        let x = Double(bar - 1) * spb / duration * size.width
+                        let w = min(spb / duration * size.width, size.width - x)
+                        if chosen.contains(bar) {
+                            ctx.fill(Path(CGRect(x: x, y: 0, width: w, height: size.height)), with: .color(.yellow.opacity(0.18)))
+                        }
+                        ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.28)))
+                        ctx.draw(Text("\(bar)").font(.caption2.bold()).foregroundStyle(chosen.contains(bar) ? Color.yellow : Color.secondary),
+                                 at: CGPoint(x: x + 4, y: top / 2), anchor: .leading)
+                        bar += 1
+                    }
+                }
+                for n in notes {
+                    let x = n.start / duration * size.width
+                    let w = max((n.end - n.start) / duration * size.width, 2)
+                    let y = top + Double(hi + 1 - n.pitch) * rowH
+                    let color = channelColors[(channels.firstIndex(of: n.channel) ?? 0) % channelColors.count]
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: rowH * 0.85), cornerRadius: 2),
+                             with: .color(color.opacity(highlight == nil || n.channel == highlight ? 0.85 : 0.25)))
+                }
+                if playhead > 0 {
+                    let x = playhead / duration * size.width
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 1.5, height: size.height)), with: .color(.white))
+                }
             }
-            if playhead > 0 {
-                let x = playhead / duration * size.width
-                ctx.fill(Path(CGRect(x: x, y: 0, width: 1.5, height: size.height)), with: .color(.white))
-            }
+            .contentShape(Rectangle())
+            .gesture(SpatialTapGesture().onEnded { tap in
+                guard let spb = secondsPerBar, spb > 0, duration > 0, let toggle else { return }
+                let bar = Int(Double(tap.location.x / geo.size.width) * duration / spb) + 1
+                if bar >= 1, Double(bar - 1) * spb < duration { toggle(bar) }
+            })
         }
         .background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 8))
     }
@@ -104,20 +131,78 @@ struct ContentView: View {
 
     // MARK: Left column
 
+    private static let stepTitles = ["Motif", "Extend melody", "Edit melody", "Accompaniment"]
+
+    /// The left column is a wizard: one step at a time, with Back and Next underneath.
     private var controls: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                stageHeader("1", "Melody")
-                melodyControls
+        VStack(alignment: .leading, spacing: 12) {
+            stepper
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    stageHeader("\(vm.step)", Self.stepTitles[vm.step - 1])
+                    switch vm.step {
+                    case 1: melodyControls
+                    case 2: expandControls
+                    case 3: editControls
+                    default: accompControls
+                    }
+                }
+                .padding(.trailing, 10)
+            }
+            if vm.step < Self.stepTitles.count, let why = nextBlocked {
+                Label(why, systemImage: "info.circle").font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button { vm.step -= 1 } label: { Label("Back", systemImage: "chevron.left") }
+                    .disabled(vm.step <= 1)
+                    .help(vm.step > 1 ? "Back to: \(Self.stepTitles[vm.step - 2])" : "")
+                Spacer()
+                if vm.step < Self.stepTitles.count {
+                    Button { vm.step += 1 } label: {
+                        HStack(spacing: 4) { Text("Next: \(Self.stepTitles[vm.step])"); Image(systemName: "chevron.right") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(vm.selected == nil || vm.busy)
+                    .help(nextBlocked ?? "Go on to: \(Self.stepTitles[vm.step])")
+                }
+            }
+        }
+    }
 
-                Divider().padding(.vertical, 4)
+    /// Why Next is greyed out, or nil when it is available.
+    private var nextBlocked: String? {
+        if vm.busy { return "Wait for the current step to finish." }
+        if vm.selected != nil { return nil }
+        let first = vm.step == 1
+        if vm.candidates.isEmpty {
+            return first ? "Generate a motif first, then click the one you want to keep." : "Go back and generate a motif first."
+        }
+        return "Click one of the options on the right to pick your motif (the highlighted one is kept)." 
+    }
 
-                stageHeader("2", "Expand melody (optional)")
-                expandControls
+    /// The four steps as a row of numbered dots. A step can be visited once there is a melody to work on.
+    private var stepper: some View {
+        HStack(spacing: 4) {
+            ForEach(1...Self.stepTitles.count, id: \.self) { n in
+                let here = n == vm.step, open = n == 1 || vm.selected != nil
+                Button { vm.step = n } label: {
+                    VStack(spacing: 3) {
+                        Text("\(n)").font(.caption.bold()).foregroundStyle(here ? .white : .secondary)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(here ? Color.accentColor : Color.gray.opacity(0.25)))
+                        Text(Self.stepTitles[n - 1]).font(.caption2).lineLimit(1)
+                            .foregroundStyle(here ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain).disabled(!open || vm.busy)
+            }
+        }
+    }
 
-                Divider().padding(.vertical, 4)
-
-                stageHeader("3", "Accompaniment")
+    private var accompControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
@@ -140,8 +225,6 @@ struct ContentView: View {
                 .contentShape(Rectangle()).help(dynHelp)
                 Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
                 if vm.accompMode == .auto { autoControls } else { oneByOneControls }
-            }
-            .padding(.trailing, 10)
         }
     }
 
@@ -254,8 +337,10 @@ struct ContentView: View {
 
     private var melodyControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            describeBox("Describe the melody", text: $vm.prompt, height: 80)
-            barsRow("Bars", $vm.bars, help: "How long the melody is, in bars (measures). At 4/4 and 80 bpm, 8 bars last about 24 seconds.")
+            Text("Start small: a motif of one to four bars is the musical idea the rest of the piece grows from. Extend it in step 2.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            describeBox("Describe the motif", text: $vm.prompt, height: 80)
+            barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
@@ -295,7 +380,7 @@ struct ContentView: View {
             Button(action: vm.generateMelodies) {
                 HStack {
                     if vm.busy && vm.orchestration == nil && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
-                    Text(vm.candidates.isEmpty ? "Generate melodies" : "Regenerate melodies").frame(maxWidth: .infinity)
+                    Text(vm.candidates.isEmpty ? "Generate motifs" : "Regenerate motifs").frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
@@ -311,7 +396,7 @@ struct ContentView: View {
     /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
     private var expandControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pick a melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
+            Text("Pick a motif or melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             describeBox("What should the new bars do? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
@@ -346,10 +431,64 @@ struct ContentView: View {
                 }
             }
             if vm.selected == nil {
-                Text("Pick one of the melody options first.").font(.caption).foregroundStyle(.secondary)
+                Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
             } else if !(vm.orchestration == nil && vm.partsAdded.isEmpty && vm.partOptions.isEmpty) {
                 Text("The accompaniment has been started, so the melody can no longer change. Generate new melodies to start over.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Step 3: change the melody by hand (the piano roll becomes an editor) or by asking the LLM to change named bars.
+    private var editControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Fix what you do not like before adding the accompaniment. Only the bars you name change; every other bar stays exactly as it is.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(action: vm.beginEditing) {
+                Label("Edit notes by hand", systemImage: "pencil").frame(maxWidth: .infinity)
+            }
+            .controlSize(.large).disabled(!vm.canEdit || vm.editing)
+            .help("Turns the piano roll into an editor: click to add a note, drag a note to change its pitch or position, drag its right edge to change its length, Delete to remove it. Save changes redraws the sheet music.")
+
+            describeBox("Or ask the LLM to change something", text: $vm.editInstruction, height: 66,
+                        example: "e.g. I don't think measure 2 leads into measure 3 very well, so connect them better")
+                .help("Say what is wrong and name the bars (\"measure 2\", \"bars 3-4\"). The LLM is only given those bars to rewrite.")
+            HStack {
+                Text("Bars").foregroundStyle(.secondary)
+                TextField("or click bars in the roll", text: $vm.editBarsText)
+                    .textFieldStyle(.roundedBorder)
+                    .help("Optional: the bars to change, as well as any you named above. The bar numbers are shown along the top of the hand editor and in the sheet music. If neither names a bar, nothing is changed.")
+            }
+            optionsRow($vm.editCount)
+            llmPicker
+            HStack {
+                Button(action: vm.startLLMEdit) {
+                    HStack {
+                        if vm.busy && vm.selected == nil && vm.canEditBusyHint { ProgressView().controlSize(.small) }
+                        Text("Change those bars").frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!vm.canEdit || vm.editing)
+                if !vm.expansionHistory.isEmpty {
+                    Button("Undo", action: vm.undoExpansion).controlSize(.large).disabled(vm.busy)
+                        .help("Go back to the options from before the last edit or expansion")
+                }
+            }
+            if let sug = vm.editSuggestion {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("The LLM says bar\(sug.bars.count == 1 ? "" : "s") \(sug.bars.map(String.init).joined(separator: ", ")) would have to change too" + (sug.reason.isEmpty ? "." : ": \(sug.reason)"))
+                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    Text("They were left exactly as they were. May it change them?").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Yes, change them too", action: vm.allowSuggestedBars).disabled(vm.busy)
+                        Button("No, leave them", action: vm.declineSuggestedBars)
+                    }
+                }
+                .padding(10).background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+            }
+            if vm.selected == nil {
+                Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -366,11 +505,11 @@ struct ContentView: View {
         }
     }
 
-    private func barsRow(_ title: String, _ value: Binding<Double>, help: String) -> some View {
+    private func barsRow(_ title: String, _ value: Binding<Double>, range: ClosedRange<Double> = 2...16, help: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack { Text(title); Spacer(); Text("\(Int(value.wrappedValue))").monospacedDigit() }
                 .contentShape(Rectangle()).help(help)
-            Slider(value: value, in: 2...16, step: 1).help(help)
+            Slider(value: value, in: range, step: 1).help(help)
         }
     }
 
@@ -537,6 +676,17 @@ struct ContentView: View {
 
             mainView
 
+            if vm.editing {
+                HStack {
+                    Text(vm.editDirty ? "Unsaved changes" : "No changes yet").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Discard", action: vm.cancelEditing)
+                    Button("Save changes", action: vm.saveEditing)
+                        .buttonStyle(.borderedProminent).disabled(!vm.editDirty || vm.editNotes.isEmpty)
+                        .keyboardShortcut("s", modifiers: .command)
+                }
+            }
+
             transport
             mixer
 
@@ -570,7 +720,10 @@ struct ContentView: View {
     @ViewBuilder private var mainView: some View {
         let sheet = vm.viewMode == .sheet
         Group {
-            if vm.displayNotes.isEmpty {
+            if vm.editing {
+                MelodyEditor(notes: $vm.editNotes, selected: $vm.editSelected, beatsPerBar: vm.beatsPerBar,
+                             chosen: vm.chosenBars, toggle: { vm.toggleBar($0) })
+            } else if vm.displayNotes.isEmpty {
                 RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.09))
                     .overlay(Text("Your melody options will appear here").foregroundStyle(.secondary))
             } else if sheet, let url = vm.displayURL {
@@ -589,10 +742,13 @@ struct ContentView: View {
                 }
             } else {
                 PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
-                          playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel)
+                          playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
+                          secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
+                          toggle: vm.canEdit ? { vm.toggleBar($0) } : nil)
+                    .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
             }
         }
-        .frame(minHeight: sheet ? 320 : 200, maxHeight: sheet ? .infinity : 200)
+        .frame(minHeight: sheet ? 320 : (vm.editing ? 300 : 200), maxHeight: sheet ? .infinity : (vm.editing ? 300 : 200))
     }
 
     private var transport: some View {
