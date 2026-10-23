@@ -109,3 +109,18 @@ def test_expanding_with_the_anticipation_model(backend):
     c = [e for e in ev if e["type"] == "candidate"][0]
     assert max(n[3] for n in c["notes"]) > chosen["notes"][-1][3] + 3
     assert len([n for n in c["notes"] if n[1] > chosen["notes"][-1][3]]) >= 4, "there are new notes after the old ones"
+
+
+def test_expanding_gives_up_after_a_few_unusable_attempts_in_a_row(out_dir, monkeypatch):
+    path = out_dir / "m.mid"
+    t.write_melody_midi(path, 90, [(60 + i % 5, float(i), 1.0) for i in range(8)], 0, "4/4", 8.0)
+    calls = []
+
+    def broken(*a, **k):
+        calls.append(1)
+        raise ValueError("LLM returned no usable JSON")
+
+    monkeypatch.setattr(t, "compose", broken)
+    with pytest.raises(RuntimeError, match="No usable expansion"):
+        expand.expand_melody(path, 2, "llm", 4, log=lambda s: None)
+    assert len(calls) == t.MAX_FAILED_ATTEMPTS        # not 3 x the number of options

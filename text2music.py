@@ -276,6 +276,9 @@ def _get_ant(size):
     return _ant[size]
 
 
+MAX_FAILED_ATTEMPTS = 3      # expanding or editing stops after this many unusable attempts in a row, so it cannot loop for long
+
+
 def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(1, 1), tempo=None, key=None, chords=None,
                guidance="", ending=True, climax=True):
     from mlx_lm import generate

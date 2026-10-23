@@ -200,7 +200,13 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
     name = time.strftime("%H%M%S") + "-edit"
     total_beats = n_bars * bb
     out, tries, suggestion, summary = [], 0, None, ""
+    fails, made = 0, 0
     while len(out) < count and tries < count * 3:
+        fails = 0 if len(out) > made else fails + (1 if tries else 0)     # attempts in a row that gave nothing
+        made = len(out)
+        if fails >= t.MAX_FAILED_ATTEMPTS:
+            log(f"      (giving up: {fails} attempts in a row gave nothing usable)")
+            break
         tries += 1
         try:
             repl, summary_, sug = llm_rewrite(notes, set(targets), instruction, sig, key, tempo, llm, complexity,
