@@ -131,25 +131,63 @@ struct ContentView: View {
 
     // MARK: Left column
 
+    private static let stepTitles = ["Motif", "Extend melody", "Edit melody", "Accompaniment"]
+
+    /// The left column is a wizard: one step at a time, with Back and Next underneath.
     private var controls: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                stageHeader("1", "Motif")
-                melodyControls
+        VStack(alignment: .leading, spacing: 12) {
+            stepper
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    stageHeader("\(vm.step)", Self.stepTitles[vm.step - 1])
+                    switch vm.step {
+                    case 1: melodyControls
+                    case 2: expandControls
+                    case 3: editControls
+                    default: accompControls
+                    }
+                }
+                .padding(.trailing, 10)
+            }
+            HStack {
+                Button { vm.step -= 1 } label: { Label("Back", systemImage: "chevron.left") }
+                    .disabled(vm.step <= 1)
+                    .help(vm.step > 1 ? "Back to: \(Self.stepTitles[vm.step - 2])" : "")
+                Spacer()
+                if vm.step < Self.stepTitles.count {
+                    Button { vm.step += 1 } label: {
+                        HStack(spacing: 4) { Text("Next: \(Self.stepTitles[vm.step])"); Image(systemName: "chevron.right") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(vm.selected == nil || vm.busy)
+                    .help(vm.selected == nil ? "Generate and pick an option first" : "Go on to: \(Self.stepTitles[vm.step])")
+                }
+            }
+        }
+    }
 
-                Divider().padding(.vertical, 4)
+    /// The four steps as a row of numbered dots. A step can be visited once there is a melody to work on.
+    private var stepper: some View {
+        HStack(spacing: 4) {
+            ForEach(1...Self.stepTitles.count, id: \.self) { n in
+                let here = n == vm.step, open = n == 1 || vm.selected != nil
+                Button { vm.step = n } label: {
+                    VStack(spacing: 3) {
+                        Text("\(n)").font(.caption.bold()).foregroundStyle(here ? .white : .secondary)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(here ? Color.accentColor : Color.gray.opacity(0.25)))
+                        Text(Self.stepTitles[n - 1]).font(.caption2).lineLimit(1)
+                            .foregroundStyle(here ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain).disabled(!open || vm.busy)
+            }
+        }
+    }
 
-                stageHeader("2", "Extend melody")
-                expandControls
-
-                Divider().padding(.vertical, 4)
-
-                stageHeader("3", "Edit melody")
-                editControls
-
-                Divider().padding(.vertical, 4)
-
-                stageHeader("4", "Accompaniment")
+    private var accompControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
@@ -172,8 +210,6 @@ struct ContentView: View {
                 .contentShape(Rectangle()).help(dynHelp)
                 Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
                 if vm.accompMode == .auto { autoControls } else { oneByOneControls }
-            }
-            .padding(.trailing, 10)
         }
     }
 

@@ -118,6 +118,8 @@ extension Instrument {
 
 @MainActor
 final class ViewModel: ObservableObject {
+    /// Which step the wizard in the left column shows (1 motif, 2 extend, 3 edit, 4 accompaniment).
+    @Published var step = 1
     // Stage 1: melody
     @Published var prompt = "a gentle, hopeful melody in C major"
     @Published var bars = 4.0
@@ -522,6 +524,7 @@ final class ViewModel: ObservableObject {
         guard ready, !busy else { return }
         clearWork()
         resetHistory()
+        step = 1
         sessionName = Self.defaultSessionName()
         status = "New session. Describe a motif and press Generate motifs."
         send(["cmd": "session_new"])
@@ -531,6 +534,7 @@ final class ViewModel: ObservableObject {
         guard ready, !busy, info.path != sessionURL else { return }
         clearWork()
         resetHistory()
+        step = 1
         status = "Opening \(info.name)…"
         send(["cmd": "session_open", "path": info.path.path])
     }
