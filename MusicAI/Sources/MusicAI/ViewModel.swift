@@ -65,6 +65,20 @@ struct HistoryEntry: Identifiable {
     var snapshot: Snapshot
 }
 
+/// A note in the hand editor, in beats (not seconds), so it lines up with the bars.
+struct EditNote: Identifiable, Equatable {
+    var id = UUID()
+    var pitch: Int
+    var start: Double
+    var dur: Double
+}
+
+/// The editing model's question: "bars N would have to change as well; may I?"
+struct EditSuggestion {
+    let bars: [Int]
+    let reason: String
+}
+
 /// A key's tonic (pitch class 0-11). The mode is chosen separately, so any tonic can be combined with any mode.
 struct KeyChoice: Hashable, Identifiable {
     let name: String
@@ -106,7 +120,7 @@ extension Instrument {
 final class ViewModel: ObservableObject {
     // Stage 1: melody
     @Published var prompt = "a gentle, hopeful melody in C major"
-    @Published var bars = 8.0
+    @Published var bars = 4.0
     @Published var instrument = Instrument.all[0]
     @Published var sig = "4/4"
     static let timeSigs = ["4/4", "3/4", "2/4", "6/8", "5/4", "7/8", "12/8"]
@@ -182,6 +196,20 @@ final class ViewModel: ObservableObject {
                                    "dynamics": expandDynamics]
         return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
     }
+    // Step 3: editing the melody, by hand or by asking the LLM to change only the bars that are named
+    @Published var editing = false                 // the piano roll is the note editor
+    @Published var editNotes: [EditNote] = []
+    @Published var editSelected: UUID?
+    @Published var editInstruction = ""
+    @Published var editBarsText = ""
+    @Published var editCount = 2.0
+    @Published var editSuggestion: EditSuggestion?
+    private var editLabel: String?                 // set while an edit is running; the history entry it will get
+    private var editRequest: (source: URL, instruction: String, bars: [Int])?
+    var editDirty: Bool { guard let c = selected else { return false }; return editNotes != Self.editNotes(of: c) }
+    /// Editing, like expanding, changes the melody, so it is only offered before any accompaniment exists.
+    var canEdit: Bool { canExpand }
+    var canEditBusyHint: Bool { editLabel != nil }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.
     var canExpand: Bool { ready && !busy && selected != nil && orchestration == nil && partsAdded.isEmpty && partOptions.isEmpty }
     // Stage 2: accompaniment
@@ -327,7 +355,7 @@ final class ViewModel: ObservableObject {
             ready = true
             backendDown = false
             send(["cmd": "session_list"])
-            status = "Ready. Describe a melody and press Generate melodies."
+            status = "Ready. Describe a motif and press Generate motifs."
         case .log(let text):
             // direction.describe() in the backend starts its one-line report with one of these
             let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -336,11 +364,12 @@ final class ViewModel: ObservableObject {
             status = text.trimmingCharacters(in: .whitespaces)
         case .error(let text):
             busy = false
-            if expandJustRan, let last = expansionHistory.popLast() {   // the expansion failed: keep what there was
+            if expandJustRan || editLabel != nil, let last = expansionHistory.popLast() {   // the expansion or edit failed: keep what there was
                 candidates = last.candidates
                 selectedID = last.selectedID
             }
             expandJustRan = false
+            editLabel = nil
             pdfBusy = false      // whatever was running is over: don't leave the buttons locked
             pdfJob = nil
             sheetLoading = []
@@ -369,19 +398,28 @@ final class ViewModel: ObservableObject {
             }
         case .melodiesDone:
             busy = false
-            if expandJustRan {
+            if let label = editLabel {
+                editLabel = nil
+                selectedID = candidates.first?.id
+                record(label, "\(candidates.count) option\(candidates.count == 1 ? "" : "s")")
+                status = candidates.count == 1 ? "Done. The sheet music shows the change. Edit again, or add the accompaniment."
+                                               : "Pick the version you like, edit again, or add the accompaniment."
+                if let c = candidates.first { ensureSheet(c.url) }
+            } else if expandJustRan {
                 expandJustRan = false
                 selectedID = candidates.first?.id     // so Expand can go straight on from it; click another to switch
                 record("Expanded by \(Int(lastExpandBars)) bars", "\(candidates.count) options")
                 status = "Option 1 is selected. Pick the one you like, then expand again or add the accompaniment."
             } else {
                 copySettingsToExpansion()
-                record("Melodies", "\(candidates.count) option\(candidates.count == 1 ? "" : "s")")
-                status = candidates.count == 1 ? "Melody ready — expand it, add the accompaniment, or generate again."
+                record("Motifs", "\(candidates.count) option\(candidates.count == 1 ? "" : "s")")
+                status = candidates.count == 1 ? "Motif ready — extend it, edit it, or generate again."
                                                : "Pick the melody you like, or generate new options."
             }
         case .mix(let path, let channels):
             gotMix(path, channels)
+        case .editSuggestion(let bars, let reason, _):
+            editSuggestion = EditSuggestion(bars: bars, reason: reason)
         case .partCandidate(let c):
             partOptions.append(c)
             status = "\(partInstrument.name) option \(c.index) ready"
@@ -450,6 +488,8 @@ final class ViewModel: ObservableObject {
 
     private func clearWork() {
         stop()
+        editing = false
+        editSuggestion = nil
         expansionHistory = []
         candidates = []
         selectedID = nil
@@ -483,7 +523,7 @@ final class ViewModel: ObservableObject {
         clearWork()
         resetHistory()
         sessionName = Self.defaultSessionName()
-        status = "New session. Describe a melody and press Generate melodies."
+        status = "New session. Describe a motif and press Generate motifs."
         send(["cmd": "session_new"])
     }
 
@@ -506,7 +546,7 @@ final class ViewModel: ObservableObject {
         clearWork()
         busy = true
         bpmText = String(bpm)  // show the value actually used
-        status = "Composing \(Int(optionCount)) melody options…"
+        status = "Composing \(Int(optionCount)) motif options…"
         send([
             "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
@@ -532,6 +572,7 @@ final class ViewModel: ObservableObject {
     func select(_ c: Candidate) {
         guard !busy else { return }
         if selectedID != c.id {
+            editing = false
             selectedID = c.id
             orchestration = nil  // a different melody means the old accompaniment no longer applies
             partOptions = []
@@ -575,6 +616,8 @@ final class ViewModel: ObservableObject {
     func goBack(to entry: HistoryEntry) {
         guard !busy, entry.id != currentEntryID else { return }
         stop()
+        editing = false
+        editSuggestion = nil
         let s = entry.snapshot
         candidates = s.candidates
         selectedID = s.selectedID
@@ -619,7 +662,109 @@ final class ViewModel: ObservableObject {
         status = "Back to the melody before the expansion."
     }
 
-    // MARK: Stage 3: accompaniment
+    // MARK: Stage 3: edit the melody
+
+    private static func editNotes(of c: Candidate) -> [EditNote] {
+        let k = Double(c.tempo) / 60
+        return c.notes.filter { $0.channel != 9 }.sorted { $0.start < $1.start }.map {
+            EditNote(pitch: $0.pitch, start: (($0.start * k) * 4).rounded() / 4, dur: max((($0.end - $0.start) * k * 4).rounded() / 4, 0.25))
+        }
+    }
+
+    /// Beats in a bar of the chosen melody (6/8 counts as 3 quarter notes).
+    var beatsPerBar: Double {
+        let p = (selected?.sig ?? "4/4").split(separator: "/").compactMap { Double($0) }
+        return p.count == 2 ? p[0] * 4 / p[1] : 4
+    }
+
+    func beginEditing() {
+        guard canEdit, let c = selected else { return }
+        stop()
+        editNotes = Self.editNotes(of: c)
+        editSelected = nil
+        editSuggestion = nil
+        viewMode = .roll
+        editing = true
+        status = "Editing by hand. Save changes when you are done; the sheet music is redrawn from the saved melody."
+    }
+
+    func cancelEditing() {
+        editing = false
+        status = "Edit discarded."
+    }
+
+    /// Write the hand-edited melody as a new version. The sheet music is engraved again from the new file.
+    func saveEditing() {
+        guard ready, !busy, let c = selected, !editNotes.isEmpty else { return }
+        editing = false
+        guard editDirty else { status = "Nothing was changed."; return }
+        startEdit(label: "Edited by hand")
+        busy = true
+        status = "Saving your edit…"
+        send(["cmd": "save_edit", "source_midi": c.url.path,
+              "notes": editNotes.sorted { $0.start < $1.start }.map { [$0.pitch, $0.start, $0.dur] as [Any] }])
+    }
+
+    private func startEdit(label: String) {
+        stop()
+        expansionHistory.append((candidates, selectedID))
+        candidates = []
+        selectedID = nil
+        editLabel = label
+    }
+
+    /// "2-3, 5" -> [2, 3, 5]
+    private func barsFromText(_ text: String) -> [Int] {
+        var out = Set<Int>()
+        for part in text.split(whereSeparator: { ",; ".contains($0) }) {
+            let ends = part.split(whereSeparator: { "-–".contains($0) }).compactMap { Int($0) }
+            if ends.count == 2, ends[0] <= ends[1], ends[1] - ends[0] < 64 { out.formUnion(ends[0]...ends[1]) }
+            else if ends.count == 1 { out.insert(ends[0]) }
+        }
+        return out.sorted()
+    }
+
+    /// Ask the LLM to change the bars named in the instruction (and in the bars box) and nothing else.
+    func editWithLLM(extraBars: [Int] = []) {
+        guard ready, canEdit, let c = selected else { return }
+        let instruction = editRequest?.instruction ?? editInstruction
+        let source = editRequest?.source ?? c.url
+        let bars = extraBars.isEmpty ? barsFromText(editBarsText) : extraBars
+        editRequest = (source, instruction, bars)
+        guard !instruction.trimmingCharacters(in: .whitespaces).isEmpty || !bars.isEmpty else {
+            status = "Say what to change, and which bars (for example \"measure 2 should lead into measure 3\")."
+            return
+        }
+        editing = false
+        editSuggestion = nil
+        startEdit(label: "Edited with the LLM")
+        busy = true
+        status = "Rewriting only the bars you named…"
+        send(["cmd": "edit", "source_midi": source.path, "instruction": instruction, "bars": bars,
+              "count": Int(editCount), "llm": llm, "complexity": Int(complexity)])
+    }
+
+    func startLLMEdit() {
+        editRequest = nil
+        editWithLLM()
+    }
+
+    /// The user agrees that the extra bars may change too: take back the answer that left them alone and run it again.
+    func allowSuggestedBars() {
+        guard let sug = editSuggestion, let req = editRequest, !busy else { return }
+        if let last = expansionHistory.popLast() {
+            candidates = last.candidates
+            selectedID = last.selectedID
+        }
+        let known = barsFromText(editBarsText)
+        editWithLLM(extraBars: Array(Set(req.bars + known + sug.bars)).sorted())
+    }
+
+    func declineSuggestedBars() {
+        editSuggestion = nil
+    }
+
+    // MARK: Stage 4: accompaniment
 
     /// Forget one-at-a-time options and approved parts, so the main view follows the piece and not a stale option.
     private func resetParts() {
@@ -644,7 +789,13 @@ final class ViewModel: ObservableObject {
 
     /// Engrave whatever the main view is showing, once, when the sheet music view is on.
     func ensureSheet() {
-        guard viewMode == .sheet, ready, let url = displayURL,
+        guard viewMode == .sheet, let url = displayURL else { return }
+        ensureSheet(url)
+    }
+
+    /// Engrave one file now, whichever view is showing, so its sheet music is waiting (used for freshly edited melodies).
+    func ensureSheet(_ url: URL) {
+        guard ready,
               sheetPages[url] == nil, !sheetLoading.contains(url), sheetErrors[url] == nil else { return }
         sheetLoading.insert(url)
         send(["cmd": "notation", "path": url.path, "title": displayTitle])

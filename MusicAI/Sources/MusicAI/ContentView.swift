@@ -107,17 +107,22 @@ struct ContentView: View {
     private var controls: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                stageHeader("1", "Melody")
+                stageHeader("1", "Motif")
                 melodyControls
 
                 Divider().padding(.vertical, 4)
 
-                stageHeader("2", "Expand melody (optional)")
+                stageHeader("2", "Extend melody")
                 expandControls
 
                 Divider().padding(.vertical, 4)
 
-                stageHeader("3", "Accompaniment")
+                stageHeader("3", "Edit melody")
+                editControls
+
+                Divider().padding(.vertical, 4)
+
+                stageHeader("4", "Accompaniment")
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
@@ -254,8 +259,10 @@ struct ContentView: View {
 
     private var melodyControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            describeBox("Describe the melody", text: $vm.prompt, height: 80)
-            barsRow("Bars", $vm.bars, help: "How long the melody is, in bars (measures). At 4/4 and 80 bpm, 8 bars last about 24 seconds.")
+            Text("Start small: a motif of one to four bars is the musical idea the rest of the piece grows from. Extend it in step 2.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            describeBox("Describe the motif", text: $vm.prompt, height: 80)
+            barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
@@ -295,7 +302,7 @@ struct ContentView: View {
             Button(action: vm.generateMelodies) {
                 HStack {
                     if vm.busy && vm.orchestration == nil && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
-                    Text(vm.candidates.isEmpty ? "Generate melodies" : "Regenerate melodies").frame(maxWidth: .infinity)
+                    Text(vm.candidates.isEmpty ? "Generate motifs" : "Regenerate motifs").frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
@@ -311,7 +318,7 @@ struct ContentView: View {
     /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
     private var expandControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pick a melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
+            Text("Pick a motif or melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             describeBox("What should the new bars do? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
@@ -346,10 +353,64 @@ struct ContentView: View {
                 }
             }
             if vm.selected == nil {
-                Text("Pick one of the melody options first.").font(.caption).foregroundStyle(.secondary)
+                Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
             } else if !(vm.orchestration == nil && vm.partsAdded.isEmpty && vm.partOptions.isEmpty) {
                 Text("The accompaniment has been started, so the melody can no longer change. Generate new melodies to start over.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Step 3: change the melody by hand (the piano roll becomes an editor) or by asking the LLM to change named bars.
+    private var editControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Fix what you do not like before adding the accompaniment. Only the bars you name change; every other bar stays exactly as it is.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(action: vm.beginEditing) {
+                Label("Edit notes by hand", systemImage: "pencil").frame(maxWidth: .infinity)
+            }
+            .controlSize(.large).disabled(!vm.canEdit || vm.editing)
+            .help("Turns the piano roll into an editor: click to add a note, drag a note to change its pitch or position, drag its right edge to change its length, Delete to remove it. Save changes redraws the sheet music.")
+
+            describeBox("Or ask the LLM to change something", text: $vm.editInstruction, height: 66,
+                        example: "e.g. I don't think measure 2 leads into measure 3 very well, so connect them better")
+                .help("Say what is wrong and name the bars (\"measure 2\", \"bars 3-4\"). The LLM is only given those bars to rewrite.")
+            HStack {
+                Text("Bars").foregroundStyle(.secondary)
+                TextField("e.g. 2-3, 5", text: $vm.editBarsText)
+                    .textFieldStyle(.roundedBorder)
+                    .help("Optional: the bars to change, as well as any you named above. The bar numbers are shown along the top of the hand editor and in the sheet music. If neither names a bar, nothing is changed.")
+            }
+            optionsRow($vm.editCount)
+            llmPicker
+            HStack {
+                Button(action: vm.startLLMEdit) {
+                    HStack {
+                        if vm.busy && vm.selected == nil && vm.canEditBusyHint { ProgressView().controlSize(.small) }
+                        Text("Change those bars").frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!vm.canEdit || vm.editing)
+                if !vm.expansionHistory.isEmpty {
+                    Button("Undo", action: vm.undoExpansion).controlSize(.large).disabled(vm.busy)
+                        .help("Go back to the options from before the last edit or expansion")
+                }
+            }
+            if let sug = vm.editSuggestion {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("The LLM says bar\(sug.bars.count == 1 ? "" : "s") \(sug.bars.map(String.init).joined(separator: ", ")) would have to change too" + (sug.reason.isEmpty ? "." : ": \(sug.reason)"))
+                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    Text("They were left exactly as they were. May it change them?").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Yes, change them too", action: vm.allowSuggestedBars).disabled(vm.busy)
+                        Button("No, leave them", action: vm.declineSuggestedBars)
+                    }
+                }
+                .padding(10).background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+            }
+            if vm.selected == nil {
+                Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -366,11 +427,11 @@ struct ContentView: View {
         }
     }
 
-    private func barsRow(_ title: String, _ value: Binding<Double>, help: String) -> some View {
+    private func barsRow(_ title: String, _ value: Binding<Double>, range: ClosedRange<Double> = 2...16, help: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack { Text(title); Spacer(); Text("\(Int(value.wrappedValue))").monospacedDigit() }
                 .contentShape(Rectangle()).help(help)
-            Slider(value: value, in: 2...16, step: 1).help(help)
+            Slider(value: value, in: range, step: 1).help(help)
         }
     }
 
@@ -537,6 +598,17 @@ struct ContentView: View {
 
             mainView
 
+            if vm.editing {
+                HStack {
+                    Text(vm.editDirty ? "Unsaved changes" : "No changes yet").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Discard", action: vm.cancelEditing)
+                    Button("Save changes", action: vm.saveEditing)
+                        .buttonStyle(.borderedProminent).disabled(!vm.editDirty || vm.editNotes.isEmpty)
+                        .keyboardShortcut("s", modifiers: .command)
+                }
+            }
+
             transport
             mixer
 
@@ -570,7 +642,9 @@ struct ContentView: View {
     @ViewBuilder private var mainView: some View {
         let sheet = vm.viewMode == .sheet
         Group {
-            if vm.displayNotes.isEmpty {
+            if vm.editing {
+                MelodyEditor(notes: $vm.editNotes, selected: $vm.editSelected, beatsPerBar: vm.beatsPerBar)
+            } else if vm.displayNotes.isEmpty {
                 RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.09))
                     .overlay(Text("Your melody options will appear here").foregroundStyle(.secondary))
             } else if sheet, let url = vm.displayURL {
@@ -592,7 +666,7 @@ struct ContentView: View {
                           playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel)
             }
         }
-        .frame(minHeight: sheet ? 320 : 200, maxHeight: sheet ? .infinity : 200)
+        .frame(minHeight: sheet ? 320 : (vm.editing ? 300 : 200), maxHeight: sheet ? .infinity : (vm.editing ? 300 : 200))
     }
 
     private var transport: some View {
