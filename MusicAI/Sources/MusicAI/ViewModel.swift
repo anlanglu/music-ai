@@ -92,8 +92,8 @@ struct KeyChoice: Hashable, Identifiable {
 /// The scales the melody can be written in. "auto" leaves it to the prompt: minor for a sad request, major otherwise.
 enum Mode {
     static let all: [(id: String, name: String)] = [
-        ("auto", "Auto (from prompt)"), ("major", "Major (Ionian)"), ("minor", "Minor (Aeolian)"), ("dorian", "Dorian"),
-        ("phrygian", "Phrygian"), ("lydian", "Lydian"), ("mixolydian", "Mixolydian"), ("locrian", "Locrian"),
+        ("auto", "Auto (from prompt)"), ("major", "1 · Ionian (major)"), ("dorian", "2 · Dorian"), ("phrygian", "3 · Phrygian"),
+        ("lydian", "4 · Lydian"), ("mixolydian", "5 · Mixolydian"), ("minor", "6 · Aeolian (minor)"), ("locrian", "7 · Locrian"),
     ]
 }
 
