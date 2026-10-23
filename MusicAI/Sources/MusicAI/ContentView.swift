@@ -131,7 +131,8 @@ struct ContentView: View {
 
     // MARK: Left column
 
-    private static let stepTitles = ["Motif", "Extend melody", "Edit melody", "Accompaniment"]
+    private static let stepTitles = ["Motif", "Extend melody", "Edit melody", "Add accompaniment", "Enrich"]
+    private static let stepShort = ["Motif", "Extend", "Edit", "Parts", "Enrich"]
 
     /// The left column is a wizard: one step at a time, with Back and Next underneath.
     private var controls: some View {
@@ -144,7 +145,8 @@ struct ContentView: View {
                     case 1: melodyControls
                     case 2: expandControls
                     case 3: editControls
-                    default: accompControls
+                    case 4: accompControls
+                    default: enrichControls
                     }
                 }
                 .padding(.trailing, 10)
@@ -191,7 +193,7 @@ struct ContentView: View {
                         Text("\(n)").font(.caption.bold()).foregroundStyle(here ? .white : .secondary)
                             .frame(width: 22, height: 22)
                             .background(Circle().fill(here ? Color.accentColor : Color.gray.opacity(0.25)))
-                        Text(Self.stepTitles[n - 1]).font(.caption2).lineLimit(1)
+                        Text(Self.stepShort[n - 1]).font(.caption2).lineLimit(1)
                             .foregroundStyle(here ? .primary : .secondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -201,18 +203,14 @@ struct ContentView: View {
         }
     }
 
-    private var accompControls: some View {
+    /// The settings steps 4 and 5 share.
+    private var accompSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it with Hybrid. Small is quick; large is slower and usually better.")
-                Picker("Mode", selection: $vm.accompMode) {
-                    Text("Automatic").tag(AccompMode.auto)
-                    Text("One at a time").tag(AccompMode.oneByOne)
-                }
-                .pickerStyle(.segmented).labelsHidden()
                 Toggle("Playable parts (respect instrument ranges)", isOn: $vm.playable)
                     .help("Keeps every instrument inside its real range and within the number of notes one player can sound at once")
                 Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
@@ -224,7 +222,26 @@ struct ContentView: View {
                 }
                 .contentShape(Rectangle()).help(dynHelp)
                 Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
-                if vm.accompMode == .auto { autoControls } else { oneByOneControls }
+        }
+    }
+
+    /// Step 4 (optional): add instruments one at a time, choosing among several options for each.
+    private var accompControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Optional. Add instruments one at a time: choose an instrument, hear several options, approve one, repeat. The melody is not changed.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            accompSettings
+            oneByOneControls
+        }
+    }
+
+    /// Step 5 (optional): the music model adds a whole ensemble on top of whatever steps 1 to 4 made.
+    private var enrichControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Optional. Let the music model add a whole ensemble around the piece so far, including any parts you approved in step 4. Press again to re-roll it from the piece as it was before.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            accompSettings
+            autoControls
         }
     }
 
@@ -240,7 +257,7 @@ struct ContentView: View {
     private var autoControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Added instruments"); Spacer()
+                Text("Instruments to add"); Spacer()
                 Text(vm.ensemble == 0 ? "Auto" : "\(Int(vm.ensemble))").monospacedDigit()
             }
             .contentShape(Rectangle())
@@ -250,12 +267,15 @@ struct ContentView: View {
             Button(action: vm.addAccompaniment) {
                 HStack {
                     if vm.busy && vm.selected != nil { ProgressView().controlSize(.small) }
-                    Text(vm.orchestration == nil ? "Add accompaniment" : "Re-roll accompaniment")
+                    Text(vm.isEnriched ? "Re-roll the enrichment" : "Enrich the piece")
                         .frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
             .disabled(!vm.ready || vm.busy || vm.selected == nil)
+            if vm.isEnriched {
+                Button("Undo the enrichment", action: vm.undoPart).disabled(vm.busy)
+            }
             if vm.selected == nil {
                 Text("Pick a melody first.").font(.caption).foregroundStyle(.secondary)
             }

@@ -24,12 +24,14 @@ everything runs on your Mac, with no cloud service and no account.
    very well, so connect them better"): the LLM is given only the bars you name, its answer is spliced in by code and
    checked, so every other bar stays exactly as it was. If it thinks other bars would need to change as well, it asks
    first and you decide.
-4. **Then accompaniment**, written by the Anticipation model, either all at once (up to 16 instruments) or one instrument
-   at a time: type a free-text direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or
-   undo, repeat. Parts respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can
-   get chords, arpeggios, Alberti bass and more under an unchanged melody.
-5. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
-6. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
+4. **Add accompaniment (optional).** One instrument at a time, written by the Anticipation model: type a free-text
+   direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or undo, repeat. Parts
+   respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get chords,
+   arpeggios, Alberti bass and more under an unchanged melody.
+5. **Enrich (optional).** The Anticipation model adds a whole ensemble (up to 16 instruments) around the piece so far,
+   including the parts approved in step 4, which stay exactly as they are. Press again to re-roll it, or undo it.
+6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
+7. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
 
 ## The character of the melody

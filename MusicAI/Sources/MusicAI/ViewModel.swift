@@ -42,8 +42,6 @@ struct Orchestration {
     var programs: [Int] = []
 }
 
-enum AccompMode: String { case auto, oneByOne }
-
 /// Everything the results area shows, so that a step can be gone back to. The files themselves stay on disk.
 struct Snapshot {
     var candidates: [Candidate]
@@ -246,12 +244,6 @@ final class ViewModel: ObservableObject {
     @Published var inKey = true
     @Published var partDirection = ""
     @Published var directionNote = ""   // what the backend understood from the direction
-    @Published var accompMode: AccompMode = AccompMode(rawValue: UserDefaults.standard.string(forKey: "accompMode") ?? "") ?? .auto {
-        didSet {
-            UserDefaults.standard.set(accompMode.rawValue, forKey: "accompMode")
-            if accompMode == .auto, !busy { partOptions = []; selectedPartID = nil }   // un-approved options no longer apply
-        }
-    }
     // One-at-a-time mode: pick an instrument, choose among its options, approve, repeat
     @Published var partInstrument = Instrument.parts.first { $0.program == 40 } ?? Instrument.parts[0]
     @Published var partOptionCount = 3.0
@@ -261,6 +253,10 @@ final class ViewModel: ObservableObject {
     @Published var selectedPartID: UUID?
     @Published var partHistory: [Orchestration?] = []   // the piece before each approval, for Undo
     @Published var partsAdded: [String] = []
+    /// Step 5 is kept in the same history as step 4's parts, so Undo and History treat it like one more part.
+    static let enrichLabel = "Enrichment"
+    private var pendingEnrich: (base: Orchestration?, rerolled: Bool)?
+    var isEnriched: Bool { partsAdded.last == Self.enrichLabel }
     @Published var size = "small"
 
     @Published var status = "Starting backend…"
@@ -398,6 +394,7 @@ final class ViewModel: ObservableObject {
             }
             expandJustRan = false
             editLabel = nil
+            pendingEnrich = nil
             pdfBusy = false      // whatever was running is over: don't leave the buttons locked
             pdfJob = nil
             sheetLoading = []
@@ -469,8 +466,14 @@ final class ViewModel: ObservableObject {
         case .done(_, let full, let notes, let programs):
             busy = false
             if let full {
+                if let p = pendingEnrich {                    // an enrichment, not a session being reopened
+                    if p.rerolled { _ = partHistory.popLast(); _ = partsAdded.popLast() }
+                    partHistory.append(p.base)
+                    partsAdded.append(Self.enrichLabel)
+                    pendingEnrich = nil
+                }
                 orchestration = Orchestration(full: full, notes: notes, programs: programs)
-                record("Accompaniment", "\(notes.count) notes")
+                record("Enriched", "\(notes.count) notes")
                 ensureSheet()
                 status = "Done — \(notes.count) notes. Press Play, or re-roll the accompaniment."
                 play(full)
@@ -812,23 +815,20 @@ final class ViewModel: ObservableObject {
 
     // MARK: Stage 4: accompaniment
 
-    /// Forget one-at-a-time options and approved parts, so the main view follows the piece and not a stale option.
-    private func resetParts() {
-        partOptions = []
-        selectedPartID = nil
-        partHistory = []
-        partsAdded = []
-    }
-
+    /// Step 5: let the music model add a whole ensemble around the piece so far (the melody and any parts approved in
+    /// step 4). Pressing it again starts from the piece as it was before the enrichment.
     func addAccompaniment() {
         guard ready, !busy, let c = selected else { return }
         stop()
+        let rerolling = isEnriched
+        let base: Orchestration? = rerolling ? (partHistory.last ?? nil) : orchestration
+        pendingEnrich = (base, rerolling)
+        partOptions = []
+        selectedPartID = nil
         busy = true
-        orchestration = nil
-        resetParts()            // the automatic accompaniment starts again from the melody: drop any one-at-a-time work
-        status = "Adding accompaniment…"
+        status = "Enriching the piece…"
         send([
-            "cmd": "orchestrate", "source_midi": c.url.path, "ensemble": Int(ensemble), "size": size,
+            "cmd": "orchestrate", "source_midi": (base?.full ?? c.url).path, "ensemble": Int(ensemble), "size": size,
             "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
         ])
     }
