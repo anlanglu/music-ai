@@ -8,25 +8,52 @@ struct PianoRoll: View {
     let duration: Double
     let playhead: Double
     var highlight: Int? = nil   // when set, every other channel is dimmed so one part stands out
+    /// When set, bar lines and numbers are drawn; `chosen` bars are shaded, and clicking a bar calls `toggle`.
+    var secondsPerBar: Double? = nil
+    var chosen: Set<Int> = []
+    var toggle: ((Int) -> Void)? = nil
 
     var body: some View {
-        Canvas { ctx, size in
-            guard let lo = notes.map(\.pitch).min(), let hi = notes.map(\.pitch).max(), duration > 0 else { return }
-            let channels = Array(Set(notes.map(\.channel))).sorted()
-            let rows = Double(hi - lo + 3)
-            let rowH = size.height / rows
-            for n in notes {
-                let x = n.start / duration * size.width
-                let w = max((n.end - n.start) / duration * size.width, 2)
-                let y = Double(hi + 1 - n.pitch) * rowH
-                let color = channelColors[(channels.firstIndex(of: n.channel) ?? 0) % channelColors.count]
-                ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: rowH * 0.85), cornerRadius: 2),
-                         with: .color(color.opacity(highlight == nil || n.channel == highlight ? 0.85 : 0.25)))
+        GeometryReader { geo in
+            Canvas { ctx, size in
+                guard let lo = notes.map(\.pitch).min(), let hi = notes.map(\.pitch).max(), duration > 0 else { return }
+                let channels = Array(Set(notes.map(\.channel))).sorted()
+                let top: CGFloat = secondsPerBar == nil ? 0 : 16
+                let rows = Double(hi - lo + 3)
+                let rowH = (size.height - top) / rows
+                if let spb = secondsPerBar, spb > 0 {
+                    var bar = 1
+                    while Double(bar - 1) * spb < duration - 0.001 {
+                        let x = Double(bar - 1) * spb / duration * size.width
+                        let w = min(spb / duration * size.width, size.width - x)
+                        if chosen.contains(bar) {
+                            ctx.fill(Path(CGRect(x: x, y: 0, width: w, height: size.height)), with: .color(.yellow.opacity(0.18)))
+                        }
+                        ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.28)))
+                        ctx.draw(Text("\(bar)").font(.caption2.bold()).foregroundStyle(chosen.contains(bar) ? Color.yellow : Color.secondary),
+                                 at: CGPoint(x: x + 4, y: top / 2), anchor: .leading)
+                        bar += 1
+                    }
+                }
+                for n in notes {
+                    let x = n.start / duration * size.width
+                    let w = max((n.end - n.start) / duration * size.width, 2)
+                    let y = top + Double(hi + 1 - n.pitch) * rowH
+                    let color = channelColors[(channels.firstIndex(of: n.channel) ?? 0) % channelColors.count]
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: rowH * 0.85), cornerRadius: 2),
+                             with: .color(color.opacity(highlight == nil || n.channel == highlight ? 0.85 : 0.25)))
+                }
+                if playhead > 0 {
+                    let x = playhead / duration * size.width
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 1.5, height: size.height)), with: .color(.white))
+                }
             }
-            if playhead > 0 {
-                let x = playhead / duration * size.width
-                ctx.fill(Path(CGRect(x: x, y: 0, width: 1.5, height: size.height)), with: .color(.white))
-            }
+            .contentShape(Rectangle())
+            .gesture(SpatialTapGesture().onEnded { tap in
+                guard let spb = secondsPerBar, spb > 0, duration > 0, let toggle else { return }
+                let bar = Int(Double(tap.location.x / geo.size.width) * duration / spb) + 1
+                if bar >= 1, Double(bar - 1) * spb < duration { toggle(bar) }
+            })
         }
         .background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 8))
     }
@@ -377,7 +404,7 @@ struct ContentView: View {
                 .help("Say what is wrong and name the bars (\"measure 2\", \"bars 3-4\"). The LLM is only given those bars to rewrite.")
             HStack {
                 Text("Bars").foregroundStyle(.secondary)
-                TextField("e.g. 2-3, 5", text: $vm.editBarsText)
+                TextField("or click bars in the roll", text: $vm.editBarsText)
                     .textFieldStyle(.roundedBorder)
                     .help("Optional: the bars to change, as well as any you named above. The bar numbers are shown along the top of the hand editor and in the sheet music. If neither names a bar, nothing is changed.")
             }
@@ -643,7 +670,8 @@ struct ContentView: View {
         let sheet = vm.viewMode == .sheet
         Group {
             if vm.editing {
-                MelodyEditor(notes: $vm.editNotes, selected: $vm.editSelected, beatsPerBar: vm.beatsPerBar)
+                MelodyEditor(notes: $vm.editNotes, selected: $vm.editSelected, beatsPerBar: vm.beatsPerBar,
+                             chosen: vm.chosenBars, toggle: { vm.toggleBar($0) })
             } else if vm.displayNotes.isEmpty {
                 RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.09))
                     .overlay(Text("Your melody options will appear here").foregroundStyle(.secondary))
@@ -663,7 +691,10 @@ struct ContentView: View {
                 }
             } else {
                 PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
-                          playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel)
+                          playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
+                          secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
+                          toggle: vm.canEdit ? { vm.toggleBar($0) } : nil)
+                    .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
             }
         }
         .frame(minHeight: sheet ? 320 : (vm.editing ? 300 : 200), maxHeight: sheet ? .infinity : (vm.editing ? 300 : 200))

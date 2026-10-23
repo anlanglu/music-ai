@@ -713,6 +713,22 @@ final class ViewModel: ObservableObject {
         editLabel = label
     }
 
+    /// Bar lines are drawn while a single melody is shown (not the accompanied piece or a part audition).
+    var barsShown: Bool { selected != nil && orchestration == nil && selectedPart == nil }
+    var secondsPerBar: Double { beatsPerBar * 60 / Double(max(selected?.tempo ?? 120, 1)) }
+    var chosenBars: Set<Int> { Set(barsFromText(editBarsText)) }
+
+    /// Click a bar to choose it or drop it; the Bars box always shows the choice.
+    func toggleBar(_ bar: Int) {
+        var bars = chosenBars
+        if bars.contains(bar) { bars.remove(bar) } else { bars.insert(bar) }
+        var parts: [String] = [], run: [Int] = []
+        func flush() { if let f = run.first, let l = run.last { parts.append(f == l ? "\(f)" : "\(f)-\(l)") }; run = [] }
+        for b in bars.sorted() { if let l = run.last, b != l + 1 { flush() }; run.append(b) }
+        flush()
+        editBarsText = parts.joined(separator: ", ")
+    }
+
     /// "2-3, 5" -> [2, 3, 5]
     private func barsFromText(_ text: String) -> [Int] {
         var out = Set<Int>()

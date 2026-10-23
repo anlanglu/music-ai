@@ -7,6 +7,8 @@ struct MelodyEditor: View {
     @Binding var notes: [EditNote]
     @Binding var selected: UUID?
     let beatsPerBar: Double
+    var chosen: Set<Int> = []           // bars chosen for the LLM edit are shaded
+    var toggle: ((Int) -> Void)? = nil  // clicking the numbers along the top chooses a bar
 
     private let ppb: CGFloat = 46          // points per beat
     private let ruler: CGFloat = 20
@@ -25,6 +27,7 @@ struct MelodyEditor: View {
         var drag: Drag?
         var frozen: (lo: Int, hi: Int)?
         var lastLength = 1.0
+        var rulerTap: Bool?
     }
 
     private var span: (lo: Int, hi: Int) {
@@ -93,6 +96,9 @@ struct MelodyEditor: View {
         var b = 0
         while Double(b) * beatsPerBar <= totalBeats + 0.001 {          // bar lines and numbers
             let x = CGFloat(Double(b) * beatsPerBar) * ppb
+            if chosen.contains(b + 1) {
+                ctx.fill(Path(CGRect(x: x, y: 0, width: CGFloat(beatsPerBar) * ppb, height: size.height)), with: .color(.yellow.opacity(0.16)))
+            }
             ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.28)))
             ctx.draw(Text("\(b + 1)").font(.caption2.bold()).foregroundStyle(.secondary), at: CGPoint(x: x + 5, y: ruler / 2), anchor: .leading)
             var beat = 1.0
@@ -113,6 +119,10 @@ struct MelodyEditor: View {
 
     private func onDrag(_ v: DragGesture.Value, _ rowH: CGFloat) {
         focused = true
+        if track.drag == nil, v.startLocation.y <= ruler {            // the numbers along the top choose bars
+            if track.rulerTap == nil { track.rulerTap = true; toggle?(Int(Double(v.startLocation.x / ppb) / beatsPerBar) + 1) }
+            return
+        }
         if track.drag == nil {
             track.frozen = span
             let p = v.startLocation
@@ -145,6 +155,7 @@ struct MelodyEditor: View {
     }
 
     private func onEnd() {
+        track.rulerTap = nil
         track.drag = nil
         track.frozen = nil
         tidy()
