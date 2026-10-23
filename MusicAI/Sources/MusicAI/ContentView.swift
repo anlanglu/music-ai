@@ -149,6 +149,10 @@ struct ContentView: View {
                 }
                 .padding(.trailing, 10)
             }
+            if vm.step < Self.stepTitles.count, let why = nextBlocked {
+                Label(why, systemImage: "info.circle").font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Button { vm.step -= 1 } label: { Label("Back", systemImage: "chevron.left") }
                     .disabled(vm.step <= 1)
@@ -160,10 +164,21 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(vm.selected == nil || vm.busy)
-                    .help(vm.selected == nil ? "Generate and pick an option first" : "Go on to: \(Self.stepTitles[vm.step])")
+                    .help(nextBlocked ?? "Go on to: \(Self.stepTitles[vm.step])")
                 }
             }
         }
+    }
+
+    /// Why Next is greyed out, or nil when it is available.
+    private var nextBlocked: String? {
+        if vm.busy { return "Wait for the current step to finish." }
+        if vm.selected != nil { return nil }
+        let first = vm.step == 1
+        if vm.candidates.isEmpty {
+            return first ? "Generate a motif first, then click the one you want to keep." : "Go back and generate a motif first."
+        }
+        return "Click one of the options on the right to pick your motif (the highlighted one is kept)." 
     }
 
     /// The four steps as a row of numbered dots. A step can be visited once there is a melody to work on.
