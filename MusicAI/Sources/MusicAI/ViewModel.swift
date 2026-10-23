@@ -121,7 +121,20 @@ final class ViewModel: ObservableObject {
     /// Which step the wizard in the left column shows (1 motif, 2 extend, 3 edit, 4 accompaniment).
     @Published var step = 1
     // Stage 1: melody
-    @Published var prompt = "a gentle, hopeful melody in C major"
+    @Published var prompt = ""          // anything else to say, beyond the mood chips (optional)
+    @Published var moods: Set<String> = ["gentle", "hopeful"]
+    static let moodChips = ["gentle", "hopeful", "playful", "joyful", "dreamy", "lullaby", "folk", "dance", "march",
+                            "sad", "dark", "mysterious", "dramatic", "epic"]
+    /// What is sent as the prompt: the chosen moods, then whatever was typed; a plain default when both are empty.
+    var effectivePrompt: String {
+        let chosen = Self.moodChips.filter { moods.contains($0) }
+        let extra = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts: [String] = []
+        if !chosen.isEmpty { parts.append("Mood and style: \(chosen.joined(separator: ", ")).") }
+        if !extra.isEmpty { parts.append(extra) }
+        return parts.isEmpty ? "A simple, memorable motif." : parts.joined(separator: " ")
+    }
+    func surpriseMoods() { moods = Set(Self.moodChips.shuffled().prefix(2)) }
     @Published var bars = 4.0
     @Published var instrument = Instrument.all[0]
     @Published var sig = "4/4"
@@ -175,7 +188,20 @@ final class ViewModel: ObservableObject {
     @Published var expandEngine = "hybrid"         // "hybrid" (Anticipation continues it) or "llm"
     @Published var expandComplexity = 3.0
     @Published var expandCount = 3.0
-    @Published var expandDirection = ""
+    @Published var expandDirection = ""            // anything else to say about the new bars (optional)
+    @Published var expandMoves: Set<String> = []
+    /// What each "what should the new bars do" chip tells the engine. The first two only mean something to the LLM.
+    static let moves: [(label: String, text: String)] = [
+        ("continue", "Continue the melody naturally."), ("answer the motif", "Answer the opening motif, like a reply to it."),
+        ("build up", "Build up: gradually busier and higher, with more energy."), ("climax", "Reach a climax: the highest and most intense point."),
+        ("calm down", "Calm down: quieter, simpler and lower."), ("return", "Bring back the opening idea."),
+        ("contrast", "Contrast with what came before: a different character."),
+    ]
+    static let llmOnlyMoves: Set<String> = ["answer the motif", "return"]
+    var effectiveDirection: String {
+        let chosen = Self.moves.filter { expandMoves.contains($0.label) }.map(\.text)
+        return (chosen + [expandDirection.trimmingCharacters(in: .whitespacesAndNewlines)]).filter { !$0.isEmpty }.joined(separator: " ")
+    }
     @Published var expandShape = 5.0
     @Published var expandPulse = 2.0
     @Published var expandHarmony = 3.0
@@ -302,7 +328,7 @@ final class ViewModel: ObservableObject {
     }
     /// The tempo typed in the field, kept inside what the app supports (blank or junk falls back to 80).
     var bpm: Int { min(max(Int(bpmText) ?? 80, 40), 220) }
-    var hasPrompt: Bool { !prompt.trimmingCharacters(in: .whitespaces).isEmpty }
+    var hasPrompt: Bool { true }   // the prompt is optional: with nothing chosen a plain default is used
 
     func start() {
         backend.onEvent = { [weak self] ev in self?.handle(ev) }
@@ -552,7 +578,7 @@ final class ViewModel: ObservableObject {
         bpmText = String(bpm)  // show the value actually used
         status = "Composing \(Int(optionCount)) motif options…"
         send([
-            "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
+            "cmd": "melodies", "prompt": effectivePrompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
@@ -652,7 +678,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
-            "sliders": expandSliderValues, "direction": expandDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
+            "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
         ])
     }
 

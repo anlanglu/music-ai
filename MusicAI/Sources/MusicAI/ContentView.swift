@@ -339,7 +339,18 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Start small: a motif of one to four bars is the musical idea the rest of the piece grows from. Extend it in step 2.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            describeBox("Describe the motif", text: $vm.prompt, height: 80)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Mood and style (up to three)").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Surprise me", action: vm.surpriseMoods).buttonStyle(.link).font(.caption)
+                    Button("Clear") { vm.moods = [] }.buttonStyle(.link).font(.caption).disabled(vm.moods.isEmpty)
+                }
+                ChipPicker(items: ViewModel.moodChips, selection: $vm.moods, limit: 3)
+                    .help("Pick the feeling you want. Sad, dark, mysterious, dramatic and epic lean towards a minor key; the others towards major, unless you set the mode yourself.")
+            }
+            describeBox("Anything else? (optional)", text: $vm.prompt, height: 54,
+                        example: "e.g. like a music box, rising slowly then settling")
             barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
@@ -386,7 +397,7 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent).controlSize(.large)
             .tint(vm.candidates.isEmpty ? .accentColor : .gray)
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(!vm.ready || vm.busy || !vm.hasPrompt)
+            .disabled(!vm.ready || vm.busy)
 
             Button("Import MIDI as the melody…", action: vm.importMIDI)
                 .disabled(!vm.ready || vm.busy)
@@ -398,7 +409,16 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pick a motif or melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            describeBox("What should the new bars do? (optional)", text: $vm.expandDirection, height: 54,
+            VStack(alignment: .leading, spacing: 6) {
+                Text("What should the new bars do?").font(.caption).foregroundStyle(.secondary)
+                ChipPicker(items: ViewModel.moves.map(\.label), selection: $vm.expandMoves,
+                           help: Dictionary(uniqueKeysWithValues: ViewModel.moves.map { ($0.label, $0.text) }))
+                if vm.expandEngine == "hybrid", !vm.expandMoves.isDisjoint(with: ViewModel.llmOnlyMoves) {
+                    Text("“Answer the motif” and “return” are only followed in LLM only mode; Hybrid ignores them.")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            describeBox("Anything else? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
                 .help("Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
