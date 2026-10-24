@@ -11,10 +11,11 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
+  {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
-          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | error{text}      (notes = [[channel,pitch,start,end],...])
+          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
 import json
 import os
@@ -149,7 +150,14 @@ def handle(r):
         seed_everything(int(r["seed"]))
     knobs = r.get("knobs") or None
     log = lambda s: send(type="log", text=s)
-    if cmd == "session_list":
+    if cmd == "claude_key":   # the app's Keychain value; kept in memory only. test=True also tries it against the API
+        import claude_llm
+        if r.get("test"):
+            ok, text = claude_llm.check(r.get("key"))
+            send(type="claude_status", ok=ok, text=text)
+        else:
+            claude_llm.set_key(r.get("key"))
+    elif cmd == "session_list":
         send(type="sessions", items=list_sessions())
     elif cmd == "session_new":  # lazily: the folder is only created once something is written
         reset_session()

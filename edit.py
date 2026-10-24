@@ -132,9 +132,6 @@ def _listing(notes, bb, n_bars):
 
 def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_boost=0.0):
     """Ask the model for new versions of the `targets` bars. Returns ({bar: [(p, beat, dur)]}, summary, suggestion)."""
-    from mlx_lm import generate
-    from mlx_lm.sample_utils import make_sampler
-
     model, tok = t._get_llm(llm)
     bb = t.bar_beats(sig)
     n_bars = bar_count(max((s + d for _p, s, d in notes), default=bb), bb)
@@ -147,8 +144,7 @@ def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_b
     msgs = [{"role": "system", "content": SYSTEM.replace("{bar_beats:g}", f"{bb:g}")},
             {"role": "user", "content": user}]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
-    raw = generate(model, tok, prompt=text, max_tokens=500 + 120 * len(targets),
-                   sampler=make_sampler(temp=0.7 + temp_boost, top_p=0.95))
+    raw = t._generate(model, tok, text, 500 + 120 * len(targets), 0.7 + temp_boost, 0.95)
     obj = extract_json(raw, "bars")
     if obj is None or not isinstance(obj["bars"], dict):
         raise ValueError(f"LLM returned no usable JSON:\n{raw[:300]}")
@@ -200,7 +196,13 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
     name = time.strftime("%H%M%S") + "-edit"
     total_beats = n_bars * bb
     out, tries, suggestion, summary = [], 0, None, ""
+    fails, made = 0, 0
     while len(out) < count and tries < count * 3:
+        fails = 0 if len(out) > made else fails + (1 if tries else 0)     # attempts in a row that gave nothing
+        made = len(out)
+        if fails >= t.MAX_FAILED_ATTEMPTS:
+            log(f"      (giving up: {fails} attempts in a row gave nothing usable)")
+            break
         tries += 1
         try:
             repl, summary_, sug = llm_rewrite(notes, set(targets), instruction, sig, key, tempo, llm, complexity,

@@ -66,6 +66,7 @@ enum BackendEvent {
     case notationError(midi: URL, text: String)
     case session(name: String, path: URL?, oldPath: URL?)
     case sessions([SessionInfo])
+    case claudeStatus(ok: Bool, text: String)
     case error(String)
 }
 
@@ -190,6 +191,7 @@ final class Backend {
               let type = obj["type"] as? String else { return nil }
         switch type {
         case "ready": return .ready((obj["sliders"] as? [String: Double]) ?? [:])
+        case "claude_status": return .claudeStatus(ok: obj["ok"] as? Bool ?? false, text: obj["text"] as? String ?? "")
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone

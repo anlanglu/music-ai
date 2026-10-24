@@ -45,6 +45,7 @@ LLMS = {
     "7B": "mlx-community/Qwen2.5-7B-Instruct-4bit",
     "14B": "mlx-community/Qwen2.5-14B-Instruct-4bit",  # ~8 GB download, richer melodies, slower
     "3B": "mlx-community/Qwen2.5-3B-Instruct-4bit",    # ~1.8 GB: plenty for reading directions, light on memory
+    "mistral24": "mlx-community/Mistral-Small-24B-Instruct-2501-3bit",  # ~10 GB: the biggest that fits a 16 GB Mac next to the music model
 }
 ANT = "stanford-crfm/music-{size}-800k"
 
@@ -259,12 +260,38 @@ _ant = {}
 
 
 def _get_llm(key="7B"):
+    import claude_llm
+
+    if claude_llm.is_claude(key):   # nothing to load: the model runs at Anthropic
+        return claude_llm.ClaudeModel(key), claude_llm.ClaudeTok()
     if key not in _llm:
         from mlx_lm import load
 
         _llm.clear()  # only one LLM fits comfortably in memory next to the music model
+        try:          # give the old model's memory back before the new one loads (the big ones need the room)
+            import gc
+            import mlx.core as mx
+            gc.collect()
+            mx.clear_cache()
+        except Exception:
+            pass
         _llm[key] = load(LLMS[key])
     return _llm[key]
+
+
+def _generate(model, tok, prompt, max_tokens, temp=None, top_p=None):
+    """One reply from whichever LLM `_get_llm` returned: local (MLX) or Claude."""
+    import claude_llm
+
+    if isinstance(model, claude_llm.ClaudeModel):
+        if model.name.startswith("cc-"):   # Claude Code with your subscription
+            return claude_llm.complete_cli(model, prompt)
+        return claude_llm.complete(model, prompt, max_tokens)
+    from mlx_lm import generate
+    from mlx_lm.sample_utils import make_sampler
+
+    kw = {"sampler": make_sampler(temp=temp, top_p=top_p)} if temp is not None else {}
+    return generate(model, tok, prompt=prompt, max_tokens=max_tokens, **kw)
 
 
 def _get_ant(size):
@@ -276,11 +303,11 @@ def _get_ant(size):
     return _ant[size]
 
 
+MAX_FAILED_ATTEMPTS = 3      # expanding or editing stops after this many unusable attempts in a row, so it cannot loop for long
+
+
 def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(1, 1), tempo=None, key=None, chords=None,
                guidance="", ending=True, climax=True):
-    from mlx_lm import generate
-    from mlx_lm.sample_utils import make_sampler
-
     model, tok = _get_llm(llm)
     bb = bar_beats(sig)
     style, density, (lo, hi) = COMPLEXITY[level]
@@ -320,8 +347,7 @@ def llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phrase=(
     ]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
     max_tokens = 600 + int(bars * bb * density * 18)
-    raw = generate(model, tok, prompt=text, max_tokens=max_tokens,
-                   sampler=make_sampler(temp=TEMPERATURE[level], top_p=0.95))
+    raw = _generate(model, tok, text, max_tokens, TEMPERATURE[level], 0.95)
     data = _json_with_notes(raw)
     if data is None:
         raise ValueError(f"LLM returned no usable JSON:\n{raw}")
@@ -718,14 +744,12 @@ def pick_key(prompt, llm, log):
     named = parse_key(prompt)
     if named:
         return named
-    from mlx_lm import generate
-
     model, tok = _get_llm(llm)
     msgs = [{"role": "system", "content": 'Reply with ONLY a JSON object: {"key": "<tonic> <major|minor>", "why": "<one short '
                                           'sentence>"}. Choose the key that best suits the music requested.'},
             {"role": "user", "content": prompt}]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
-    raw = generate(model, tok, prompt=text, max_tokens=120)
+    raw = _generate(model, tok, text, 120)
     data = extract_json(raw, "key")
     key = parse_key(str(data.get("key", ""))) if data else None
     if key is None:
@@ -1290,15 +1314,13 @@ def interpret_direction(text, instrument, context, log=print, model_key=None):
     keywords = dr.parse(text)
     if keywords["empty"]:
         return keywords
-    from mlx_lm import generate
-
     # Prefer whichever LLM is already in memory; otherwise the 7B (reads directions best), then the lighter 3B.
     order = [model_key] if model_key else (list(_llm) or []) + [k for k in ("7B", "3B") if k not in _llm]
     for key in order:
         try:
             model, tok = _get_llm(key)
             msgs = [{"role": "system", "content": dr.SYSTEM}, {"role": "user", "content": dr.build_prompt(text, instrument, context)}]
-            raw = generate(model, tok, prompt=tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False), max_tokens=320)
+            raw = _generate(model, tok, tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False), 320)
             got = dr.from_llm(text, raw)
             if got is None:
                 log(f"      (the {key} LLM's reply wasn't usable)")

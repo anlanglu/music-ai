@@ -42,8 +42,6 @@ struct Orchestration {
     var programs: [Int] = []
 }
 
-enum AccompMode: String { case auto, oneByOne }
-
 /// Everything the results area shows, so that a step can be gone back to. The files themselves stay on disk.
 struct Snapshot {
     var candidates: [Candidate]
@@ -121,7 +119,20 @@ final class ViewModel: ObservableObject {
     /// Which step the wizard in the left column shows (1 motif, 2 extend, 3 edit, 4 accompaniment).
     @Published var step = 1
     // Stage 1: melody
-    @Published var prompt = "a gentle, hopeful melody in C major"
+    @Published var prompt = ""          // anything else to say, beyond the mood chips (optional)
+    @Published var moods: Set<String> = ["gentle", "hopeful"]
+    static let moodChips = ["gentle", "hopeful", "playful", "joyful", "dreamy", "lullaby", "folk", "dance", "march",
+                            "sad", "dark", "mysterious", "dramatic", "epic"]
+    /// What is sent as the prompt: the chosen moods, then whatever was typed; a plain default when both are empty.
+    var effectivePrompt: String {
+        let chosen = Self.moodChips.filter { moods.contains($0) }
+        let extra = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts: [String] = []
+        if !chosen.isEmpty { parts.append("Mood and style: \(chosen.joined(separator: ", ")).") }
+        if !extra.isEmpty { parts.append(extra) }
+        return parts.isEmpty ? "A simple, memorable motif." : parts.joined(separator: " ")
+    }
+    func surpriseMoods() { moods = Set(Self.moodChips.shuffled().prefix(2)) }
     @Published var bars = 4.0
     @Published var instrument = Instrument.all[0]
     @Published var sig = "4/4"
@@ -168,14 +179,35 @@ final class ViewModel: ObservableObject {
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
-    @Published var llm = "7B"
+    @Published var llm = "7B" {
+        didSet { if llm.hasPrefix("claude-") && !claudeKeySaved { showClaudeSheet = true } }
+    }
+    // Claude (cloud) as an alternative melody LLM; the key itself is only in the Keychain
+    @Published var claudeKeySaved = Keychain.get() != nil
+    @Published var claudeKeyOK = false
+    @Published var claudeChecking = false
+    @Published var claudeStatus = ""
+    @Published var showClaudeSheet = false
 
     // Step 2: expanding the chosen melody. It has its own settings, because each expansion can want a different character.
     @Published var expandBars = 4.0                // bars added at a time
     @Published var expandEngine = "hybrid"         // "hybrid" (Anticipation continues it) or "llm"
     @Published var expandComplexity = 3.0
     @Published var expandCount = 3.0
-    @Published var expandDirection = ""
+    @Published var expandDirection = ""            // anything else to say about the new bars (optional)
+    @Published var expandMoves: Set<String> = []
+    /// What each "what should the new bars do" chip tells the engine. The first two only mean something to the LLM.
+    static let moves: [(label: String, text: String)] = [
+        ("continue", "Continue the melody naturally."), ("answer the motif", "Answer the opening motif, like a reply to it."),
+        ("build up", "Build up: gradually busier and higher, with more energy."), ("climax", "Reach a climax: the highest and most intense point."),
+        ("calm down", "Calm down: quieter, simpler and lower."), ("return", "Bring back the opening idea."),
+        ("contrast", "Contrast with what came before: a different character."),
+    ]
+    static let llmOnlyMoves: Set<String> = ["answer the motif", "return"]
+    var effectiveDirection: String {
+        let chosen = Self.moves.filter { expandMoves.contains($0.label) }.map(\.text)
+        return (chosen + [expandDirection.trimmingCharacters(in: .whitespacesAndNewlines)]).filter { !$0.isEmpty }.joined(separator: " ")
+    }
     @Published var expandShape = 5.0
     @Published var expandPulse = 2.0
     @Published var expandHarmony = 3.0
@@ -220,12 +252,6 @@ final class ViewModel: ObservableObject {
     @Published var inKey = true
     @Published var partDirection = ""
     @Published var directionNote = ""   // what the backend understood from the direction
-    @Published var accompMode: AccompMode = AccompMode(rawValue: UserDefaults.standard.string(forKey: "accompMode") ?? "") ?? .auto {
-        didSet {
-            UserDefaults.standard.set(accompMode.rawValue, forKey: "accompMode")
-            if accompMode == .auto, !busy { partOptions = []; selectedPartID = nil }   // un-approved options no longer apply
-        }
-    }
     // One-at-a-time mode: pick an instrument, choose among its options, approve, repeat
     @Published var partInstrument = Instrument.parts.first { $0.program == 40 } ?? Instrument.parts[0]
     @Published var partOptionCount = 3.0
@@ -235,6 +261,10 @@ final class ViewModel: ObservableObject {
     @Published var selectedPartID: UUID?
     @Published var partHistory: [Orchestration?] = []   // the piece before each approval, for Undo
     @Published var partsAdded: [String] = []
+    /// Step 5 is kept in the same history as step 4's parts, so Undo and History treat it like one more part.
+    static let enrichLabel = "Enrichment"
+    private var pendingEnrich: (base: Orchestration?, rerolled: Bool)?
+    var isEnriched: Bool { partsAdded.last == Self.enrichLabel }
     @Published var size = "small"
 
     @Published var status = "Starting backend…"
@@ -302,7 +332,7 @@ final class ViewModel: ObservableObject {
     }
     /// The tempo typed in the field, kept inside what the app supports (blank or junk falls back to 80).
     var bpm: Int { min(max(Int(bpmText) ?? 80, 40), 220) }
-    var hasPrompt: Bool { !prompt.trimmingCharacters(in: .whitespaces).isEmpty }
+    var hasPrompt: Bool { true }   // the prompt is optional: with nothing chosen a plain default is used
 
     func start() {
         backend.onEvent = { [weak self] ev in self?.handle(ev) }
@@ -356,8 +386,15 @@ final class ViewModel: ObservableObject {
             applySliderDefaults(sliders)
             ready = true
             backendDown = false
+            if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
+        case .claudeStatus(let ok, let text):
+            claudeChecking = false
+            claudeKeyOK = ok
+            claudeStatus = text
+            if ok { Keychain.set(pendingClaudeKey); claudeKeySaved = true }
+            pendingClaudeKey = ""
         case .log(let text):
             // direction.describe() in the backend starts its one-line report with one of these
             let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -372,6 +409,7 @@ final class ViewModel: ObservableObject {
             }
             expandJustRan = false
             editLabel = nil
+            pendingEnrich = nil
             pdfBusy = false      // whatever was running is over: don't leave the buttons locked
             pdfJob = nil
             sheetLoading = []
@@ -443,13 +481,38 @@ final class ViewModel: ObservableObject {
         case .done(_, let full, let notes, let programs):
             busy = false
             if let full {
+                if let p = pendingEnrich {                    // an enrichment, not a session being reopened
+                    if p.rerolled { _ = partHistory.popLast(); _ = partsAdded.popLast() }
+                    partHistory.append(p.base)
+                    partsAdded.append(Self.enrichLabel)
+                    pendingEnrich = nil
+                }
                 orchestration = Orchestration(full: full, notes: notes, programs: programs)
-                record("Accompaniment", "\(notes.count) notes")
+                record("Enriched", "\(notes.count) notes")
                 ensureSheet()
                 status = "Done — \(notes.count) notes. Press Play, or re-roll the accompaniment."
                 play(full)
             }
         }
+    }
+
+    private var pendingClaudeKey = ""
+
+    /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
+    func saveClaudeKey(_ key: String) {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        pendingClaudeKey = key
+        claudeChecking = true
+        claudeStatus = "Checking the key…"
+        send(["cmd": "claude_key", "key": key, "test": true])
+    }
+
+    func removeClaudeKey() {
+        Keychain.remove()
+        claudeKeySaved = false; claudeKeyOK = false; claudeStatus = ""
+        send(["cmd": "claude_key", "key": ""])
+        if llm.hasPrefix("claude-") { llm = "7B" }
     }
 
     private func send(_ request: [String: Any]) {
@@ -552,7 +615,7 @@ final class ViewModel: ObservableObject {
         bpmText = String(bpm)  // show the value actually used
         status = "Composing \(Int(optionCount)) motif options…"
         send([
-            "cmd": "melodies", "prompt": prompt, "bars": Int(bars), "program": instrument.program,
+            "cmd": "melodies", "prompt": effectivePrompt, "bars": Int(bars), "program": instrument.program,
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
@@ -652,7 +715,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
-            "sliders": expandSliderValues, "direction": expandDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
+            "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
         ])
     }
 
@@ -786,23 +849,20 @@ final class ViewModel: ObservableObject {
 
     // MARK: Stage 4: accompaniment
 
-    /// Forget one-at-a-time options and approved parts, so the main view follows the piece and not a stale option.
-    private func resetParts() {
-        partOptions = []
-        selectedPartID = nil
-        partHistory = []
-        partsAdded = []
-    }
-
+    /// Step 5: let the music model add a whole ensemble around the piece so far (the melody and any parts approved in
+    /// step 4). Pressing it again starts from the piece as it was before the enrichment.
     func addAccompaniment() {
         guard ready, !busy, let c = selected else { return }
         stop()
+        let rerolling = isEnriched
+        let base: Orchestration? = rerolling ? (partHistory.last ?? nil) : orchestration
+        pendingEnrich = (base, rerolling)
+        partOptions = []
+        selectedPartID = nil
         busy = true
-        orchestration = nil
-        resetParts()            // the automatic accompaniment starts again from the melody: drop any one-at-a-time work
-        status = "Adding accompaniment…"
+        status = "Enriching the piece…"
         send([
-            "cmd": "orchestrate", "source_midi": c.url.path, "ensemble": Int(ensemble), "size": size,
+            "cmd": "orchestrate", "source_midi": (base?.full ?? c.url).path, "ensemble": Int(ensemble), "size": size,
             "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
         ])
     }

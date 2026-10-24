@@ -2,9 +2,10 @@
 
 A fully local, text-prompt music composition tool for macOS. Describe a melody in words, pick one of several options,
 then build it up into a piece with up to 16 instruments. A native SwiftUI app (**Composer.app**) drives a Python backend;
-everything runs on your Mac, with no cloud service and no account.
+everything runs on your Mac, with no cloud service and no account, unless you choose the optional **Claude** entries in the
+Melody LLM menu (see below).
 
-- The melody is written by a local language model (Qwen2.5 via MLX). It can then be grown by that model or by the Stanford
+- The melody is written by a local language model (Qwen2.5 or Mistral Small 24B via MLX). It can then be grown by that model or by the Stanford
   **Anticipatory Music Transformer**, which also writes the accompaniment.
 - Output is standard MIDI (plays in Logic, GarageBand, any DAW) plus MusicXML and PDF sheet music.
 
@@ -24,13 +25,26 @@ everything runs on your Mac, with no cloud service and no account.
    very well, so connect them better"): the LLM is given only the bars you name, its answer is spliced in by code and
    checked, so every other bar stays exactly as it was. If it thinks other bars would need to change as well, it asks
    first and you decide.
-4. **Then accompaniment**, written by the Anticipation model, either all at once (up to 16 instruments) or one instrument
-   at a time: type a free-text direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or
-   undo, repeat. Parts respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can
-   get chords, arpeggios, Alberti bass and more under an unchanged melody.
-5. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
-6. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
+4. **Add accompaniment (optional).** One instrument at a time, written by the Anticipation model: type a free-text
+   direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or undo, repeat. Parts
+   respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get chords,
+   arpeggios, Alberti bass and more under an unchanged melody.
+5. **Enrich (optional).** The Anticipation model adds a whole ensemble (up to 16 instruments) around the piece so far,
+   including the parts approved in step 4, which stay exactly as they are. Press again to re-roll it, or undo it.
+6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
+7. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
+
+## Choosing the melody LLM
+
+The **Melody LLM** menu offers Qwen 7B and 14B and Mistral Small 24B (3-bit, about 10 GB, heavy on a 16 GB Mac: close other
+apps; it is slower and tends to write fewer notes per attempt). Under it are **Claude Haiku 5.5 (cheap), Sonnet 5.5
+(moderate) and Opus 5.5 (expensive)** through the `claude` command-line tool (Claude Code) on your Mac. They need no API key:
+they use your Claude subscription, so they count against its usage limits instead of being billed per request (check
+Anthropic's current terms for programmatic use). The prompt, the melody and your instructions leave the Mac. Claude fixes its
+own sampling, so the complexity setting does not change its randomness. Fable 5.1 is not offered: Claude Code bills it as
+extra usage credits. `claude_llm.py` also holds an Anthropic API-key route (key in the Keychain) that the menu does not
+currently show. The Anticipation model (extension and accompaniment) stays local.
 
 ## The character of the melody
 

@@ -147,7 +147,13 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         return _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars, size, complexity, sl, kn,
                                mine["form"], motif, d, log)
 
+    fails, made = 0, 0
     while len(out) < count and tries < count * 3:
+        fails = 0 if len(out) > made else fails + (1 if tries else 0)     # attempts in a row that gave nothing
+        made = len(out)
+        if fails >= t.MAX_FAILED_ATTEMPTS:
+            log(f"      (giving up: {fails} attempts in a row gave nothing usable)")
+            break
         tries += 1
         try:
             raw = produce()

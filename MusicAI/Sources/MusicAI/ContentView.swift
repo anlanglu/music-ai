@@ -96,6 +96,7 @@ struct ContentView: View {
         }
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
+        .sheet(isPresented: $vm.showClaudeSheet) { ClaudeKeySheet(vm: vm) }
         .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
         .onChange(of: vm.ready) { _, _ in vm.loadMix() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
@@ -131,7 +132,8 @@ struct ContentView: View {
 
     // MARK: Left column
 
-    private static let stepTitles = ["Motif", "Extend melody", "Edit melody", "Accompaniment"]
+    private static let stepTitles = ["Motif", "Extend melody", "Edit melody", "Add accompaniment", "Enrich"]
+    private static let stepShort = ["Motif", "Extend", "Edit", "Parts", "Enrich"]
 
     /// The left column is a wizard: one step at a time, with Back and Next underneath.
     private var controls: some View {
@@ -144,7 +146,8 @@ struct ContentView: View {
                     case 1: melodyControls
                     case 2: expandControls
                     case 3: editControls
-                    default: accompControls
+                    case 4: accompControls
+                    default: enrichControls
                     }
                 }
                 .padding(.trailing, 10)
@@ -191,7 +194,7 @@ struct ContentView: View {
                         Text("\(n)").font(.caption.bold()).foregroundStyle(here ? .white : .secondary)
                             .frame(width: 22, height: 22)
                             .background(Circle().fill(here ? Color.accentColor : Color.gray.opacity(0.25)))
-                        Text(Self.stepTitles[n - 1]).font(.caption2).lineLimit(1)
+                        Text(Self.stepShort[n - 1]).font(.caption2).lineLimit(1)
                             .foregroundStyle(here ? .primary : .secondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -201,18 +204,14 @@ struct ContentView: View {
         }
     }
 
-    private var accompControls: some View {
+    /// The settings steps 4 and 5 share.
+    private var accompSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it with Hybrid. Small is quick; large is slower and usually better.")
-                Picker("Mode", selection: $vm.accompMode) {
-                    Text("Automatic").tag(AccompMode.auto)
-                    Text("One at a time").tag(AccompMode.oneByOne)
-                }
-                .pickerStyle(.segmented).labelsHidden()
                 Toggle("Playable parts (respect instrument ranges)", isOn: $vm.playable)
                     .help("Keeps every instrument inside its real range and within the number of notes one player can sound at once")
                 Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
@@ -224,7 +223,26 @@ struct ContentView: View {
                 }
                 .contentShape(Rectangle()).help(dynHelp)
                 Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
-                if vm.accompMode == .auto { autoControls } else { oneByOneControls }
+        }
+    }
+
+    /// Step 4 (optional): add instruments one at a time, choosing among several options for each.
+    private var accompControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Optional. Add instruments one at a time: choose an instrument, hear several options, approve one, repeat. The melody is not changed.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            accompSettings
+            oneByOneControls
+        }
+    }
+
+    /// Step 5 (optional): the music model adds a whole ensemble on top of whatever steps 1 to 4 made.
+    private var enrichControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Optional. Let the music model add a whole ensemble around the piece so far, including any parts you approved in step 4. Press again to re-roll it from the piece as it was before.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            accompSettings
+            autoControls
         }
     }
 
@@ -240,7 +258,7 @@ struct ContentView: View {
     private var autoControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Added instruments"); Spacer()
+                Text("Instruments to add"); Spacer()
                 Text(vm.ensemble == 0 ? "Auto" : "\(Int(vm.ensemble))").monospacedDigit()
             }
             .contentShape(Rectangle())
@@ -250,12 +268,15 @@ struct ContentView: View {
             Button(action: vm.addAccompaniment) {
                 HStack {
                     if vm.busy && vm.selected != nil { ProgressView().controlSize(.small) }
-                    Text(vm.orchestration == nil ? "Add accompaniment" : "Re-roll accompaniment")
+                    Text(vm.isEnriched ? "Re-roll the enrichment" : "Enrich the piece")
                         .frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
             .disabled(!vm.ready || vm.busy || vm.selected == nil)
+            if vm.isEnriched {
+                Button("Undo the enrichment", action: vm.undoPart).disabled(vm.busy)
+            }
             if vm.selected == nil {
                 Text("Pick a melody first.").font(.caption).foregroundStyle(.secondary)
             }
@@ -339,7 +360,18 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Start small: a motif of one to four bars is the musical idea the rest of the piece grows from. Extend it in step 2.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            describeBox("Describe the motif", text: $vm.prompt, height: 80)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Mood and style (up to three)").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Surprise me", action: vm.surpriseMoods).buttonStyle(.link).font(.caption)
+                    Button("Clear") { vm.moods = [] }.buttonStyle(.link).font(.caption).disabled(vm.moods.isEmpty)
+                }
+                ChipPicker(items: ViewModel.moodChips, selection: $vm.moods, limit: 3)
+                    .help("Pick the feeling you want. Sad, dark, mysterious, dramatic and epic lean towards a minor key; the others towards major, unless you set the mode yourself.")
+            }
+            describeBox("Anything else? (optional)", text: $vm.prompt, height: 54,
+                        example: "e.g. like a music box, rising slowly then settling")
             barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
@@ -386,7 +418,7 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent).controlSize(.large)
             .tint(vm.candidates.isEmpty ? .accentColor : .gray)
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(!vm.ready || vm.busy || !vm.hasPrompt)
+            .disabled(!vm.ready || vm.busy)
 
             Button("Import MIDI as the melody…", action: vm.importMIDI)
                 .disabled(!vm.ready || vm.busy)
@@ -398,7 +430,16 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pick a motif or melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            describeBox("What should the new bars do? (optional)", text: $vm.expandDirection, height: 54,
+            VStack(alignment: .leading, spacing: 6) {
+                Text("What should the new bars do?").font(.caption).foregroundStyle(.secondary)
+                ChipPicker(items: ViewModel.moves.map(\.label), selection: $vm.expandMoves,
+                           help: Dictionary(uniqueKeysWithValues: ViewModel.moves.map { ($0.label, $0.text) }))
+                if vm.expandEngine == "hybrid", !vm.expandMoves.isDisjoint(with: ViewModel.llmOnlyMoves) {
+                    Text("“Answer the motif” and “return” are only followed in LLM only mode; Hybrid ignores them.")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            describeBox("Anything else? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
                 .help("Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
@@ -535,11 +576,25 @@ struct ContentView: View {
     }
 
     private var llmPicker: some View {
-        Picker("Melody LLM", selection: $vm.llm) {
-            Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
-            Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("Melody LLM", selection: $vm.llm) {
+                Section("On this Mac") {
+                    Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
+                    Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+                    Text("Mistral Small 24B" + (ModelCache.isDownloaded("mlx-community/Mistral-Small-24B-Instruct-2501-3bit") ? " (downloaded, heavy)" : " (10 GB, downloads on first use)")).tag("mistral24")
+                }
+                Section("Claude through your subscription (needs Claude Code)") {
+                    Text("Claude Haiku 5.5 · cheap, fastest, lightest on your limits").tag("cc-haiku-5-5")
+                    Text("Claude Sonnet 5.5 · moderate cost").tag("cc-sonnet-5-5")
+                    Text("Claude Opus 5.5 · expensive, uses your limits fastest").tag("cc-opus-5-5")
+                }
+            }
+            if vm.llm.hasPrefix("cc-") {
+                Text("Runs the `claude` tool on this Mac, signed in with your subscription. Sent to Anthropic; counts against your usage limits.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .help("The language model that writes the melody, and the expansions if you choose LLM only. Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
+        .help("The language model that writes the melody, and the expansions and edits if you choose LLM only. Local models download once and are kept on disk. 14B needs about 8 GB of free memory and Mistral 24B about 10 GB, which is tight on a 16 GB Mac (close other apps first). The Claude entries run through the claude tool on this Mac (your subscription, online).")
     }
 
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
