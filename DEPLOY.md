@@ -102,6 +102,20 @@ list if you want those options. Hugging Face may warn about unauthenticated requ
 
 To move an already-downloaded cache to another Mac, copy `~/.cache/huggingface/hub` over (or point `HF_HOME` at a shared location).
 
+## 4b. Optional: the singing voice (Lyrics demo)
+
+The **Lyrics** button writes a melody for lyrics and sings it with SoulX-Singer (Apache 2.0), which runs in its own
+environment so it cannot disturb the main one. The code is vendored in `soulx/`; the model (2.8 GB) is downloaded once:
+
+```bash
+uv venv --python 3.11 .venv-sing
+uv pip install --python .venv-sing/bin/python torch torchaudio "transformers==4.41.2" "numpy<2" librosa soundfile scipy omegaconf accelerate einops
+.venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('Soul-AILab/SoulX-Singer','model.pt',local_dir='models/soulx')"
+```
+
+Without it the Lyrics button still writes the melody and says the voice is missing. Four lines take about a minute on an
+M-series Mac. The voice is cloned from `soulx/prompt/en_prompt.wav`; replace it (and its `.json`) to change the singer.
+
 ## 5. Build the app
 
 ```bash

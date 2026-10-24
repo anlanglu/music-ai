@@ -389,6 +389,9 @@ final class ViewModel: ObservableObject {
             if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
+        case .vocal(let url):
+            vocalURL = url
+            playVocal()
         case .claudeStatus(let ok, let text):
             claudeChecking = false
             claudeKeyOK = ok
@@ -497,6 +500,41 @@ final class ViewModel: ObservableObject {
     }
 
     private var pendingClaudeKey = ""
+
+    // MARK: Lyrics (demo): a melody with one note per syllable, sung by SoulX-Singer
+
+    @Published var lyrics = ""
+    @Published var showLyrics = false
+    @Published var vocalURL: URL?
+    @Published var vocalPlaying = false
+    private var vocalPlayer: AVAudioPlayer?
+
+    func makeSong() {
+        guard ready, !busy, !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        clearWork()
+        vocalURL = nil
+        busy = true
+        status = "Writing a melody for the lyrics, then singing it (about a minute for four lines)…"
+        send(["cmd": "lyrics_song", "lyrics": lyrics, "bpm": bpm, "sig": sig,
+              "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity),
+              "llm": llm, "mood": effectivePrompt, "session_name": sessionName])
+    }
+
+    func playVocal() {
+        guard let url = vocalURL else { return }
+        stop()
+        do {
+            let p = try AVAudioPlayer(contentsOf: url)
+            vocalPlayer = p
+            p.play()
+            vocalPlaying = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + p.duration + 0.2) { [weak self] in
+                if self?.vocalPlayer === p, !p.isPlaying { self?.vocalPlaying = false }
+            }
+        } catch { status = "Couldn't play the voice: \(error.localizedDescription)" }
+    }
+
+    func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
 
     /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
     func saveClaudeKey(_ key: String) {

@@ -160,8 +160,24 @@ def line_melody(line, sig, key, llm, level, mood, before, log):
     return best, bars
 
 
+def syllabify(phones):
+    """The phones split into syllables, one vowel each: a single consonant between vowels starts the next syllable, of
+    two or more the first closes the previous one."""
+    nuclei = [i for i, p in enumerate(phones) if p[-1].isdigit()]
+    cuts = [0]
+    for a, b in zip(nuclei, nuclei[1:]):
+        cuts.append(b if b - a == 1 else b - 1 if b - a == 2 else a + 2)
+    cuts.append(len(phones))
+    return [phones[x:y] for x, y in zip(cuts, cuts[1:])]
+
+
+TOKEN_STYLE = "syllable"    # "word": the whole word on each of its notes (as in SoulX's examples) | "syllable": one syllable each
+
+
 def token(word, i, k):
-    """SoulX-Singer's phoneme token for one note of a word: the word's phones, and note type 2 (first note) or 3 (more)."""
+    """SoulX-Singer's phoneme token for one note of a word, and its note type (2 = a new word, 3 = the word goes on)."""
+    if TOKEN_STYLE == "syllable" and k > 1:
+        return "en_" + "-".join(syllabify(word["phones"])[i]), 2
     return "en_" + "-".join(word["phones"]), 2 if i == 0 else 3
 
 
@@ -208,7 +224,6 @@ def sing(segments, out_wav, log=print, n_steps=32):
             log("      singing " + line.split()[1])
     if p.wait() != 0 or not Path(out_wav).exists():
         raise RuntimeError("The singing voice failed: " + " | ".join(tail[-3:]))
-    job.unlink(missing_ok=True)
     return Path(out_wav)
 
 

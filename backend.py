@@ -12,10 +12,11 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
   {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
+  {"cmd":"lyrics_song", "lyrics":"one line per phrase", key, mode, bpm, sig, llm, complexity, mood}  ->  candidate (the melody), vocal{path} (the sung .wav), melodies_done
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
-          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | error{text}      (notes = [[channel,pitch,start,end],...])
+          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | vocal{path} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
 import json
 import os
@@ -195,6 +196,19 @@ def handle(r):
             r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
             on_candidate=candidate_event,
         )
+        send(type="melodies_done")
+    elif cmd == "lyrics_song":  # lyrics -> a melody with one note per syllable (shown as the motif) and a sung version of it
+        import lyrics as ly
+        text = r.get("lyrics", "")
+        begin(text.strip().splitlines()[0][:40] if text.strip() else "")
+        can_sing, why = ly.ready()
+        if not can_sing:
+            log(f"  (only the melody: {why})")
+        res = ly.make_song(text, chosen_key(r) or (0, "major"), max(40, min(int(r.get("bpm", 90)), 220)), r.get("sig", "4/4"),
+                           r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("mood", ""), log=log, sing_it=can_sing,
+                           on_melody=lambda m: candidate_event({"index": 1, "path": m["midi"], "tempo": m["tempo"], "sig": r.get("sig", "4/4")}))
+        if res["wav"]:
+            send(type="vocal", path=str(res["wav"]))
         send(type="melodies_done")
     elif cmd == "edit":  # step 3: change only the bars the user named, as several options
         begin()

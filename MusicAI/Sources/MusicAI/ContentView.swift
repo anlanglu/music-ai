@@ -97,6 +97,7 @@ struct ContentView: View {
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
         .sheet(isPresented: $vm.showClaudeSheet) { ClaudeKeySheet(vm: vm) }
+        .sheet(isPresented: $vm.showLyrics) { LyricsSheet(vm: vm) }
         .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
         .onChange(of: vm.ready) { _, _ in vm.loadMix() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
@@ -111,6 +112,8 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { vm.renameSession() }
                 .help("Press Return to rename. The session's folder is renamed to match.")
+            Button { vm.showLyrics = true } label: { Label("Lyrics", systemImage: "music.mic") }
+                .help("Demo: write a melody for lyrics, one note per syllable, and have it sung")
             Toggle(isOn: $showHistory) { Label("History", systemImage: "clock.arrow.circlepath") }
                 .toggleStyle(.button)
                 .help("Show or hide the list of steps you have taken, to go back to any of them")

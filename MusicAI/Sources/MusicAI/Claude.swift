@@ -68,3 +68,35 @@ struct ClaudeKeySheet: View {
 }
 
 final class KeyField: ObservableObject { @Published var text = "" }
+
+/// Demo: lyrics in, a melody with one note per syllable out, sung by a local singing-voice model (SoulX-Singer).
+struct LyricsSheet: View {
+    @ObservedObject var vm: ViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Lyrics to a sung melody (demo)").font(.title3).bold()
+            Text("One line of text per musical phrase. The melody LLM writes one note per syllable, using the key, tempo, time signature and mood chosen in step 1; the melody appears as the motif, so you can go on to extend and edit it. A local singing model (SoulX-Singer, with a stock reference voice) then sings it. Four lines take about a minute.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextEditor(text: $vm.lyrics)
+                .font(.body)
+                .frame(minHeight: 140)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+            Text(vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+            HStack {
+                Button(vm.vocalPlaying ? "Stop" : "Play the voice") { vm.vocalPlaying ? vm.stopVocal() : vm.playVocal() }
+                    .disabled(vm.vocalURL == nil)
+                if let url = vm.vocalURL {
+                    Button("Show file") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+                Spacer()
+                Button("Close") { vm.stopVocal(); vm.showLyrics = false }
+                Button("Write melody and sing") { vm.makeSong() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(vm.busy || !vm.ready || vm.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 520)
+    }
+}

@@ -32,7 +32,10 @@ Melody LLM menu (see below).
 5. **Enrich (optional).** The Anticipation model adds a whole ensemble (up to 16 instruments) around the piece so far,
    including the parts approved in step 4, which stay exactly as they are. Press again to re-roll it, or undo it.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
-7. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
+7. **Lyrics (demo).** The **Lyrics** button turns words into a melody with one note per syllable (it becomes the motif, so
+   steps 2 to 5 carry on from it) and has it sung by SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b).
+   English only; unusual words need respelling. The result is a vocal-only .wav next to the melody's .mid.
+8. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
 
 ## Choosing the melody LLM
@@ -101,6 +104,7 @@ Try it without the app (uses the language model; it downloads on first use):
 | `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
 | `expand.py` | step 2: grow a melody by 2–16 bars (LLM or Anticipation) |
+| `lyrics.py`, `soulx/` | lyrics to a melody (one note per syllable) and the singing voice (vendored SoulX-Singer, Apache 2.0) |
 | `edit.py` | step 3: change only the named bars (LLM) or save a hand edit |
 | `texture.py` | rule-based accompaniment patterns |
 | `direction.py`, `llmjson.py` | free-text directions and tolerant LLM-JSON parsing |

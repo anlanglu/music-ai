@@ -30,14 +30,19 @@ def main(job_path):
     dp = DataProcessor(hop_size=config.audio.hop_size, sample_rate=config.audio.sample_rate,
                        phoneset_path=str(HERE / "soulxsinger/utils/phoneme/phone_set.json"), device=device)
     prompt_meta = json.load(open(job["prompt_meta"]))[0]
+    prompt_median = float(np.median([x for x in (int(v) for v in prompt_meta["note_pitch"].split()) if x >= 1]))
     prompt = dp.process(prompt_meta, job["prompt_wav"])
     sr = config.audio.sample_rate
+    # one shift for the whole song (the model's own auto-shift works per line, which moves the key between lines)
+    notes = [x for x in (int(v) for sg in job["segments"] for v in sg["note_pitch"].split()) if x >= 1]
+    shift = round(prompt_median - float(np.median(notes)))
+    print("pitch shift", shift, flush=True)
     segs = job["segments"]
     merged = np.zeros(int(max(s["time"][1] for s in segs) / 1000 * sr), dtype=np.float32)
     for i, seg in enumerate(segs):
         target = dp.process(seg, None)
         with torch.no_grad():
-            audio = model.infer({"prompt": prompt, "target": target}, auto_shift=True, pitch_shift=0,
+            audio = model.infer({"prompt": prompt, "target": target}, auto_shift=False, pitch_shift=shift,
                                 n_steps=job.get("n_steps", config.infer.n_steps), cfg=job.get("cfg", config.infer.cfg),
                                 control="score", use_fp16=False)
         audio = audio.squeeze().cpu().numpy()
