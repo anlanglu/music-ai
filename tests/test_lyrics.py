@@ -93,3 +93,21 @@ def test_extending_carries_on_with_the_next_line_and_stops_when_the_lyrics_run_o
 def test_unpronounceable_words_are_reported_by_the_check_not_raised():
     rows, unknown = L.check("Little star\nthe flurbo song")
     assert rows[0] == ("Little star", 3) and rows[1][1] is None and unknown == ["flurbo"]
+
+
+def test_the_backing_drops_the_voice_melody_and_keeps_the_rest(tmp_path):
+    import mido
+    m = mido.MidiFile(ticks_per_beat=480)
+    voice, cello = mido.MidiTrack(), mido.MidiTrack()
+    voice += [mido.Message("program_change", program=L.VOICE_PROGRAM, channel=0), mido.Message("note_on", note=60, velocity=80),
+              mido.Message("note_off", note=60, time=480)]
+    cello += [mido.Message("program_change", program=42, channel=1), mido.Message("note_on", note=48, channel=1, velocity=80),
+              mido.Message("note_off", note=48, channel=1, time=960)]
+    m.tracks += [voice, cello]
+    m.save(str(tmp_path / "full.mid"))
+    out = mido.MidiFile(str(L.backing(tmp_path / "full.mid")))
+    notes = [(x.channel, x.type) for t in out.tracks for x in t if x.type.startswith("note")]
+    assert notes == [(1, "note_on"), (1, "note_off")]
+    m.tracks = [voice]
+    m.save(str(tmp_path / "solo.mid"))
+    assert L.backing(tmp_path / "solo.mid") is None          # nothing but the voice: play the voice alone

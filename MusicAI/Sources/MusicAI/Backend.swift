@@ -68,7 +68,7 @@ enum BackendEvent {
     case sessions([SessionInfo])
     case claudeStatus(ok: Bool, text: String)
     /// A sung version of the melody (a .wav) has been written.
-    case vocal(URL)
+    case vocal(URL, backing: URL?)
     case lyricsInfo(text: String, ok: Bool)
     case error(String)
 }
@@ -196,7 +196,9 @@ final class Backend {
         case "ready": return .ready((obj["sliders"] as? [String: Double]) ?? [:])
         case "claude_status": return .claudeStatus(ok: obj["ok"] as? Bool ?? false, text: obj["text"] as? String ?? "")
         case "lyrics_info": return .lyricsInfo(text: obj["text"] as? String ?? "", ok: obj["ok"] as? Bool ?? false)
-        case "vocal": return .vocal(URL(fileURLWithPath: obj["path"] as? String ?? ""))
+        case "vocal":
+            let back = obj["backing"] as? String ?? ""
+            return .vocal(URL(fileURLWithPath: obj["path"] as? String ?? ""), backing: back.isEmpty ? nil : URL(fileURLWithPath: back))
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone

@@ -394,8 +394,9 @@ final class ViewModel: ObservableObject {
             lyricsInfo = text
             lyricsOK = ok
             busy = false
-        case .vocal(let url):
+        case .vocal(let url, let backing):
             vocalURL = url
+            vocalBacking = backing
             playVocal()
         case .claudeStatus(let ok, let text):
             claudeChecking = false
@@ -512,7 +513,9 @@ final class ViewModel: ObservableObject {
     @Published var showLyrics = false
     @Published var vocalURL: URL?
     @Published var vocalPlaying = false
+    @Published var vocalBacking: URL?            // the accompaniment (without the Voice melody) that plays with the voice
     private var vocalPlayer: AVAudioPlayer?
+    private var backingPlayer: AVMIDIPlayer?
 
     @Published var lyricsInfo = ""              // what the last check said about the lyrics
     @Published var lyricsOK = false
@@ -530,9 +533,12 @@ final class ViewModel: ObservableObject {
         guard ready, !busy, let c = selected else { return }
         stopVocal()
         vocalURL = nil
+        vocalBacking = nil
         busy = true
         status = "Singing the chosen melody (about 15 seconds per line)…"
-        send(["cmd": "lyrics_sing", "source_midi": c.url.path])
+        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path]
+        if let o = orchestration { req["backing_midi"] = o.full.path }   // sing with the accompaniment added so far
+        send(req)
     }
 
     func playVocal() {
@@ -541,15 +547,22 @@ final class ViewModel: ObservableObject {
         do {
             let p = try AVAudioPlayer(contentsOf: url)
             vocalPlayer = p
+            p.prepareToPlay()
+            if let back = vocalBacking {              // the accompaniment starts with the voice
+                let m = try AVMIDIPlayer(contentsOf: back, soundBankURL: Self.soundBank)
+                m.prepareToPlay()
+                backingPlayer = m
+                m.play(nil)
+            }
             p.play()
             vocalPlaying = true
             DispatchQueue.main.asyncAfter(deadline: .now() + p.duration + 0.2) { [weak self] in
-                if self?.vocalPlayer === p, !p.isPlaying { self?.vocalPlaying = false }
+                if self?.vocalPlayer === p, !p.isPlaying { self?.vocalPlaying = false; self?.backingPlayer?.stop() }
             }
         } catch { status = "Couldn't play the voice: \(error.localizedDescription)" }
     }
 
-    func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
+    func stopVocal() { vocalPlayer?.stop(); backingPlayer?.stop(); backingPlayer = nil; vocalPlaying = false }
 
     /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
     func saveClaudeKey(_ key: String) {

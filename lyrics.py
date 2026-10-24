@@ -391,6 +391,37 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
     return out
 
 
+def backing(full_midi):
+    """A copy of a piece without its Voice melody (the real voice replaces it), for playing together with the sung .wav.
+    Returns None if nothing else is in the piece."""
+    import mido
+
+    src = Path(full_midi)
+    mid = mido.MidiFile(str(src))
+    voice = set()
+    for tr in mid.tracks:
+        for m in tr:
+            if m.type == "program_change" and m.program == VOICE_PROGRAM:
+                voice.add(m.channel)
+    out, others = mido.MidiFile(type=mid.type, ticks_per_beat=mid.ticks_per_beat), False
+    for tr in mid.tracks:
+        keep, carry = mido.MidiTrack(), 0
+        for m in tr:
+            if m.type in ("note_on", "note_off") and m.channel in voice:
+                carry += m.time
+                continue
+            if m.type in ("note_on", "note_off"):
+                others = others or m.type == "note_on"
+            keep.append(m.copy(time=m.time + carry))
+            carry = 0
+        out.tracks.append(keep)
+    if not others:
+        return None
+    dest = src.with_name(src.stem + "-backing.mid")
+    out.save(str(dest))
+    return dest
+
+
 def sing_midi(source_midi, log=print):
     """Sing the lyric lines a melody was written to. Needs one note per syllable, as written (an edit may have broken that)."""
     import expand

@@ -88,14 +88,14 @@ struct LyricsSheet: View {
                 .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
                 .lineLimit(3)
             Divider()
-            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. About 15 seconds a line.")
+            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. If you have added accompaniment (steps 4–5), it plays along. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Check lyrics") { vm.checkLyrics() }
                     .disabled(vm.busy || !vm.ready || !vm.hasLyrics)
                 Button("Sing the chosen melody") { vm.singSelected() }
                     .disabled(vm.busy || !vm.ready || vm.selected == nil)
-                Button(vm.vocalPlaying ? "Stop" : "Play the voice") { vm.vocalPlaying ? vm.stopVocal() : vm.playVocal() }
+                Button(vm.vocalPlaying ? "Stop" : vm.vocalBacking == nil ? "Play the voice" : "Play with accompaniment") { vm.vocalPlaying ? vm.stopVocal() : vm.playVocal() }
                     .disabled(vm.vocalURL == nil)
                 if let url = vm.vocalURL {
                     Button("Show file") { NSWorkspace.shared.activateFileViewerSelecting([url]) }

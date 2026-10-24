@@ -36,7 +36,7 @@ Melody LLM menu (see below).
    that every word can be pronounced). Choose the **Voice** instrument in the Motif step and the melody is written with
    one note per syllable to as many lines as fit the bars you asked for; each extension of a Voice melody carries on with the next
    line, and never has to use them all. The lines a melody was written to are stored beside it (`*.lyrics.json`). **Sing the chosen
-   melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav. English only;
+   melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav, in the written key, and plays it together with the accompaniment added so far (steps 4–5). English only;
    unusual words need respelling.
 8. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.

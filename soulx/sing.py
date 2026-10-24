@@ -36,6 +36,8 @@ def main(job_path):
     # one shift for the whole song (the model's own auto-shift works per line, which moves the key between lines)
     notes = [x for x in (int(v) for sg in job["segments"] for v in sg["note_pitch"].split()) if x >= 1]
     shift = round(prompt_median - float(np.median(notes)))
+    if job.get("keep_key", True):    # only whole octaves, so the voice stays in the written key and fits an accompaniment
+        shift = 12 * round(shift / 12)
     print("pitch shift", shift, flush=True)
     segs = job["segments"]
     merged = np.zeros(int(max(s["time"][1] for s in segs) / 1000 * sr), dtype=np.float32)
