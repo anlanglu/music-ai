@@ -69,15 +69,15 @@ struct ClaudeKeySheet: View {
 
 final class KeyField: ObservableObject { @Published var text = "" }
 
-/// The lyrics, kept apart from the melody. Nothing is composed here: the "Compose to lyrics" boxes in the Motif and Extend
-/// steps take as many lines as fit the bars asked for and carry on with the next line each time.
+/// The lyrics, kept apart from the melody. Nothing is composed here: with the Voice instrument, the Motif and Extend steps
+/// take as many lines as fit the bars asked for and carry on with the next line each time.
 struct LyricsSheet: View {
     @ObservedObject var vm: ViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Lyrics").font(.title3).bold()
-            Text("Put in as many lines as you like, one line of text per musical phrase. They are only kept here. Tick “Compose to lyrics” in the Motif or Extend step and the melody takes as many lines as fit the bars you ask for; each extension carries on with the next line, and it never has to use them all.")
+            Text("Put in as many lines as you like, one line of text per musical phrase. They are only kept here. Choose the Voice instrument in the Motif step and the melody takes as many lines as fit the bars you ask for; each extension of that melody carries on with the next line, and it never has to use them all.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $vm.lyrics)
                 .font(.body)
@@ -88,7 +88,7 @@ struct LyricsSheet: View {
                 .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
                 .lineLimit(3)
             Divider()
-            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with “Compose to lyrics”. About 15 seconds a line.")
+            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Check lyrics") { vm.checkLyrics() }

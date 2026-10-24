@@ -15,6 +15,7 @@ struct Instrument: Identifiable, Hashable {
         Instrument(name: "Cello", program: 42), Instrument(name: "Trumpet", program: 56),
         Instrument(name: "Alto sax", program: 65), Instrument(name: "Flute", program: 73),
         Instrument(name: "Synth lead", program: 80),
+        Instrument(name: "Voice (sings your lyrics)", program: 53),
     ]
 }
 
@@ -515,9 +516,6 @@ final class ViewModel: ObservableObject {
 
     @Published var lyricsInfo = ""              // what the last check said about the lyrics
     @Published var lyricsOK = false
-    @Published var composeToLyrics = false      // step 1: write the motif to the first lines that fit
-    @Published var expandToLyrics = false       // step 2: the new bars take the next lines that fit
-
     var hasLyrics: Bool { !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     func checkLyrics() {
@@ -674,7 +672,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": composeToLyrics ? lyrics : "",
+            "sliders": sliderValues, "lyrics": lyrics,
         ])
     }
 
@@ -771,7 +769,7 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
-            "lyrics": expandToLyrics ? lyrics : "",
+            "lyrics": lyrics,
         ])
     }
 

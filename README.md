@@ -33,9 +33,9 @@ Melody LLM menu (see below).
    including the parts approved in step 4, which stay exactly as they are. Press again to re-roll it, or undo it.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
 7. **Lyrics (demo).** The **Lyrics** button keeps your words apart from the melody (put in as many lines as you like; it checks
-   that every word can be pronounced). Tick **Compose to lyrics** in the Motif or Extend step and the melody is written with
-   one note per syllable to as many lines as fit the bars you asked for; each extension carries on with the next line, and
-   never has to use them all. The lines a melody was written to are stored beside it (`*.lyrics.json`). **Sing the chosen
+   that every word can be pronounced). Choose the **Voice** instrument in the Motif step and the melody is written with
+   one note per syllable to as many lines as fit the bars you asked for; each extension of a Voice melody carries on with the next
+   line, and never has to use them all. The lines a melody was written to are stored beside it (`*.lyrics.json`). **Sing the chosen
    melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav. English only;
    unusual words need respelling.
 8. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for

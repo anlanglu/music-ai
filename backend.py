@@ -14,7 +14,8 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
   {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
   {"cmd":"lyrics_sing", "source_midi"}  ->  vocal{path} (the melody's lyric lines sung, a .wav next to it)
-  "melodies" and "expand" take "lyrics" (the whole text) to write the melody to as many lines as fit; expand carries on with the next line
+  "melodies" with the Voice instrument (program 53), and "expand" of a Voice melody, take "lyrics" (the whole text) and write
+  the melody to as many lines as fit; expand carries on with the next line
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
@@ -181,9 +182,11 @@ def handle(r):
             new_session(r["session_name"])
             announce()
         begin(r["prompt"])
-        if r.get("lyrics", "").strip():
-            import lyrics as ly
-            ly.lyric_motifs(r["lyrics"], int(r.get("bars", 4)), int(r.get("program", 0)), r.get("sig", "4/4"),
+        import lyrics as ly
+        if int(r.get("program", 0)) == ly.VOICE_PROGRAM:
+            if not r.get("lyrics", "").strip():
+                raise RuntimeError("The Voice instrument sings your lyrics: add them with the Lyrics button first.")
+            ly.lyric_motifs(r["lyrics"], int(r.get("bars", 4)), ly.VOICE_PROGRAM, r.get("sig", "4/4"),
                             max(40, min(int(r.get("bpm", 80)), 220)), chosen_key(r) or (0, "major"), r.get("llm", "7B"),
                             int(r.get("complexity", 3)), r["prompt"], int(r.get("count", 4)), log=log, on_candidate=candidate_event)
             send(type="melodies_done")
@@ -199,8 +202,11 @@ def handle(r):
         send(type="melodies_done")
     elif cmd == "expand":  # step 2: add bars to the chosen melody, as several options
         begin()
-        if r.get("lyrics", "").strip():
-            import lyrics as ly
+        import lyrics as ly
+        made = None
+        if ly.is_voice(r["source_midi"]):
+            if not r.get("lyrics", "").strip():
+                raise RuntimeError("This melody is for the Voice instrument, which sings your lyrics: add them with the Lyrics button first.")
             made = ly.lyric_extend(r["source_midi"], r["lyrics"], max(2, min(16, int(r.get("bars", 4)))), r.get("llm", "7B"),
                                    int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
                                    on_candidate=candidate_event)

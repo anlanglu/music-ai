@@ -113,7 +113,7 @@ struct ContentView: View {
                 .onSubmit { vm.renameSession() }
                 .help("Press Return to rename. The session's folder is renamed to match.")
             Button { vm.showLyrics = true } label: { Label("Lyrics", systemImage: "music.mic") }
-                .help("Keep your lyrics here; tick “Compose to lyrics” in the Motif and Extend steps to write to them")
+                .help("Keep your lyrics here; choose the Voice instrument to write the melody to them")
             Toggle(isOn: $showHistory) { Label("History", systemImage: "clock.arrow.circlepath") }
                 .toggleStyle(.button)
                 .help("Show or hide the list of steps you have taken, to go back to any of them")
@@ -411,7 +411,6 @@ struct ContentView: View {
                               harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider, strict: $vm.strictSlider, dynamics: $vm.dynamicsSlider,
                               phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
             optionsRow($vm.optionCount)
-            lyricsToggle($vm.composeToLyrics, what: "the motif")
 
             Button(action: vm.generateMelodies) {
                 HStack {
@@ -427,19 +426,6 @@ struct ContentView: View {
             Button("Import MIDI as the melody…", action: vm.importMIDI)
                 .disabled(!vm.ready || vm.busy)
         }
-    }
-
-    /// "Compose to lyrics": the melody takes as many of the lyric lines as fit, and need not use them all.
-    private func lyricsToggle(_ on: Binding<Bool>, what: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Toggle("Compose to lyrics", isOn: on)
-                .disabled(!vm.hasLyrics)
-            Text(vm.hasLyrics
-                 ? "One note per syllable. \(what.prefix(1).uppercased() + what.dropFirst()) takes as many lines as fit and carries on from the last line used. English only."
-                 : "Add lyrics with the Lyrics button first.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .help("Write \(what) to your lyrics, one note per syllable, using as many lines as fit. The lyric lines it used are remembered with the melody.")
     }
 
     /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
@@ -473,7 +459,6 @@ struct ContentView: View {
                               harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor, strict: $vm.expandStrict, dynamics: $vm.expandDynamics,
                               phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
             optionsRow($vm.expandCount)
-            lyricsToggle($vm.expandToLyrics, what: "the new bars")
 
             HStack {
                 Button(action: vm.expandMelody) {

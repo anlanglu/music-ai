@@ -19,6 +19,7 @@ SING_PY = ROOT / ".venv-sing" / "bin" / "python"
 SOULX = ROOT / "soulx"
 MODEL = ROOT / "models" / "soulx" / "model.pt"
 VOICE = SOULX / "prompt" / "en_prompt"        # reference singer: en_prompt.wav + .json
+VOICE_PROGRAM = 53                              # the "Voice" instrument: GM Voice Oohs in the MIDI file; such melodies are written to lyrics
 SYL_PER_BAR = 4                                 # about this many syllables to a bar when the model picks the rhythm
 RANGE = (57, 74)                                # a comfortable singing range (the voice model also shifts to its singer)
 
@@ -249,6 +250,15 @@ def sing(segments, out_wav, log=print, n_steps=32):
     return Path(out_wav)
 
 
+def is_voice(midi):
+    """Whether a melody file is for the Voice instrument."""
+    import expand
+    try:
+        return expand.read_melody(midi)[3] == VOICE_PROGRAM
+    except Exception:
+        return False
+
+
 def sidecar(midi):
     """The file beside a melody that says which lyric lines it is written to."""
     return Path(midi).with_suffix(".lyrics.json")
@@ -388,7 +398,7 @@ def sing_midi(source_midi, log=print):
     src = Path(source_midi)
     lines = used_lines(src)
     if not lines:
-        raise RuntimeError("This melody was not written to lyrics (tick \u201ccompose to lyrics\u201d when generating or extending).")
+        raise RuntimeError("This melody was not written to lyrics (choose the Voice instrument when generating).")
     notes, tempo, sig, _program, _total = expand.read_melody(src)
     bb = t.bar_beats(sig)
     parsed, melodies, starts = [], [], []
