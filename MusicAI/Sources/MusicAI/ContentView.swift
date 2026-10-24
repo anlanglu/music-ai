@@ -584,28 +584,17 @@ struct ContentView: View {
                     Text("Mistral Small 24B" + (ModelCache.isDownloaded("mlx-community/Mistral-Small-24B-Instruct-2501-3bit") ? " (downloaded, heavy)" : " (10 GB, downloads on first use)")).tag("mistral24")
                 }
                 Section("Claude through your subscription (needs Claude Code)") {
-                    Text("Claude Sonnet 5.5 (Claude Code)").tag("cc-sonnet-5-5")
-                }
-                Section("Claude through an API key (billed per use)") {
-                    Text("Claude Opus 5.5").tag("claude-opus-5-5")
-                    Text("Claude Sonnet 5.5").tag("claude-sonnet-5-5")
-                    Text("Claude Haiku 5.5").tag("claude-haiku-5-5")
+                    Text("Claude Haiku 5.5 · cheap, fastest, lightest on your limits").tag("cc-haiku-5-5")
+                    Text("Claude Sonnet 5.5 · moderate cost").tag("cc-sonnet-5-5")
+                    Text("Claude Opus 5.5 · expensive, uses your limits fastest").tag("cc-opus-5-5")
                 }
             }
             if vm.llm.hasPrefix("cc-") {
                 Text("Runs the `claude` tool on this Mac, signed in with your subscription. Sent to Anthropic; counts against your usage limits.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if vm.llm.hasPrefix("claude-") {
-                HStack {
-                    Text(vm.claudeKeySaved ? "Sent to Anthropic; billed to your API key." : "Needs an API key.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(vm.claudeKeySaved ? "API key…" : "Add API key…") { vm.showClaudeSheet = true }.controlSize(.small)
-                }
-            }
         }
-        .help("The language model that writes the melody, and the expansions and edits if you choose LLM only. Local models download once and are kept on disk. 14B needs about 8 GB of free memory and Mistral 24B about 10 GB, which is tight on a 16 GB Mac (close other apps first). Claude runs online at Anthropic and needs an API key.")
+        .help("The language model that writes the melody, and the expansions and edits if you choose LLM only. Local models download once and are kept on disk. 14B needs about 8 GB of free memory and Mistral 24B about 10 GB, which is tight on a 16 GB Mac (close other apps first). The Claude entries run through the claude tool on this Mac (your subscription, online).")
     }
 
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".

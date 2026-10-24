@@ -38,13 +38,13 @@ Melody LLM menu (see below).
 ## Choosing the melody LLM
 
 The **Melody LLM** menu offers Qwen 7B and 14B and Mistral Small 24B (3-bit, about 10 GB, heavy on a 16 GB Mac: close other
-apps; it is slower and tends to write fewer notes per attempt). Under it are **Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5**,
-which run at Anthropic. **Claude Sonnet 5.5 (Claude Code)** needs no API key: it runs the `claude` command-line tool on your
-Mac, signed in with your Claude subscription, so it counts against your subscription's usage limits instead of being billed
-per request (check Anthropic's current terms for programmatic use). The API entries need an Anthropic *API key* (console.anthropic.com, with credit added; a Claude.ai subscription
-does not include API access). The app asks for the key, tests it, and keeps it in the macOS Keychain. With Claude chosen, the
-prompt, the melody and your instructions leave the Mac. Claude fixes its own sampling, so the complexity setting does not
-change its randomness. The Anticipation model (extension and accompaniment) stays local.
+apps; it is slower and tends to write fewer notes per attempt). Under it are **Claude Haiku 5.5 (cheap), Sonnet 5.5
+(moderate) and Opus 5.5 (expensive)** through the `claude` command-line tool (Claude Code) on your Mac. They need no API key:
+they use your Claude subscription, so they count against its usage limits instead of being billed per request (check
+Anthropic's current terms for programmatic use). The prompt, the melody and your instructions leave the Mac. Claude fixes its
+own sampling, so the complexity setting does not change its randomness. Fable 5.1 is not offered: Claude Code bills it as
+extra usage credits. `claude_llm.py` also holds an Anthropic API-key route (key in the Keychain) that the menu does not
+currently show. The Anticipation model (extension and accompaniment) stays local.
 
 ## The character of the melody
 

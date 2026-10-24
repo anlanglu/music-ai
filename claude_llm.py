@@ -14,7 +14,9 @@ MODELS = {   # dropdown id -> label
     "claude-haiku-5-5": "Claude Haiku 5.5",
 }
 CODE_MODELS = {   # dropdown id -> (label, --model value): the `claude` command-line tool, signed in with your subscription
+    "cc-haiku-5-5": ("Claude Haiku 5.5", "claude-haiku-5-5"),
     "cc-sonnet-5-5": ("Claude Sonnet 5.5", "claude-sonnet-5-5"),
+    "cc-opus-5-5": ("Claude Opus 5.5", "claude-opus-5-5"),
 }
 _key = None
 
