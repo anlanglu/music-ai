@@ -583,11 +583,18 @@ struct ContentView: View {
                     Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
                     Text("Mistral Small 24B" + (ModelCache.isDownloaded("mlx-community/Mistral-Small-24B-Instruct-2501-3bit") ? " (downloaded, heavy)" : " (10 GB, downloads on first use)")).tag("mistral24")
                 }
-                Section("Claude (online, uses your API key)") {
+                Section("Claude through your subscription (needs Claude Code)") {
+                    Text("Claude Sonnet 5.5 (Claude Code)").tag("cc-sonnet-5-5")
+                }
+                Section("Claude through an API key (billed per use)") {
                     Text("Claude Opus 5.5").tag("claude-opus-5-5")
                     Text("Claude Sonnet 5.5").tag("claude-sonnet-5-5")
                     Text("Claude Haiku 5.5").tag("claude-haiku-5-5")
                 }
+            }
+            if vm.llm.hasPrefix("cc-") {
+                Text("Runs the `claude` tool on this Mac, signed in with your subscription. Sent to Anthropic; counts against your usage limits.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if vm.llm.hasPrefix("claude-") {
                 HStack {

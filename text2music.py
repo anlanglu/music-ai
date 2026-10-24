@@ -284,6 +284,8 @@ def _generate(model, tok, prompt, max_tokens, temp=None, top_p=None):
     import claude_llm
 
     if isinstance(model, claude_llm.ClaudeModel):
+        if model.name.startswith("cc-"):   # Claude Code with your subscription
+            return claude_llm.complete_cli(model, prompt)
         return claude_llm.complete(model, prompt, max_tokens)
     from mlx_lm import generate
     from mlx_lm.sample_utils import make_sampler
