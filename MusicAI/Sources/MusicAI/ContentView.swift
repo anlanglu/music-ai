@@ -96,6 +96,7 @@ struct ContentView: View {
         }
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
+        .sheet(isPresented: $vm.showClaudeSheet) { ClaudeKeySheet(vm: vm) }
         .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
         .onChange(of: vm.ready) { _, _ in vm.loadMix() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
@@ -575,11 +576,29 @@ struct ContentView: View {
     }
 
     private var llmPicker: some View {
-        Picker("Melody LLM", selection: $vm.llm) {
-            Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
-            Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("Melody LLM", selection: $vm.llm) {
+                Section("On this Mac") {
+                    Text("Qwen 7B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-7B-Instruct-4bit") ? " (downloaded)" : " (4 GB, downloads on first use)")).tag("7B")
+                    Text("Qwen 14B" + (ModelCache.isDownloaded("mlx-community/Qwen2.5-14B-Instruct-4bit") ? " (downloaded)" : " (8 GB, downloads on first use)")).tag("14B")
+                    Text("Mistral Small 24B" + (ModelCache.isDownloaded("mlx-community/Mistral-Small-24B-Instruct-2501-3bit") ? " (downloaded, heavy)" : " (10 GB, downloads on first use)")).tag("mistral24")
+                }
+                Section("Claude (online, uses your API key)") {
+                    Text("Claude Opus 5.5").tag("claude-opus-5-5")
+                    Text("Claude Sonnet 5.5").tag("claude-sonnet-5-5")
+                    Text("Claude Haiku 5.5").tag("claude-haiku-5-5")
+                }
+            }
+            if vm.llm.hasPrefix("claude-") {
+                HStack {
+                    Text(vm.claudeKeySaved ? "Sent to Anthropic; billed to your API key." : "Needs an API key.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(vm.claudeKeySaved ? "API key…" : "Add API key…") { vm.showClaudeSheet = true }.controlSize(.small)
+                }
+            }
         }
-        .help("The language model that writes the melody, and the expansions if you choose LLM only. Models download once and are kept on disk. 14B needs about 8 GB of free memory, which is tight on a 16 GB Mac.")
+        .help("The language model that writes the melody, and the expansions and edits if you choose LLM only. Local models download once and are kept on disk. 14B needs about 8 GB of free memory and Mistral 24B about 10 GB, which is tight on a 16 GB Mac (close other apps first). Claude runs online at Anthropic and needs an API key.")
     }
 
     /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".

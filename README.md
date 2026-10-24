@@ -2,9 +2,10 @@
 
 A fully local, text-prompt music composition tool for macOS. Describe a melody in words, pick one of several options,
 then build it up into a piece with up to 16 instruments. A native SwiftUI app (**Composer.app**) drives a Python backend;
-everything runs on your Mac, with no cloud service and no account.
+everything runs on your Mac, with no cloud service and no account, unless you choose the optional **Claude** entries in the
+Melody LLM menu (see below).
 
-- The melody is written by a local language model (Qwen2.5 via MLX). It can then be grown by that model or by the Stanford
+- The melody is written by a local language model (Qwen2.5 or Mistral Small 24B via MLX). It can then be grown by that model or by the Stanford
   **Anticipatory Music Transformer**, which also writes the accompaniment.
 - Output is standard MIDI (plays in Logic, GarageBand, any DAW) plus MusicXML and PDF sheet music.
 
@@ -33,6 +34,15 @@ everything runs on your Mac, with no cloud service and no account.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
 7. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
+
+## Choosing the melody LLM
+
+The **Melody LLM** menu offers Qwen 7B and 14B and Mistral Small 24B (3-bit, about 10 GB, heavy on a 16 GB Mac: close other
+apps; it is slower and tends to write fewer notes per attempt). Under it are **Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5**,
+which run at Anthropic. They need an Anthropic *API key* (console.anthropic.com, with credit added; a Claude.ai subscription
+does not include API access). The app asks for the key, tests it, and keeps it in the macOS Keychain. With Claude chosen, the
+prompt, the melody and your instructions leave the Mac. Claude fixes its own sampling, so the complexity setting does not
+change its randomness. The Anticipation model (extension and accompaniment) stays local.
 
 ## The character of the melody
 

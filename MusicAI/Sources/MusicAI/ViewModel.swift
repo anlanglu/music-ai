@@ -179,7 +179,15 @@ final class ViewModel: ObservableObject {
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
-    @Published var llm = "7B"
+    @Published var llm = "7B" {
+        didSet { if llm.hasPrefix("claude-") && !claudeKeySaved { showClaudeSheet = true } }
+    }
+    // Claude (cloud) as an alternative melody LLM; the key itself is only in the Keychain
+    @Published var claudeKeySaved = Keychain.get() != nil
+    @Published var claudeKeyOK = false
+    @Published var claudeChecking = false
+    @Published var claudeStatus = ""
+    @Published var showClaudeSheet = false
 
     // Step 2: expanding the chosen melody. It has its own settings, because each expansion can want a different character.
     @Published var expandBars = 4.0                // bars added at a time
@@ -378,8 +386,15 @@ final class ViewModel: ObservableObject {
             applySliderDefaults(sliders)
             ready = true
             backendDown = false
+            if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
+        case .claudeStatus(let ok, let text):
+            claudeChecking = false
+            claudeKeyOK = ok
+            claudeStatus = text
+            if ok { Keychain.set(pendingClaudeKey); claudeKeySaved = true }
+            pendingClaudeKey = ""
         case .log(let text):
             // direction.describe() in the backend starts its one-line report with one of these
             let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -479,6 +494,25 @@ final class ViewModel: ObservableObject {
                 play(full)
             }
         }
+    }
+
+    private var pendingClaudeKey = ""
+
+    /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
+    func saveClaudeKey(_ key: String) {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        pendingClaudeKey = key
+        claudeChecking = true
+        claudeStatus = "Checking the key…"
+        send(["cmd": "claude_key", "key": key, "test": true])
+    }
+
+    func removeClaudeKey() {
+        Keychain.remove()
+        claudeKeySaved = false; claudeKeyOK = false; claudeStatus = ""
+        send(["cmd": "claude_key", "key": ""])
+        if llm.hasPrefix("claude-") { llm = "7B" }
     }
 
     private func send(_ request: [String: Any]) {

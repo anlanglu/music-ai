@@ -149,7 +149,14 @@ def handle(r):
         seed_everything(int(r["seed"]))
     knobs = r.get("knobs") or None
     log = lambda s: send(type="log", text=s)
-    if cmd == "session_list":
+    if cmd == "claude_key":   # the app's Keychain value; kept in memory only. test=True also tries it against the API
+        import claude_llm
+        if r.get("test"):
+            ok, text = claude_llm.check(r.get("key"))
+            send(type="claude_status", ok=ok, text=text)
+        else:
+            claude_llm.set_key(r.get("key"))
+    elif cmd == "session_list":
         send(type="sessions", items=list_sessions())
     elif cmd == "session_new":  # lazily: the folder is only created once something is written
         reset_session()

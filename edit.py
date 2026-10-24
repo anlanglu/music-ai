@@ -132,9 +132,6 @@ def _listing(notes, bb, n_bars):
 
 def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_boost=0.0):
     """Ask the model for new versions of the `targets` bars. Returns ({bar: [(p, beat, dur)]}, summary, suggestion)."""
-    from mlx_lm import generate
-    from mlx_lm.sample_utils import make_sampler
-
     model, tok = t._get_llm(llm)
     bb = t.bar_beats(sig)
     n_bars = bar_count(max((s + d for _p, s, d in notes), default=bb), bb)
@@ -147,8 +144,7 @@ def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_b
     msgs = [{"role": "system", "content": SYSTEM.replace("{bar_beats:g}", f"{bb:g}")},
             {"role": "user", "content": user}]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
-    raw = generate(model, tok, prompt=text, max_tokens=500 + 120 * len(targets),
-                   sampler=make_sampler(temp=0.7 + temp_boost, top_p=0.95))
+    raw = t._generate(model, tok, text, 500 + 120 * len(targets), 0.7 + temp_boost, 0.95)
     obj = extract_json(raw, "bars")
     if obj is None or not isinstance(obj["bars"], dict):
         raise ValueError(f"LLM returned no usable JSON:\n{raw[:300]}")
