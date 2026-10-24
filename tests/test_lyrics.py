@@ -43,3 +43,53 @@ def test_the_job_has_a_token_for_every_note_and_the_right_timing():
         assert s["phoneme"].startswith("<SP>") and s["phoneme"].endswith("<SP>")
     assert segs[0]["phoneme"].split()[1] == "en_L-IH1"            # syllable tokens: "lit" of little
     assert segs[0]["note_pitch"].split()[1:4] == ["60", "62", "64"]
+
+
+# ---- the lyrics are kept apart from the melody: only as many lines as fit are used, and the next extension carries on
+
+@pytest.fixture
+def fake_lines(monkeypatch, tmp_path):
+    """line_melody replaced by one note per syllable, one bar per four syllables; the session goes to a temp folder."""
+    import text2music as t
+
+    def line(parsed, sig, key, llm, level, mood, before, log):
+        n = L.count(parsed)
+        bars = max(1, -(-n // L.SYL_PER_BAR))
+        return [(60 + i % 5, float(i), 1.0) for i in range(n)], bars
+    monkeypatch.setattr(L, "line_melody", line)
+    monkeypatch.setattr(t, "OUTPUT_DIR", tmp_path / "out", raising=False)
+    monkeypatch.setattr(t, "SESSION_DIR", None, raising=False)
+    t.new_session("lyrictest")
+    return tmp_path
+
+
+TEXT = "Little star\nHow I wonder what you are\nUp above the world so high\nLike a diamond in the sky"
+
+
+def test_a_motif_uses_only_the_lines_that_fit_and_remembers_them(fake_lines):
+    small = L.lyric_motifs(TEXT, 2, 0, "4/4", 90, (0, "major"), "7B", 3, "", 2)
+    assert len(small) == 2
+    assert [u["text"] for u in L.used_lines(small[0]["path"])] == ["Little star"]         # 1 bar; the 9-syllable line needs 3
+    big = L.lyric_motifs(TEXT, 4, 0, "4/4", 90, (0, "major"), "7B", 3, "", 1)
+    assert [u["text"] for u in L.used_lines(big[0]["path"])] == ["Little star", "How I wonder what you are"]
+
+
+def test_extending_carries_on_with_the_next_line_and_stops_when_the_lyrics_run_out(fake_lines):
+    first = L.lyric_motifs(TEXT, 1, 0, "4/4", 90, (0, "major"), "7B", 3, "", 1)[0]["path"]
+    assert [u["text"] for u in L.used_lines(first)] == ["Little star"]
+    second = L.lyric_extend(first, TEXT, 4, "7B", 3, "", 1)[0]["path"]
+    lines = L.used_lines(second)
+    assert [u["text"] for u in lines][0] == "Little star" and len(lines) >= 2
+    assert lines[1]["start_beat"] == 4.0                                                  # after the motif's one bar
+    done = second
+    for _ in range(4):
+        r = L.lyric_extend(done, TEXT, 8, "7B", 3, "", 1)
+        if r is None:
+            break
+        done = r[0]["path"]
+    assert len(L.used_lines(done)) == 4 and L.lyric_extend(done, TEXT, 4, "7B", 3, "", 1) is None
+
+
+def test_unpronounceable_words_are_reported_by_the_check_not_raised():
+    rows, unknown = L.check("Little star\nthe flurbo song")
+    assert rows[0] == ("Little star", 3) and rows[1][1] is None and unknown == ["flurbo"]

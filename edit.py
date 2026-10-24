@@ -10,6 +10,7 @@ import re
 import time
 from pathlib import Path
 
+import lyrics
 import plan
 import text2music as t
 from expand import read_melody
@@ -238,6 +239,7 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
             continue
         k = len(out) + 1
         path = _write(folder, name, k, new, tempo, program, sig, total_beats)
+        lyrics.carry(src, path)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,
                 "score": t.melody_score(new, total_beats, t.COMPLEXITY[complexity][1])[0]}
         out.append(info)
@@ -275,6 +277,7 @@ def save_edit(source_midi, notes, log=print, on_candidate=None):
     total_beats = max(total_beats, bar_count(clean[-1][1] + clean[-1][2], bb) * bb)
     folder = t.ensure_session()
     path = _write(folder, time.strftime("%H%M%S") + "-hand", 1, clean, tempo, program, sig, total_beats)
+    lyrics.carry(src, path)
     changed = [b for b in range(1, bar_count(total_beats, bb) + 1)
                if [n for n in old if bar_of(n[1], bb) == b] != [n for n in clean if bar_of(n[1], bb) == b]]
     log(f"  ▸ Saved your edit: {len(clean)} notes; bars changed: {', '.join(map(str, changed)) or 'none'}.")

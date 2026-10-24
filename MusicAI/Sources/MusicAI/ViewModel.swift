@@ -389,6 +389,10 @@ final class ViewModel: ObservableObject {
             if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
+        case .lyricsInfo(let text, let ok):
+            lyricsInfo = text
+            lyricsOK = ok
+            busy = false
         case .vocal(let url):
             vocalURL = url
             playVocal()
@@ -509,15 +513,28 @@ final class ViewModel: ObservableObject {
     @Published var vocalPlaying = false
     private var vocalPlayer: AVAudioPlayer?
 
-    func makeSong() {
-        guard ready, !busy, !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        clearWork()
+    @Published var lyricsInfo = ""              // what the last check said about the lyrics
+    @Published var lyricsOK = false
+    @Published var composeToLyrics = false      // step 1: write the motif to the first lines that fit
+    @Published var expandToLyrics = false       // step 2: the new bars take the next lines that fit
+
+    var hasLyrics: Bool { !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    func checkLyrics() {
+        guard ready, !busy, hasLyrics else { return }
+        busy = true
+        lyricsInfo = "Checking…"
+        send(["cmd": "lyrics_check", "lyrics": lyrics])
+    }
+
+    /// Sings the lyric lines the chosen melody was written to.
+    func singSelected() {
+        guard ready, !busy, let c = selected else { return }
+        stopVocal()
         vocalURL = nil
         busy = true
-        status = "Writing a melody for the lyrics, then singing it (about a minute for four lines)…"
-        send(["cmd": "lyrics_song", "lyrics": lyrics, "bpm": bpm, "sig": sig,
-              "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity),
-              "llm": llm, "mood": effectivePrompt, "session_name": sessionName])
+        status = "Singing the chosen melody (about 15 seconds per line)…"
+        send(["cmd": "lyrics_sing", "source_midi": c.url.path])
     }
 
     func playVocal() {
@@ -657,7 +674,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues,
+            "sliders": sliderValues, "lyrics": composeToLyrics ? lyrics : "",
         ])
     }
 
@@ -754,6 +771,7 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
+            "lyrics": expandToLyrics ? lyrics : "",
         ])
     }
 

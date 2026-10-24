@@ -69,6 +69,7 @@ enum BackendEvent {
     case claudeStatus(ok: Bool, text: String)
     /// A sung version of the melody (a .wav) has been written.
     case vocal(URL)
+    case lyricsInfo(text: String, ok: Bool)
     case error(String)
 }
 
@@ -194,6 +195,7 @@ final class Backend {
         switch type {
         case "ready": return .ready((obj["sliders"] as? [String: Double]) ?? [:])
         case "claude_status": return .claudeStatus(ok: obj["ok"] as? Bool ?? false, text: obj["text"] as? String ?? "")
+        case "lyrics_info": return .lyricsInfo(text: obj["text"] as? String ?? "", ok: obj["ok"] as? Bool ?? false)
         case "vocal": return .vocal(URL(fileURLWithPath: obj["path"] as? String ?? ""))
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")

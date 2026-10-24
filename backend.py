@@ -12,9 +12,11 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
   {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
-  {"cmd":"lyrics_song", "lyrics":"one line per phrase", key, mode, bpm, sig, llm, complexity, mood}  ->  candidate (the melody), vocal{path} (the sung .wav), melodies_done
+  {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
+  {"cmd":"lyrics_sing", "source_midi"}  ->  vocal{path} (the melody's lyric lines sung, a .wav next to it)
+  "melodies" and "expand" take "lyrics" (the whole text) to write the melody to as many lines as fit; expand carries on with the next line
 Any request may also carry "seed": <int> to make that run repeatable.
-Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
+Events:   ready{sliders} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
           session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | vocal{path} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
@@ -179,6 +181,13 @@ def handle(r):
             new_session(r["session_name"])
             announce()
         begin(r["prompt"])
+        if r.get("lyrics", "").strip():
+            import lyrics as ly
+            ly.lyric_motifs(r["lyrics"], int(r.get("bars", 4)), int(r.get("program", 0)), r.get("sig", "4/4"),
+                            max(40, min(int(r.get("bpm", 80)), 220)), chosen_key(r) or (0, "major"), r.get("llm", "7B"),
+                            int(r.get("complexity", 3)), r["prompt"], int(r.get("count", 4)), log=log, on_candidate=candidate_event)
+            send(type="melodies_done")
+            return
         make_melodies(
             r["prompt"], int(r.get("bars", 8)), int(r.get("program", 0)),
             r.get("sig", "4/4"), int(r.get("complexity", 3)), r.get("llm", "7B"), int(r.get("count", 4)),
@@ -190,6 +199,15 @@ def handle(r):
         send(type="melodies_done")
     elif cmd == "expand":  # step 2: add bars to the chosen melody, as several options
         begin()
+        if r.get("lyrics", "").strip():
+            import lyrics as ly
+            made = ly.lyric_extend(r["source_midi"], r["lyrics"], max(2, min(16, int(r.get("bars", 4)))), r.get("llm", "7B"),
+                                   int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
+                                   on_candidate=candidate_event)
+            if made is not None:
+                send(type="melodies_done")
+                return
+            log("  ▸ This melody has already used all the lyrics, so the new bars are written without them.")
         expand_melody(
             r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), r.get("engine", "hybrid"), int(r.get("count", 3)),
             r.get("size", "small"), r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("sliders"),
@@ -197,18 +215,19 @@ def handle(r):
             on_candidate=candidate_event,
         )
         send(type="melodies_done")
-    elif cmd == "lyrics_song":  # lyrics -> a melody with one note per syllable (shown as the motif) and a sung version of it
+    elif cmd == "lyrics_check":  # the lyrics box: how many lines and syllables, and any word it cannot pronounce
         import lyrics as ly
-        text = r.get("lyrics", "")
-        begin(text.strip().splitlines()[0][:40] if text.strip() else "")
-        can_sing, why = ly.ready()
-        if not can_sing:
-            log(f"  (only the melody: {why})")
-        res = ly.make_song(text, chosen_key(r) or (0, "major"), max(40, min(int(r.get("bpm", 90)), 220)), r.get("sig", "4/4"),
-                           r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("mood", ""), log=log, sing_it=can_sing,
-                           on_melody=lambda m: candidate_event({"index": 1, "path": m["midi"], "tempo": m["tempo"], "sig": r.get("sig", "4/4")}))
-        if res["wav"]:
-            send(type="vocal", path=str(res["wav"]))
+        rows, unknown = ly.check(r.get("lyrics", ""))
+        text = f"{len(rows)} line(s), {sum(n or 0 for _, n in rows)} syllables."
+        if unknown:
+            text += " I can't pronounce: " + ", ".join(unknown) + ". Respell them (for example phonetically)."
+        send(type="lyrics_info", text=text, ok=not unknown and bool(rows))
+    elif cmd == "lyrics_sing":  # sing the lyric lines the chosen melody was written to
+        import lyrics as ly
+        ok, why = ly.ready()
+        if not ok:
+            raise RuntimeError(why)
+        send(type="vocal", path=str(ly.sing_midi(r["source_midi"], log=log)))
         send(type="melodies_done")
     elif cmd == "edit":  # step 3: change only the bars the user named, as several options
         begin()

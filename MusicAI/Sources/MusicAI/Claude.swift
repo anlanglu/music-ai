@@ -69,34 +69,44 @@ struct ClaudeKeySheet: View {
 
 final class KeyField: ObservableObject { @Published var text = "" }
 
-/// Demo: lyrics in, a melody with one note per syllable out, sung by a local singing-voice model (SoulX-Singer).
+/// The lyrics, kept apart from the melody. Nothing is composed here: the "Compose to lyrics" boxes in the Motif and Extend
+/// steps take as many lines as fit the bars asked for and carry on with the next line each time.
 struct LyricsSheet: View {
     @ObservedObject var vm: ViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Lyrics to a sung melody (demo)").font(.title3).bold()
-            Text("One line of text per musical phrase. The melody LLM writes one note per syllable, using the key, tempo, time signature and mood chosen in step 1; the melody appears as the motif, so you can go on to extend and edit it. A local singing model (SoulX-Singer, with a stock reference voice) then sings it. Four lines take about a minute.")
-                .font(.callout).foregroundStyle(.secondary)
+            Text("Lyrics").font(.title3).bold()
+            Text("Put in as many lines as you like, one line of text per musical phrase. They are only kept here. Tick “Compose to lyrics” in the Motif or Extend step and the melody takes as many lines as fit the bars you ask for; each extension carries on with the next line, and it never has to use them all.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $vm.lyrics)
                 .font(.body)
-                .frame(minHeight: 140)
+                .frame(minHeight: 180)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            Text(vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                .onChange(of: vm.lyrics) { _, _ in vm.lyricsInfo = "" }
+            Text(vm.lyricsInfo.isEmpty ? " " : vm.lyricsInfo).font(.callout)
+                .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
+                .lineLimit(3)
+            Divider()
+            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with “Compose to lyrics”. About 15 seconds a line.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
+                Button("Check lyrics") { vm.checkLyrics() }
+                    .disabled(vm.busy || !vm.ready || !vm.hasLyrics)
+                Button("Sing the chosen melody") { vm.singSelected() }
+                    .disabled(vm.busy || !vm.ready || vm.selected == nil)
                 Button(vm.vocalPlaying ? "Stop" : "Play the voice") { vm.vocalPlaying ? vm.stopVocal() : vm.playVocal() }
                     .disabled(vm.vocalURL == nil)
                 if let url = vm.vocalURL {
                     Button("Show file") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 }
                 Spacer()
-                Button("Close") { vm.stopVocal(); vm.showLyrics = false }
-                Button("Write melody and sing") { vm.makeSong() }
+                Button("Done") { vm.stopVocal(); vm.showLyrics = false }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(vm.busy || !vm.ready || vm.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            if vm.busy { Text(vm.status).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: 540)
     }
 }

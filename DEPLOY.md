@@ -104,7 +104,7 @@ To move an already-downloaded cache to another Mac, copy `~/.cache/huggingface/h
 
 ## 4b. Optional: the singing voice (Lyrics demo)
 
-The **Lyrics** button writes a melody for lyrics and sings it with SoulX-Singer (Apache 2.0), which runs in its own
+The **Lyrics** button's “Sing the chosen melody” sings the lyric lines of a melody with SoulX-Singer (Apache 2.0), which runs in its own
 environment so it cannot disturb the main one. The code is vendored in `soulx/`; the model (2.8 GB) is downloaded once:
 
 ```bash
@@ -113,7 +113,7 @@ uv pip install --python .venv-sing/bin/python torch torchaudio "transformers==4.
 .venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('Soul-AILab/SoulX-Singer','model.pt',local_dir='models/soulx')"
 ```
 
-Without it the Lyrics button still writes the melody and says the voice is missing. Four lines take about a minute on an
+Without it, composing to lyrics still works; only singing says the voice is missing. A line takes about 15 seconds on an
 M-series Mac. The voice is cloned from `soulx/prompt/en_prompt.wav`; replace it (and its `.json`) to change the singer.
 
 ## 5. Build the app
