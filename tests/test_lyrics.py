@@ -111,3 +111,10 @@ def test_the_backing_drops_the_voice_melody_and_keeps_the_rest(tmp_path):
     m.tracks = [voice]
     m.save(str(tmp_path / "solo.mid"))
     assert L.backing(tmp_path / "solo.mid") is None          # nothing but the voice: play the voice alone
+
+
+def test_each_voice_has_its_reference_recording_and_notes():
+    for key, base in L.VOICE_FILES.items():
+        assert base.with_suffix(".wav").exists() and base.with_suffix(".json").exists(), key
+    with pytest.raises(RuntimeError, match="Unknown voice"):
+        L.sing_midi("nothing.mid", voice="nope")

@@ -88,14 +88,19 @@ struct LyricsSheet: View {
                 .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
                 .lineLimit(3)
             Divider()
-            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. If you have added accompaniment (steps 4–5), it plays along. About 15 seconds a line.")
+            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. If you have added accompaniment (steps 4–5), the voice and the accompaniment are mixed into one audio file. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Picker("Voice", selection: $vm.voice) {
+                ForEach(ViewModel.voices, id: \.0) { Text($0.1).tag($0.0) }
+            }
+            .pickerStyle(.segmented).fixedSize()
+            .help("The two reference singers that come with SoulX-Singer: the model copies the timbre of a short recording. Both sing in a similar range.")
             HStack {
                 Button("Check lyrics") { vm.checkLyrics() }
                     .disabled(vm.busy || !vm.ready || !vm.hasLyrics)
                 Button("Sing the chosen melody") { vm.singSelected() }
                     .disabled(vm.busy || !vm.ready || vm.selected == nil)
-                Button(vm.vocalPlaying ? "Stop" : vm.vocalBacking == nil ? "Play the voice" : "Play with accompaniment") { vm.vocalPlaying ? vm.stopVocal() : vm.playVocal() }
+                Button(vm.vocalPlaying ? "Stop" : "Play") { vm.vocalPlaying ? vm.stopVocal() : vm.playVocal() }
                     .disabled(vm.vocalURL == nil)
                 if let url = vm.vocalURL {
                     Button("Show file") { NSWorkspace.shared.activateFileViewerSelecting([url]) }

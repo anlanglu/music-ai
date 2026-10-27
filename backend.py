@@ -13,7 +13,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
   {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
   {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
-  {"cmd":"lyrics_sing", "source_midi", "backing_midi"?}  ->  vocal{path,backing} (the lyric lines sung, a .wav next to the melody; backing = the accompaniment without the Voice melody)
+  {"cmd":"lyrics_sing", "source_midi", "backing_midi"?, "voice"?: "en"|"zh"}  ->  vocal{path,backing} (the lyric lines sung, a .wav next to the melody; backing = the accompaniment without the Voice melody)
   "melodies" with the Voice instrument (program 53), and "expand" of a Voice melody, take "lyrics" (the whole text) and write
   the melody to as many lines as fit; expand carries on with the next line
 Any request may also carry "seed": <int> to make that run repeatable.
@@ -233,7 +233,7 @@ def handle(r):
         ok, why = ly.ready()
         if not ok:
             raise RuntimeError(why)
-        wav = ly.sing_midi(r["source_midi"], log=log)
+        wav = ly.sing_midi(r["source_midi"], log=log, voice=r.get("voice", "en"))
         back = ly.backing(r["backing_midi"]) if r.get("backing_midi") else None   # the accompaniment, to play with the voice
         send(type="vocal", path=str(wav), backing=str(back) if back else "")
         send(type="melodies_done")

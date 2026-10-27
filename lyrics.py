@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parent
 SING_PY = ROOT / ".venv-sing" / "bin" / "python"
 SOULX = ROOT / "soulx"
 MODEL = ROOT / "models" / "soulx" / "model.pt"
-VOICE = SOULX / "prompt" / "en_prompt"        # reference singer: en_prompt.wav + .json
+VOICES = {"en": "Singer A (English reference)", "zh": "Singer B (Mandarin reference)"}   # SoulX's two example recordings
+VOICE_FILES = {"en": SOULX / "prompt" / "en_prompt", "zh": SOULX / "prompt" / "zh_prompt"}   # each: <name>.wav + .json
 VOICE_PROGRAM = 53                              # the "Voice" instrument: GM Voice Oohs in the MIDI file; such melodies are written to lyrics
 SYL_PER_BAR = 4                                 # about this many syllables to a bar when the model picks the rhythm
 RANGE = (57, 74)                                # a comfortable singing range (the voice model also shifts to its singer)
@@ -231,13 +232,13 @@ def metadata(lines, melodies, tempo, sig, starts=None):
     return segs
 
 
-def sing(segments, out_wav, log=print, n_steps=32):
+def sing(segments, out_wav, log=print, n_steps=32, voice="en"):
     ok, why = ready()
     if not ok:
         raise RuntimeError(why)
     job = Path(out_wav).with_suffix(".job.json")
     job.write_text(json.dumps({"segments": segments, "out": str(out_wav), "model": str(MODEL), "n_steps": n_steps,
-                               "prompt_wav": str(VOICE) + ".wav", "prompt_meta": str(VOICE) + ".json"}))
+                               "prompt_wav": str(VOICE_FILES[voice]) + ".wav", "prompt_meta": str(VOICE_FILES[voice]) + ".json"}))
     p = subprocess.Popen([str(SING_PY), "-I", str(SOULX / "sing.py"), str(job)], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, text=True, cwd=str(SOULX))
     tail = []
@@ -422,10 +423,12 @@ def backing(full_midi):
     return dest
 
 
-def sing_midi(source_midi, log=print):
+def sing_midi(source_midi, log=print, voice="en"):
     """Sing the lyric lines a melody was written to. Needs one note per syllable, as written (an edit may have broken that)."""
     import expand
 
+    if voice not in VOICE_FILES:
+        raise RuntimeError(f"Unknown voice {voice!r}.")
     src = Path(source_midi)
     lines = used_lines(src)
     if not lines:
@@ -443,7 +446,7 @@ def sing_midi(source_midi, log=print):
         melodies.append((mine, bars))
         starts.append(s0)
     log("Singing it (SoulX-Singer)...")
-    wav = sing(metadata(parsed, melodies, tempo, sig, starts), src.with_suffix(".wav"), log)
+    wav = sing(metadata(parsed, melodies, tempo, sig, starts), src.with_suffix(f".{voice}.wav" if voice != "en" else ".wav"), log, voice=voice)
     log(f"      sung: {wav}")
     return wav
 

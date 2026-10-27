@@ -396,8 +396,7 @@ final class ViewModel: ObservableObject {
             busy = false
         case .vocal(let url, let backing):
             vocalURL = url
-            vocalBacking = backing
-            playVocal()
+            if let backing { mixVocal(url, with: backing) } else { playVocal() }
         case .claudeStatus(let ok, let text):
             claudeChecking = false
             claudeKeyOK = ok
@@ -513,9 +512,9 @@ final class ViewModel: ObservableObject {
     @Published var showLyrics = false
     @Published var vocalURL: URL?
     @Published var vocalPlaying = false
-    @Published var vocalBacking: URL?            // the accompaniment (without the Voice melody) that plays with the voice
+    @Published var voice = "en"                  // which reference singer: "en" or "zh"
+    static let voices = [("en", "Singer A"), ("zh", "Singer B")]
     private var vocalPlayer: AVAudioPlayer?
-    private var backingPlayer: AVMIDIPlayer?
 
     @Published var lyricsInfo = ""              // what the last check said about the lyrics
     @Published var lyricsOK = false
@@ -533,12 +532,32 @@ final class ViewModel: ObservableObject {
         guard ready, !busy, let c = selected else { return }
         stopVocal()
         vocalURL = nil
-        vocalBacking = nil
         busy = true
         status = "Singing the chosen melody (about 15 seconds per line)…"
-        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path]
+        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": voice]
         if let o = orchestration { req["backing_midi"] = o.full.path }   // sing with the accompaniment added so far
         send(req)
+    }
+
+    /// One audio file of the voice with the accompaniment behind it, rendered offline with the same sound bank as playback.
+    private func mixVocal(_ voiceFile: URL, with backing: URL) {
+        status = "Mixing the voice with the accompaniment…"
+        busy = true
+        let out = voiceFile.deletingPathExtension().appendingPathExtension("mix.wav")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try MixRender.mix(midi: backing, voice: voiceFile, bank: Self.soundBank, to: out) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.vocalURL = out
+                    self.status = "Mixed: \(out.lastPathComponent)"
+                case .failure(let e):
+                    self.status = "Couldn't mix the voice with the accompaniment (\(e.localizedDescription)); playing the voice alone."
+                }
+                self.playVocal()
+            }
+        }
     }
 
     func playVocal() {
@@ -548,21 +567,15 @@ final class ViewModel: ObservableObject {
             let p = try AVAudioPlayer(contentsOf: url)
             vocalPlayer = p
             p.prepareToPlay()
-            if let back = vocalBacking {              // the accompaniment starts with the voice
-                let m = try AVMIDIPlayer(contentsOf: back, soundBankURL: Self.soundBank)
-                m.prepareToPlay()
-                backingPlayer = m
-                m.play(nil)
-            }
             p.play()
             vocalPlaying = true
             DispatchQueue.main.asyncAfter(deadline: .now() + p.duration + 0.2) { [weak self] in
-                if self?.vocalPlayer === p, !p.isPlaying { self?.vocalPlaying = false; self?.backingPlayer?.stop() }
+                if self?.vocalPlayer === p, !p.isPlaying { self?.vocalPlaying = false }
             }
         } catch { status = "Couldn't play the voice: \(error.localizedDescription)" }
     }
 
-    func stopVocal() { vocalPlayer?.stop(); backingPlayer?.stop(); backingPlayer = nil; vocalPlaying = false }
+    func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
 
     /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
     func saveClaudeKey(_ key: String) {
