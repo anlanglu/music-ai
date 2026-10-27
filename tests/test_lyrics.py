@@ -118,3 +118,34 @@ def test_each_voice_has_its_reference_recording_and_notes():
         assert base.with_suffix(".wav").exists() and base.with_suffix(".json").exists(), key
     with pytest.raises(RuntimeError, match="Unknown voice"):
         L.sing_midi("nothing.mid", voice="nope")
+
+
+def test_chinese_lines_give_one_syllable_and_one_soulx_token_per_character():
+    line = L.parse_line("像我这样懦弱的人")
+    assert L.count(line) == 8
+    assert [w["token"] for w in line][:3] == ["zh_xiang4", "zh_wo3", "zh_zhe4"] and line[6]["token"] == "zh_de5"
+    assert L.parse_line("女儿绿")[0]["token"] == "zh_nu:3" or L.parse_line("女")[0]["token"] == "zh_nu:3"   # the umlaut is written u:
+    segs = L.metadata([line], [([(60 + i % 3, float(i), 1.0) for i in range(8)], 2)], 90, "4/4")
+    assert segs[0]["language"] == "Mandarin" and "zh_xiang4" in segs[0]["phoneme"].split()
+    assert L.check("小星星\nLittle star")[0] == [("小星星", 3), ("Little star", 3)]
+    assert L.check("星星 abc")[1] == ["abc"]
+
+
+def test_voices_you_added_are_listed_and_a_name_is_not_reused(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "USER_VOICES", tmp_path / "voices")
+    d = tmp_path / "voices" / "my-voice"
+    d.mkdir(parents=True)
+    for f in ("voice.wav", "voice.json"):
+        (d / f).write_text("x")
+    (d / "voice.txt").write_text('{"name": "My voice", "language": "English"}')
+    assert L.voice_list()[-1] == ("u-my-voice", "My voice")
+    assert L.voice_base("u-my-voice") == d / "voice" and L.voice_base("u-nobody") is None
+    monkeypatch.setattr(L, "prep_ready", lambda language: (True, ""))
+    with pytest.raises(RuntimeError, match="already a voice"):
+        L.add_voice("whatever.wav", "My voice")
+
+
+def test_making_a_voice_says_what_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(L, "PREP_PY", tmp_path / "nope" / "python")
+    with pytest.raises(RuntimeError, match="venv-prep"):
+        L.add_voice("whatever.wav", "x")

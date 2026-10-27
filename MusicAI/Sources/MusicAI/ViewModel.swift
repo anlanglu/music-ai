@@ -390,6 +390,13 @@ final class ViewModel: ObservableObject {
             if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
+        case .voices(let items):
+            if !items.isEmpty {
+                let added = items.first { item in !voiceChoices.contains { $0.key == item.key } }
+                voiceChoices = items.map { ($0.key, Self.shortVoiceName($0.name)) }
+                if let added { voice = added.key; status = "Voice “\(added.name)” is ready." }
+                if !voiceChoices.contains(where: { $0.key == voice }) { voice = "en" }
+            }
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
             lyricsOK = ok
@@ -513,7 +520,24 @@ final class ViewModel: ObservableObject {
     @Published var vocalURL: URL?
     @Published var vocalPlaying = false
     @Published var voice = "en"                  // which reference singer: "en" or "zh"
-    static let voices = [("en", "Singer A"), ("zh", "Singer B")]
+    @Published var voiceChoices: [(key: String, name: String)] = [("en", "Singer A"), ("zh", "Singer B")]
+    @Published var showAddVoice = false
+
+    private static func shortVoiceName(_ n: String) -> String {
+        switch n {
+        case let s where s.hasPrefix("Singer A"): return "Singer A"
+        case let s where s.hasPrefix("Singer B"): return "Singer B"
+        default: return n
+        }
+    }
+
+    /// Makes a new singer from a recording of a voice singing alone (the backend works out its words and notes).
+    func addVoice(_ file: URL, name: String, language: String) {
+        guard ready, !busy else { return }
+        busy = true
+        status = "Making the voice “\(name)” from the recording (about a minute)…"
+        send(["cmd": "voice_add", "path": file.path, "name": name, "language": language])
+    }
     private var vocalPlayer: AVAudioPlayer?
 
     @Published var lyricsInfo = ""              // what the last check said about the lyrics

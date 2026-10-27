@@ -7,6 +7,7 @@ timbre is cloned from a short reference recording (soulx/prompt/).
 import json
 import math
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -56,42 +57,65 @@ def syllable_stresses(phones):
     return [int(p[-1]) for p in phones if p[-1].isdigit()]
 
 
+CJK = r"[\u4e00-\u9fff]"
+_phoneset = None
+
+
+def is_zh(raw):
+    """Whether a lyric line is Chinese (Mandarin)."""
+    return re.search(CJK, raw) is not None
+
+
 def raw_lines(text):
     """The lyric lines that have words in them."""
-    return [l.strip() for l in text.splitlines() if re.search(r"[A-Za-z]", l)]
+    return [l.strip() for l in text.splitlines() if re.search(r"[A-Za-z]|" + CJK, l)]
+
+
+def zh_token(pinyin):
+    """SoulX-Singer's Mandarin token for one syllable (tone digit last, the umlaut written u:), or None if it has none."""
+    global _phoneset
+    if _phoneset is None:
+        _phoneset = set(json.loads((SOULX / "soulxsinger" / "utils" / "phoneme" / "phone_set.json").read_text()))
+    tok = "zh_" + pinyin.replace("lve", "lu:e").replace("nve", "nu:e").replace("v", "u:")
+    return tok if tok in _phoneset else None
+
+
+def zh_syllables(raw):
+    """[(character, SoulX token or None)] for the Chinese characters of a line (punctuation and spaces are not sung)."""
+    from pypinyin import Style, lazy_pinyin
+
+    chars = "".join(re.findall(CJK, raw))
+    pys = lazy_pinyin(chars, style=Style.TONE3, neutral_tone_with_five=True, v_to_u=False)
+    return [(c, zh_token(p)) for c, p in zip(chars, pys)]
 
 
 def unknown_words(raw):
+    if is_zh(raw):                  # Latin words in a Chinese line, and characters SoulX has no syllable for
+        return re.findall(r"[A-Za-z][A-Za-z']*", raw) + [c for c, tok in zh_syllables(raw) if tok is None]
     return [w for w in re.findall(r"[A-Za-z][A-Za-z']*", raw) if pronounce(w) is None]
 
 
 def parse_line(raw):
-    """One line as words: [{"word", "phones", "stress"}...]. Raises ValueError listing words the dictionary lacks."""
-    words = []
-    for w in re.findall(r"[A-Za-z][A-Za-z']*", raw):
-        ph = pronounce(w)
-        if ph is not None:
-            words.append({"word": w, "phones": ph, "stress": syllable_stresses(ph)})
+    """One line as words: [{"word", "phones", "stress"}...] (for Chinese, one "word" per character, with its "token").
+    Raises ValueError listing words the dictionary lacks."""
     unknown = unknown_words(raw)
     if unknown:
         raise ValueError("I don't know how to pronounce: " + ", ".join(sorted(set(unknown))) + ". Respell these words (for example phonetically).")
-    return words
+    if is_zh(raw):
+        return [{"word": c, "phones": [tok], "stress": [0 if tok[-1] == "5" else 1], "token": tok} for c, tok in zh_syllables(raw)]
+    return [{"word": w, "phones": pronounce(w), "stress": syllable_stresses(pronounce(w))}
+            for w in re.findall(r"[A-Za-z][A-Za-z']*", raw)]
 
 
 def parse(text):
     """Lines of words: [[{"word", "phones", "stress"}...] ...]. Raises ValueError listing words the dictionary lacks."""
-    lines, unknown = [], []
-    for raw in raw_lines(text):
-        unknown += unknown_words(raw)
-        words = [{"word": w, "phones": ph, "stress": syllable_stresses(ph)}
-                 for w, ph in ((w, pronounce(w)) for w in re.findall(r"[A-Za-z][A-Za-z']*", raw)) if ph is not None]
-        if words:
-            lines.append(words)
+    raws = raw_lines(text)
+    unknown = sorted({w for raw in raws for w in unknown_words(raw)})
     if unknown:
-        raise ValueError("I don't know how to pronounce: " + ", ".join(sorted(set(unknown))) + ". Respell these words (for example phonetically).")
-    if not lines:
+        raise ValueError("I don't know how to pronounce: " + ", ".join(unknown) + ". Respell these words (for example phonetically).")
+    if not raws:
         raise ValueError("No lyrics found.")
-    return lines
+    return [parse_line(raw) for raw in raws]
 
 
 def count(line):
@@ -110,6 +134,8 @@ a few leaps, a clear shape, and the last note of the line long and settled."""
 def _line_prompt(line, bars, sig, key, mood, before):
     words = " ".join(f"{w['word']}({'/'.join('STRONG' if s == 1 else 'weak' for s in w['stress'])})" for w in line)
     msg = f"Lyric line ({count(line)} syllables): {words}"
+    if line[0].get("token"):
+        msg += "\n(Chinese: each character is one syllable and gets one note.)"
     if mood:
         msg += f"\nMood and style: {mood}"
     if before:
@@ -197,6 +223,8 @@ TOKEN_STYLE = "syllable"    # "word": the whole word on each of its notes (as in
 
 def token(word, i, k):
     """SoulX-Singer's phoneme token for one note of a word, and its note type (2 = a new word, 3 = the word goes on)."""
+    if word.get("token"):                           # Chinese: one character, one syllable
+        return word["token"], 2
     if TOKEN_STYLE == "syllable" and k > 1:
         return "en_" + "-".join(syllabify(word["phones"])[i]), 2
     return "en_" + "-".join(word["phones"]), 2 if i == 0 else 3
@@ -224,12 +252,90 @@ def metadata(lines, melodies, tempo, sig, starts=None):
             cursor = s + d
         tail = bars * bb - cursor
         toks.append("<SP>"); text.append("<SP>"); durs.append(max(tail * spb, 0.04)); pitch.append(0); types.append(1)
-        segs.append({"index": f"line_{len(segs)}", "language": "English",
+        segs.append({"index": f"line_{len(segs)}", "language": "Mandarin" if line[0].get("token") else "English",
                      "time": [round(line_start * 1000), round((line_start + bars * bb * spb) * 1000)],
                      "duration": " ".join(f"{x:.3f}" for x in durs), "text": " ".join(text), "phoneme": " ".join(toks),
                      "note_pitch": " ".join(map(str, pitch)), "note_type": " ".join(map(str, types))})
         line_start += bars * bb * spb
     return segs
+
+
+PREP_PY = ROOT / ".venv-prep" / "bin" / "python"
+PREP_MODELS = ROOT / "models" / "soulx-preprocess"
+USER_VOICES = ROOT / "voices"                  # one folder per voice you added: voice.wav, voice.json, voice.txt (name, language)
+PREP_NEEDS = {"English": "parakeet-tdt-0.6b-v2/parakeet-tdt-0.6b-v2.nemo",
+              "Mandarin": "speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch/model.pt"}
+
+
+def voice_base(key):
+    """The path (without .wav/.json) of a voice's reference recording, or None."""
+    if key in VOICE_FILES:
+        return VOICE_FILES[key]
+    base = USER_VOICES / key.removeprefix("u-") / "voice"
+    return base if key.startswith("u-") and base.with_suffix(".wav").exists() and base.with_suffix(".json").exists() else None
+
+
+def voice_list():
+    """[(key, name)]: the two voices that come with SoulX, then the ones you added."""
+    out = list(VOICES.items())
+    if USER_VOICES.exists():
+        for d in sorted(USER_VOICES.iterdir()):
+            if (d / "voice.wav").exists() and (d / "voice.json").exists():
+                try:
+                    name = json.loads((d / "voice.txt").read_text())["name"]
+                except (OSError, ValueError, KeyError):
+                    name = d.name
+                out.append(("u-" + d.name, name))
+    return out
+
+
+def prep_ready(language):
+    """(ok, what_is_missing) for making a voice from a recording."""
+    if not PREP_PY.exists():
+        return False, "The voice-making environment (.venv-prep) is not installed (see DEPLOY.md 4c)."
+    for need in ["rmvpe/rmvpe.pt", "rosvot/rosvot/model.pt", "rosvot/rwbd/model.pt", PREP_NEEDS.get(language, "?")]:
+        if not (PREP_MODELS / need).exists():
+            return False, f"A voice-making model is not downloaded (models/soulx-preprocess/{need}); see DEPLOY.md 4c."
+    return True, ""
+
+
+def add_voice(audio, name, language="English", log=print):
+    """Make a new singer from a recording of a voice singing alone (10 to 30 seconds is best). Returns its key."""
+    ok, why = prep_ready(language)
+    if not ok:
+        raise RuntimeError(why)
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "voice"
+    folder = USER_VOICES / slug
+    if folder.exists():
+        raise RuntimeError(f"There is already a voice called {name!r}; choose another name.")
+    work = folder / "work"
+    work.mkdir(parents=True)
+    try:
+        src = work / "source.wav"       # the pipeline reads wav; afconvert opens mp3, m4a, aiff, flac and wav
+        c = subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16", "-c", "1", str(audio), str(src)], capture_output=True, text=True)
+        if c.returncode != 0:
+            raise RuntimeError("I couldn't open that audio file: " + (c.stderr.strip().splitlines() or ["unknown format"])[-1])
+        job = work / "job.json"
+        job.write_text(json.dumps({"audio": str(src), "save_dir": str(work / "out"), "language": language, "models": str(PREP_MODELS)}))
+        log("Working out the words and notes of the recording (this takes a minute)...")
+        p = subprocess.run([str(PREP_PY), "-I", str(SOULX / "prep.py"), str(job)], capture_output=True, text=True, cwd=str(SOULX))
+        meta = work / "out" / "metadata.json"
+        if p.returncode != 0 or not meta.exists():
+            raise RuntimeError("Working out the recording failed: " + " | ".join((p.stdout + p.stderr).strip().splitlines()[-3:]))
+        items = json.loads(meta.read_text())
+        notes = [int(x) for x in items[0]["note_pitch"].split() if int(x) > 0] if items else []
+        if len(notes) < 4:
+            raise RuntimeError("I couldn't find singing in that recording. It needs a voice singing alone, with words.")
+        wav = work / "out" / "long_cut_wavs" / (items[0]["index"] + ".wav")
+        shutil.copyfile(wav, folder / "voice.wav")
+        (folder / "voice.json").write_text(json.dumps(items[:1], ensure_ascii=False))
+        (folder / "voice.txt").write_text(json.dumps({"name": name, "language": language}))
+        log(f"      voice {name!r}: {len(notes)} notes found, {items[0]['time'][1] / 1000 - items[0]['time'][0] / 1000:.0f} s used")
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    shutil.rmtree(work, ignore_errors=True)
+    return "u-" + slug
 
 
 def sing(segments, out_wav, log=print, n_steps=32, voice="en"):
@@ -238,7 +344,7 @@ def sing(segments, out_wav, log=print, n_steps=32, voice="en"):
         raise RuntimeError(why)
     job = Path(out_wav).with_suffix(".job.json")
     job.write_text(json.dumps({"segments": segments, "out": str(out_wav), "model": str(MODEL), "n_steps": n_steps,
-                               "prompt_wav": str(VOICE_FILES[voice]) + ".wav", "prompt_meta": str(VOICE_FILES[voice]) + ".json"}))
+                               "prompt_wav": str(voice_base(voice)) + ".wav", "prompt_meta": str(voice_base(voice)) + ".json"}))
     p = subprocess.Popen([str(SING_PY), "-I", str(SOULX / "sing.py"), str(job)], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, text=True, cwd=str(SOULX))
     tail = []
@@ -427,7 +533,7 @@ def sing_midi(source_midi, log=print, voice="en"):
     """Sing the lyric lines a melody was written to. Needs one note per syllable, as written (an edit may have broken that)."""
     import expand
 
-    if voice not in VOICE_FILES:
+    if voice_base(voice) is None:
         raise RuntimeError(f"Unknown voice {voice!r}.")
     src = Path(source_midi)
     lines = used_lines(src)

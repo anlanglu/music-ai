@@ -67,6 +67,13 @@ struct ClaudeKeySheet: View {
     }
 }
 
+final class VoiceForm: ObservableObject {
+    @Published var file: URL?
+    @Published var name = ""
+    @Published var language = "English"
+    @Published var permission = false
+}
+
 final class KeyField: ObservableObject { @Published var text = "" }
 
 /// The lyrics, kept apart from the melody. Nothing is composed here: with the Voice instrument, the Motif and Extend steps
@@ -90,11 +97,16 @@ struct LyricsSheet: View {
             Divider()
             Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. If you have added accompaniment (steps 4–5), the voice and the accompaniment are mixed into one audio file. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Picker("Voice", selection: $vm.voice) {
-                ForEach(ViewModel.voices, id: \.0) { Text($0.1).tag($0.0) }
+            HStack {
+                Picker("Voice", selection: $vm.voice) {
+                    ForEach(vm.voiceChoices, id: \.key) { Text($0.name).tag($0.key) }
+                }
+                .fixedSize()
+                .help("Singers A and B are the two reference voices that come with SoulX-Singer (both sing in a similar range). The model copies a voice from a short recording; add your own below.")
+                Button("Add voice…") { vm.showAddVoice = true }
+                    .disabled(vm.busy || !vm.ready)
+                    .help("Make a new singer from a recording of a voice singing alone")
             }
-            .pickerStyle(.segmented).fixedSize()
-            .help("The two reference singers that come with SoulX-Singer: the model copies the timbre of a short recording. Both sing in a similar range.")
             HStack {
                 Button("Check lyrics") { vm.checkLyrics() }
                     .disabled(vm.busy || !vm.ready || !vm.hasLyrics)
@@ -113,5 +125,50 @@ struct LyricsSheet: View {
         }
         .padding(20)
         .frame(width: 540)
+        .sheet(isPresented: $vm.showAddVoice) { AddVoiceSheet(vm: vm) }
+    }
+}
+
+/// Makes a new singer from a recording. The recording is only read here; nothing is uploaded anywhere.
+struct AddVoiceSheet: View {
+    @ObservedObject var vm: ViewModel
+    @StateObject private var form = VoiceForm()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add a voice").font(.title3).bold()
+            Text("Pick a recording of one person singing alone (no band or backing), 10 to 30 seconds, clean, with words. The model works out the words and notes in it (about a minute) and then sings in that voice. Everything stays on this Mac; the first 30 seconds are used.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Choose recording…") {
+                    let p = NSOpenPanel()
+                    p.allowedContentTypes = [.audio]
+                    p.allowsMultipleSelection = false
+                    if p.runModal() == .OK, let u = p.url {
+                        form.file = u
+                        if form.name.isEmpty { form.name = u.deletingPathExtension().lastPathComponent }
+                    }
+                }
+                Text(form.file?.lastPathComponent ?? "No file chosen").foregroundStyle(.secondary).lineLimit(1)
+            }
+            TextField("Name of the voice", text: $form.name)
+            Picker("Language sung in the recording", selection: $form.language) {
+                Text("English").tag("English")
+                Text("Mandarin").tag("Mandarin")
+            }
+            Toggle("It is my own voice, or I have the singer’s permission to copy it", isOn: $form.permission)
+            HStack {
+                Spacer()
+                Button("Cancel") { vm.showAddVoice = false }
+                Button("Make voice") {
+                    if let file = form.file { vm.addVoice(file, name: form.name.trimmingCharacters(in: .whitespaces), language: form.language) }
+                    vm.showAddVoice = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(form.file == nil || form.name.trimmingCharacters(in: .whitespaces).isEmpty || !form.permission)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
     }
 }

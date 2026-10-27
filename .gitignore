@@ -76,3 +76,5 @@ HF_TOKEN
 .venv-sing/
 /models/
 !soulx/prompt/*
+.venv-prep/
+/voices/

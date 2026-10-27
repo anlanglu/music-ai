@@ -12,12 +12,13 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
   {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
+  {"cmd":"voice_add", "path":"a recording of a voice singing alone", "name", "language":"English"|"Mandarin"}  ->  voices{items:[{key,name}]}, melodies_done
   {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
   {"cmd":"lyrics_sing", "source_midi", "backing_midi"?, "voice"?: "en"|"zh"}  ->  vocal{path,backing} (the lyric lines sung, a .wav next to the melody; backing = the accompaniment without the Voice melody)
   "melodies" with the Voice instrument (program 53), and "expand" of a Voice melody, take "lyrics" (the whole text) and write
   the melody to as many lines as fit; expand carries on with the next line
 Any request may also carry "seed": <int> to make that run repeatable.
-Events:   ready{sliders} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
+Events:   ready{sliders} | voices{items:[{key,name}]} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
           session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | vocal{path,backing} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
@@ -221,6 +222,11 @@ def handle(r):
             on_candidate=candidate_event,
         )
         send(type="melodies_done")
+    elif cmd == "voice_add":  # a new singer from a recording of a voice singing alone
+        import lyrics as ly
+        ly.add_voice(r["path"], r["name"], r.get("language", "English"), log=log)
+        send(type="voices", items=[{"key": k, "name": n} for k, n in ly.voice_list()])
+        send(type="melodies_done")
     elif cmd == "lyrics_check":  # the lyrics box: how many lines and syllables, and any word it cannot pronounce
         import lyrics as ly
         rows, unknown = ly.check(r.get("lyrics", ""))
@@ -305,6 +311,8 @@ def handle(r):
 def main():
     # where the app's sliders start, so the defaults live in one place (plan.py)
     send(type="ready", sliders=plan.SLIDER_DEFAULTS)
+    import lyrics as ly
+    send(type="voices", items=[{"key": k, "name": n} for k, n in ly.voice_list()])
     for line in sys.stdin:
         if not line.strip():
             continue

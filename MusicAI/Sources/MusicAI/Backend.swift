@@ -69,6 +69,7 @@ enum BackendEvent {
     case claudeStatus(ok: Bool, text: String)
     /// A sung version of the melody (a .wav) has been written.
     case vocal(URL, backing: URL?)
+    case voices([(key: String, name: String)])
     case lyricsInfo(text: String, ok: Bool)
     case error(String)
 }
@@ -195,6 +196,12 @@ final class Backend {
         switch type {
         case "ready": return .ready((obj["sliders"] as? [String: Double]) ?? [:])
         case "claude_status": return .claudeStatus(ok: obj["ok"] as? Bool ?? false, text: obj["text"] as? String ?? "")
+        case "voices":
+            let items = (obj["items"] as? [[String: Any]] ?? []).compactMap { d -> (key: String, name: String)? in
+                guard let k = d["key"] as? String, let n = d["name"] as? String else { return nil }
+                return (k, n)
+            }
+            return .voices(items)
         case "lyrics_info": return .lyricsInfo(text: obj["text"] as? String ?? "", ok: obj["ok"] as? Bool ?? false)
         case "vocal":
             let back = obj["backing"] as? String ?? ""
