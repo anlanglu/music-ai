@@ -212,3 +212,11 @@ Notes from setting it up on macOS 27: the pinned scipy 1.15 does not load (upgra
 NVIDIA Parakeet through NeMo (2.5 GB); Mandarin uses a 1 GB Paraformer model, so a Mandarin-only setup can skip NeMo and
 Parakeet. Voices you add are stored in `voices/` (not committed). The recording is read with `afconvert`, so mp3, m4a,
 aiff, flac and wav work. The pipeline runs on the CPU and takes under a minute for 10 to 30 seconds of audio.
+
+## Where the models are kept
+
+Model weights can live on an external drive. When `/Volumes/T7/AIModels/huggingface-hub` exists, the backend points
+`HF_HUB_CACHE` at it (the language models, the Anticipation models and Whisper); the singing models are read from
+`/Volumes/T7/AIModels/music-ai-models` (`soulx/` and `soulx-preprocess/`). Set `HF_HUB_CACHE` and `MUSIC_AI_MODELS` yourself
+to use other folders. With the drive unplugged the code falls back to `~/.cache/huggingface/hub` and `models/` in the
+project, so the app only works if copies are still there. The app's "downloaded" labels look in the same places.

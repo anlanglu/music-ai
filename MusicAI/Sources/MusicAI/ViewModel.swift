@@ -25,14 +25,19 @@ enum ViewMode: String { case roll, sheet }
 enum ModelCache {
     static func isDownloaded(_ repo: String) -> Bool {
         let name = "models--" + repo.replacingOccurrences(of: "/", with: "--")
-        let snaps = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/\(name)/snapshots")
-        guard let shas = try? FileManager.default.contentsOfDirectory(atPath: snaps.path) else { return false }
-        return shas.contains { sha in
+        // where the backend keeps its downloads: HF_HUB_CACHE, else the T7 drive when plugged in, else ~/.cache
+        var hubs = [URL(fileURLWithPath: "/Volumes/T7/AIModels/huggingface-hub"),
+                    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub")]
+        if let env = ProcessInfo.processInfo.environment["HF_HUB_CACHE"] { hubs.insert(URL(fileURLWithPath: env), at: 0) }
+        return hubs.contains { hub in
+            let snaps = hub.appendingPathComponent("\(name)/snapshots")
+            guard let shas = try? FileManager.default.contentsOfDirectory(atPath: snaps.path) else { return false }
+            return shas.contains { sha in
             let dir = snaps.appendingPathComponent(sha)
             let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
             // fileExists follows the symlink into blobs/, so a missing or partial download reads as not downloaded
             return files.contains { $0.hasSuffix(".safetensors") && FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+            }
         }
     }
 }

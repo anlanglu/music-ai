@@ -5,6 +5,7 @@ timbre is cloned from a short reference recording (soulx/prompt/).
 
     .venv/bin/python lyrics.py "Twinkle twinkle little star" --key "C major" --bpm 90 --llm cc-sonnet-5-5"""
 import json
+import os
 import math
 import re
 import shutil
@@ -18,7 +19,9 @@ from llmjson import extract_json
 ROOT = Path(__file__).resolve().parent
 SING_PY = ROOT / ".venv-sing" / "bin" / "python"
 SOULX = ROOT / "soulx"
-MODEL = ROOT / "models" / "soulx" / "model.pt"
+_T7_MODELS = Path("/Volumes/T7/AIModels/music-ai-models")
+MODELS = Path(os.environ.get("MUSIC_AI_MODELS") or (_T7_MODELS if _T7_MODELS.is_dir() else ROOT / "models"))   # weights: T7 drive if plugged in
+MODEL = MODELS / "soulx" / "model.pt"
 VOICES = {"en": "Singer A (English reference)", "zh": "Singer B (Mandarin reference)"}   # SoulX's two example recordings
 VOICE_FILES = {"en": SOULX / "prompt" / "en_prompt", "zh": SOULX / "prompt" / "zh_prompt"}   # each: <name>.wav + .json
 VOICE_PROGRAM = 53                              # the "Voice" instrument: GM Voice Oohs in the MIDI file; such melodies are written to lyrics
@@ -33,7 +36,7 @@ def ready():
     if not SING_PY.exists():
         return False, "The singing environment (.venv-sing) is not installed."
     if not MODEL.exists():
-        return False, "The singing model (models/soulx/model.pt) is not downloaded."
+        return False, f"The singing model ({MODEL}) is not downloaded (or the drive holding it is not plugged in)."
     return True, ""
 
 
@@ -261,7 +264,7 @@ def metadata(lines, melodies, tempo, sig, starts=None):
 
 
 PREP_PY = ROOT / ".venv-prep" / "bin" / "python"
-PREP_MODELS = ROOT / "models" / "soulx-preprocess"
+PREP_MODELS = MODELS / "soulx-preprocess"
 USER_VOICES = ROOT / "voices"                  # one folder per voice you added: voice.wav, voice.json, voice.txt (name, language)
 PREP_NEEDS = {"English": "parakeet-tdt-0.6b-v2/parakeet-tdt-0.6b-v2.nemo",
               "Mandarin": "speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch/model.pt"}
@@ -295,7 +298,7 @@ def prep_ready(language):
         return False, "The voice-making environment (.venv-prep) is not installed (see DEPLOY.md 4c)."
     for need in ["rmvpe/rmvpe.pt", "rosvot/rosvot/model.pt", "rosvot/rwbd/model.pt", PREP_NEEDS.get(language, "?")]:
         if not (PREP_MODELS / need).exists():
-            return False, f"A voice-making model is not downloaded (models/soulx-preprocess/{need}); see DEPLOY.md 4c."
+            return False, f"A voice-making model is not downloaded ({PREP_MODELS / need}) or its drive is not plugged in; see DEPLOY.md 4c."
     return True, ""
 
 
