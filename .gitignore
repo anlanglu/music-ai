@@ -71,3 +71,10 @@ HF_TOKEN
 *.swp
 *~
 *.log
+
+# ---- Singing voice (SoulX-Singer) ----
+.venv-sing/
+/models/
+!soulx/prompt/*
+.venv-prep/
+/voices/

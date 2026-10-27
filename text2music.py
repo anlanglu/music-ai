@@ -13,6 +13,10 @@ import re
 import time
 from pathlib import Path
 
+# Hugging Face downloads live on the T7 drive when it is plugged in (else the default ~/.cache/huggingface); set before torch/mlx import
+if not os.environ.get("HF_HUB_CACHE") and Path("/Volumes/T7/AIModels/huggingface-hub").is_dir():
+    os.environ["HF_HUB_CACHE"] = "/Volumes/T7/AIModels/huggingface-hub"
+
 import mido
 import numpy as np
 import torch

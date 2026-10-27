@@ -102,6 +102,20 @@ list if you want those options. Hugging Face may warn about unauthenticated requ
 
 To move an already-downloaded cache to another Mac, copy `~/.cache/huggingface/hub` over (or point `HF_HOME` at a shared location).
 
+## 4b. Optional: the singing voice (Lyrics demo)
+
+The **Lyrics** button's “Sing the chosen melody” sings the lyric lines of a melody with SoulX-Singer (Apache 2.0), which runs in its own
+environment so it cannot disturb the main one. The code is vendored in `soulx/`; the model (2.8 GB) is downloaded once:
+
+```bash
+uv venv --python 3.11 .venv-sing
+uv pip install --python .venv-sing/bin/python torch torchaudio "transformers==4.41.2" "numpy<2" librosa soundfile scipy omegaconf accelerate einops
+.venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('Soul-AILab/SoulX-Singer','model.pt',local_dir='models/soulx')"
+```
+
+Without it, composing to lyrics still works; only singing says the voice is missing. A line takes about 15 seconds on an
+M-series Mac. The voice is cloned from `soulx/prompt/en_prompt.wav`; replace it (and its `.json`) to change the singer.
+
 ## 5. Build the app
 
 ```bash
@@ -177,3 +191,32 @@ session folder afterwards. The JSON-lines backend can be tried directly with `.v
 | "Python backend exited" in the app | The message includes the last lines of the process's error output; the full log is `~/Library/Logs/Composer/backend.log`. Press **Restart backend** (loaded models are lost, files already written are safe). The same button appears if a request shows no sign of life for 4 minutes. |
 | No sound in the app | Playback uses macOS's built-in `gs_instruments.dls`; check output device and system volume. MIDI files themselves open in Logic or any DAW. |
 | Sheet music fails | `music21` or `verovio` missing from the environment; reinstall step 3. The log shows the error. |
+
+
+## 4c. Optional: make a voice from a recording (the Lyrics box, "Add voice…")
+
+SoulX-Singer copies a voice from a short recording of someone singing alone, but it needs that recording's words, notes and
+timing written out. SoulX's preprocessing pipeline (vendored in `soulx/preprocess/`, Apache 2.0) does that, in its own
+environment. It needs about 5 GB of models and a few GB of packages:
+
+```bash
+uv venv --python 3.11 .venv-prep
+uv pip install --python .venv-prep/bin/python -r soulx/preprocess/requirements.txt   # without sageattention, wandb, loralib
+uv pip install --python .venv-prep/bin/python -U scipy "nemo_toolkit[asr]==2.6.1" lhotse -c <(printf 'numpy==2.2.6\ntorch==2.10.0\ntorchaudio==2.10.0\n')
+.venv-prep/bin/python -I -c "import nltk; [nltk.download(r, download_dir='.venv-prep/nltk_data') for r in ('averaged_perceptron_tagger_eng','cmudict','punkt_tab')]"
+HF_HUB_DISABLE_XET=1 .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('Soul-AILab/SoulX-Singer-Preprocess', local_dir='models/soulx-preprocess', allow_patterns=['rmvpe/*','rosvot/*','speech_seaco*/*','parakeet*/*'])"
+```
+
+Notes from setting it up on macOS 27: the pinned scipy 1.15 does not load (upgrade it), lhotse 1.31 breaks with torch 2.10
+(upgrade it), numpy must stay at 2.2.6 for numba, and the NLTK data above is not installed by any package. English uses
+NVIDIA Parakeet through NeMo (2.5 GB); Mandarin uses a 1 GB Paraformer model, so a Mandarin-only setup can skip NeMo and
+Parakeet. Voices you add are stored in `voices/` (not committed). The recording is read with `afconvert`, so mp3, m4a,
+aiff, flac and wav work. The pipeline runs on the CPU and takes under a minute for 10 to 30 seconds of audio.
+
+## Where the models are kept
+
+Model weights can live on an external drive. When `/Volumes/T7/AIModels/huggingface-hub` exists, the backend points
+`HF_HUB_CACHE` at it (the language models, the Anticipation models and Whisper); the singing models are read from
+`/Volumes/T7/AIModels/music-ai-models` (`soulx/` and `soulx-preprocess/`). Set `HF_HUB_CACHE` and `MUSIC_AI_MODELS` yourself
+to use other folders. With the drive unplugged the code falls back to `~/.cache/huggingface/hub` and `models/` in the
+project, so the app only works if copies are still there. The app's "downloaded" labels look in the same places.

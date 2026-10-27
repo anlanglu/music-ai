@@ -15,6 +15,7 @@ struct Instrument: Identifiable, Hashable {
         Instrument(name: "Cello", program: 42), Instrument(name: "Trumpet", program: 56),
         Instrument(name: "Alto sax", program: 65), Instrument(name: "Flute", program: 73),
         Instrument(name: "Synth lead", program: 80),
+        Instrument(name: "Voice (sings your lyrics)", program: 53),
     ]
 }
 
@@ -24,14 +25,19 @@ enum ViewMode: String { case roll, sheet }
 enum ModelCache {
     static func isDownloaded(_ repo: String) -> Bool {
         let name = "models--" + repo.replacingOccurrences(of: "/", with: "--")
-        let snaps = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/\(name)/snapshots")
-        guard let shas = try? FileManager.default.contentsOfDirectory(atPath: snaps.path) else { return false }
-        return shas.contains { sha in
+        // where the backend keeps its downloads: HF_HUB_CACHE, else the T7 drive when plugged in, else ~/.cache
+        var hubs = [URL(fileURLWithPath: "/Volumes/T7/AIModels/huggingface-hub"),
+                    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub")]
+        if let env = ProcessInfo.processInfo.environment["HF_HUB_CACHE"] { hubs.insert(URL(fileURLWithPath: env), at: 0) }
+        return hubs.contains { hub in
+            let snaps = hub.appendingPathComponent("\(name)/snapshots")
+            guard let shas = try? FileManager.default.contentsOfDirectory(atPath: snaps.path) else { return false }
+            return shas.contains { sha in
             let dir = snaps.appendingPathComponent(sha)
             let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
             // fileExists follows the symlink into blobs/, so a missing or partial download reads as not downloaded
             return files.contains { $0.hasSuffix(".safetensors") && FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+            }
         }
     }
 }
@@ -389,6 +395,20 @@ final class ViewModel: ObservableObject {
             if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
+        case .voices(let items):
+            if !items.isEmpty {
+                let added = items.first { item in !voiceChoices.contains { $0.key == item.key } }
+                voiceChoices = items.map { ($0.key, Self.shortVoiceName($0.name)) }
+                if let added { voice = added.key; status = "Voice “\(added.name)” is ready." }
+                if !voiceChoices.contains(where: { $0.key == voice }) { voice = "en" }
+            }
+        case .lyricsInfo(let text, let ok):
+            lyricsInfo = text
+            lyricsOK = ok
+            busy = false
+        case .vocal(let url, let backing):
+            vocalURL = url
+            if let backing { mixVocal(url, with: backing) } else { playVocal() }
         case .claudeStatus(let ok, let text):
             claudeChecking = false
             claudeKeyOK = ok
@@ -497,6 +517,94 @@ final class ViewModel: ObservableObject {
     }
 
     private var pendingClaudeKey = ""
+
+    // MARK: Lyrics (demo): a melody with one note per syllable, sung by SoulX-Singer
+
+    @Published var lyrics = ""
+    @Published var showLyrics = false
+    @Published var vocalURL: URL?
+    @Published var vocalPlaying = false
+    @Published var voice = "en"                  // which reference singer: "en" or "zh"
+    @Published var voiceChoices: [(key: String, name: String)] = [("en", "Singer A"), ("zh", "Singer B")]
+    @Published var showAddVoice = false
+
+    private static func shortVoiceName(_ n: String) -> String {
+        switch n {
+        case let s where s.hasPrefix("Singer A"): return "Singer A"
+        case let s where s.hasPrefix("Singer B"): return "Singer B"
+        default: return n
+        }
+    }
+
+    /// Makes a new singer from a recording of a voice singing alone (the backend works out its words and notes).
+    func addVoice(_ file: URL, name: String, language: String) {
+        guard ready, !busy else { return }
+        busy = true
+        status = "Making the voice “\(name)” from the recording (about a minute)…"
+        send(["cmd": "voice_add", "path": file.path, "name": name, "language": language])
+    }
+    private var vocalPlayer: AVAudioPlayer?
+
+    @Published var lyricsInfo = ""              // what the last check said about the lyrics
+    @Published var lyricsOK = false
+    var hasLyrics: Bool { !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    func checkLyrics() {
+        guard ready, !busy, hasLyrics else { return }
+        busy = true
+        lyricsInfo = "Checking…"
+        send(["cmd": "lyrics_check", "lyrics": lyrics])
+    }
+
+    /// Sings the lyric lines the chosen melody was written to.
+    func singSelected() {
+        guard ready, !busy, let c = selected else { return }
+        stopVocal()
+        vocalURL = nil
+        busy = true
+        status = "Singing the chosen melody (about 15 seconds per line)…"
+        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": voice]
+        if let o = orchestration { req["backing_midi"] = o.full.path }   // sing with the accompaniment added so far
+        send(req)
+    }
+
+    /// One audio file of the voice with the accompaniment behind it, rendered offline with the same sound bank as playback.
+    private func mixVocal(_ voiceFile: URL, with backing: URL) {
+        status = "Mixing the voice with the accompaniment…"
+        busy = true
+        let out = voiceFile.deletingPathExtension().appendingPathExtension("mix.wav")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try MixRender.mix(midi: backing, voice: voiceFile, bank: Self.soundBank, to: out) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.vocalURL = out
+                    self.status = "Mixed: \(out.lastPathComponent)"
+                case .failure(let e):
+                    self.status = "Couldn't mix the voice with the accompaniment (\(e.localizedDescription)); playing the voice alone."
+                }
+                self.playVocal()
+            }
+        }
+    }
+
+    func playVocal() {
+        guard let url = vocalURL else { return }
+        stop()
+        do {
+            let p = try AVAudioPlayer(contentsOf: url)
+            vocalPlayer = p
+            p.prepareToPlay()
+            p.play()
+            vocalPlaying = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + p.duration + 0.2) { [weak self] in
+                if self?.vocalPlayer === p, !p.isPlaying { self?.vocalPlaying = false }
+            }
+        } catch { status = "Couldn't play the voice: \(error.localizedDescription)" }
+    }
+
+    func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
 
     /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
     func saveClaudeKey(_ key: String) {
@@ -619,7 +727,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues,
+            "sliders": sliderValues, "lyrics": lyrics,
         ])
     }
 
@@ -716,6 +824,7 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
+            "lyrics": lyrics,
         ])
     }
 

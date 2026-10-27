@@ -12,10 +12,15 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
   {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
+  {"cmd":"voice_add", "path":"a recording of a voice singing alone", "name", "language":"English"|"Mandarin"}  ->  voices{items:[{key,name}]}, melodies_done
+  {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
+  {"cmd":"lyrics_sing", "source_midi", "backing_midi"?, "voice"?: "en"|"zh"}  ->  vocal{path,backing} (the lyric lines sung, a .wav next to the melody; backing = the accompaniment without the Voice melody)
+  "melodies" with the Voice instrument (program 53), and "expand" of a Voice melody, take "lyrics" (the whole text) and write
+  the melody to as many lines as fit; expand carries on with the next line
 Any request may also carry "seed": <int> to make that run repeatable.
-Events:   ready{sliders} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
+Events:   ready{sliders} | voices{items:[{key,name}]} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
-          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | error{text}      (notes = [[channel,pitch,start,end],...])
+          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | vocal{path,backing} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
 import json
 import os
@@ -178,6 +183,15 @@ def handle(r):
             new_session(r["session_name"])
             announce()
         begin(r["prompt"])
+        import lyrics as ly
+        if int(r.get("program", 0)) == ly.VOICE_PROGRAM:
+            if not r.get("lyrics", "").strip():
+                raise RuntimeError("The Voice instrument sings your lyrics: add them with the Lyrics button first.")
+            ly.lyric_motifs(r["lyrics"], int(r.get("bars", 4)), ly.VOICE_PROGRAM, r.get("sig", "4/4"),
+                            max(40, min(int(r.get("bpm", 80)), 220)), chosen_key(r) or (0, "major"), r.get("llm", "7B"),
+                            int(r.get("complexity", 3)), r["prompt"], int(r.get("count", 4)), log=log, on_candidate=candidate_event)
+            send(type="melodies_done")
+            return
         make_melodies(
             r["prompt"], int(r.get("bars", 8)), int(r.get("program", 0)),
             r.get("sig", "4/4"), int(r.get("complexity", 3)), r.get("llm", "7B"), int(r.get("count", 4)),
@@ -189,12 +203,45 @@ def handle(r):
         send(type="melodies_done")
     elif cmd == "expand":  # step 2: add bars to the chosen melody, as several options
         begin()
+        import lyrics as ly
+        made = None
+        if ly.is_voice(r["source_midi"]):
+            if not r.get("lyrics", "").strip():
+                raise RuntimeError("This melody is for the Voice instrument, which sings your lyrics: add them with the Lyrics button first.")
+            made = ly.lyric_extend(r["source_midi"], r["lyrics"], max(2, min(16, int(r.get("bars", 4)))), r.get("llm", "7B"),
+                                   int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
+                                   on_candidate=candidate_event)
+            if made is not None:
+                send(type="melodies_done")
+                return
+            log("  ▸ This melody has already used all the lyrics, so the new bars are written without them.")
         expand_melody(
             r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), r.get("engine", "hybrid"), int(r.get("count", 3)),
             r.get("size", "small"), r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("sliders"),
             r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
             on_candidate=candidate_event,
         )
+        send(type="melodies_done")
+    elif cmd == "voice_add":  # a new singer from a recording of a voice singing alone
+        import lyrics as ly
+        ly.add_voice(r["path"], r["name"], r.get("language", "English"), log=log)
+        send(type="voices", items=[{"key": k, "name": n} for k, n in ly.voice_list()])
+        send(type="melodies_done")
+    elif cmd == "lyrics_check":  # the lyrics box: how many lines and syllables, and any word it cannot pronounce
+        import lyrics as ly
+        rows, unknown = ly.check(r.get("lyrics", ""))
+        text = f"{len(rows)} line(s), {sum(n or 0 for _, n in rows)} syllables."
+        if unknown:
+            text += " I can't pronounce: " + ", ".join(unknown) + ". Respell them (for example phonetically)."
+        send(type="lyrics_info", text=text, ok=not unknown and bool(rows))
+    elif cmd == "lyrics_sing":  # sing the lyric lines the chosen melody was written to
+        import lyrics as ly
+        ok, why = ly.ready()
+        if not ok:
+            raise RuntimeError(why)
+        wav = ly.sing_midi(r["source_midi"], log=log, voice=r.get("voice", "en"))
+        back = ly.backing(r["backing_midi"]) if r.get("backing_midi") else None   # the accompaniment, to play with the voice
+        send(type="vocal", path=str(wav), backing=str(back) if back else "")
         send(type="melodies_done")
     elif cmd == "edit":  # step 3: change only the bars the user named, as several options
         begin()
@@ -264,6 +311,8 @@ def handle(r):
 def main():
     # where the app's sliders start, so the defaults live in one place (plan.py)
     send(type="ready", sliders=plan.SLIDER_DEFAULTS)
+    import lyrics as ly
+    send(type="voices", items=[{"key": k, "name": n} for k, n in ly.voice_list()])
     for line in sys.stdin:
         if not line.strip():
             continue

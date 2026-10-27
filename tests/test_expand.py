@@ -1,5 +1,6 @@
 """Step 2, expanding a melody by 4 or 8 bars: the plan grows with it, what was written stays, and both engines work."""
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -96,7 +97,9 @@ def test_expanding_twice_in_a_row(backend):
 
 
 def hybrid_available():
-    return (Path.home() / ".cache/huggingface/hub/models--stanford-crfm--music-small-800k").exists()
+    import text2music
+    hub = Path(os.environ.get("HF_HUB_CACHE") or Path.home() / ".cache/huggingface/hub")
+    return (hub / "models--stanford-crfm--music-small-800k").exists()
 
 
 @pytest.mark.skipif(not hybrid_available(), reason="the Anticipation model is not in the Hugging Face cache")

@@ -23,6 +23,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>Composer records your singing to make a new singing voice from it. The recording stays on this Mac.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP"

@@ -15,3 +15,4 @@ music21==10.5.0
 verovio==6.3.0
 midi2audio==0.1.1
 matplotlib==3.11.2
+pypinyin==0.55.0
