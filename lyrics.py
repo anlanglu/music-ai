@@ -265,7 +265,7 @@ def metadata(lines, melodies, tempo, sig, starts=None):
 
 PREP_PY = ROOT / ".venv-prep" / "bin" / "python"
 PREP_MODELS = MODELS / "soulx-preprocess"
-USER_VOICES = ROOT / "voices"                  # one folder per voice you added: voice.wav, voice.json, voice.txt (name, language)
+USER_VOICES = Path(os.environ.get("MUSIC_AI_VOICES") or ROOT / "voices")                  # one folder per voice you added: voice.wav, voice.json, voice.txt (name, language)
 PREP_NEEDS = {"English": "parakeet-tdt-0.6b-v2/parakeet-tdt-0.6b-v2.nemo",
               "Mandarin": "speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch/model.pt"}
 
@@ -328,7 +328,7 @@ def add_voice(audio, name, language="English", log=print):
         items = json.loads(meta.read_text())
         notes = [int(x) for x in items[0]["note_pitch"].split() if int(x) > 0] if items else []
         if len(notes) < 4:
-            raise RuntimeError("I couldn't find singing in that recording. It needs a voice singing alone, with words.")
+            raise RuntimeError(f"I found only {len(notes)} sung note(s) in that recording. It needs about 10 to 30 seconds of a voice singing alone, with words (speaking or humming does not work).")
         wav = work / "out" / "long_cut_wavs" / (items[0]["index"] + ".wav")
         shutil.copyfile(wav, folder / "voice.wav")
         (folder / "voice.json").write_text(json.dumps(items[:1], ensure_ascii=False))

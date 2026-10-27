@@ -207,7 +207,7 @@ struct LyricsSheet: View {
                 Button("Done") { vm.stopVocal(); vm.showLyrics = false }
                     .keyboardShortcut(.defaultAction)
             }
-            if vm.busy { Text(vm.status).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+            if !vm.status.isEmpty { Text(vm.status).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
         }
         .padding(20)
         .frame(width: 540)
@@ -238,10 +238,7 @@ struct AddVoiceSheet: View {
                         if form.name.isEmpty { form.name = u.deletingPathExtension().lastPathComponent }
                     }
                 }
-                Button(mic.recording ? "Stop" : "Record…") {
-                    mic.toggle()
-                    if !mic.recording, let t = mic.take { form.file = t; form.recorded = true; if form.name.isEmpty { form.name = "My voice" } }
-                }
+                Button(mic.recording ? "Stop" : "Record…") { mic.toggle() }
                 .tint(mic.recording ? .red : nil)
                 .help("Sing into the microphone. Composer asks for microphone access the first time.")
                 Text(form.recorded ? "Your recording (\(Int(mic.seconds)) s)" : (form.file?.lastPathComponent ?? "No recording chosen"))
@@ -289,5 +286,11 @@ struct AddVoiceSheet: View {
         }
         .padding(20)
         .frame(width: 480)
+        .onChange(of: mic.take) { _, take in      // a take ends by the Stop button or by the 30 second limit
+            guard let take else { return }
+            form.file = take
+            form.recorded = true
+            if form.name.isEmpty { form.name = "My voice" }
+        }
     }
 }
