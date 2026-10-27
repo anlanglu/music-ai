@@ -38,7 +38,7 @@ Melody LLM menu (see below).
    line, and never has to use them all. The lines a melody was written to are stored beside it (`*.lyrics.json`). **Sing the chosen
    melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav, in the written key, in one of two voices (the two reference singers that come with SoulX; a voice is copied from a short recording, so more voices need more recordings). If accompaniment has been added (steps 4–5), the voice and the accompaniment are mixed into one `*.mix.wav`, rendered offline with the same Apple sound bank as playback. English and Mandarin (Chinese
    characters are one syllable and one note each); unusual English words need respelling. **Add voice…** makes a new singer
-   from a recording of someone singing alone (setup: DEPLOY.md 4c; only for voices you own or have permission to copy).
+   from your own singing (recorded with the microphone, 10–30 seconds) or from a file of someone singing alone (setup: DEPLOY.md 4c; only for voices you own or have permission to copy).
 8. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
    MuseScore, Dorico, Sibelius and others.
 

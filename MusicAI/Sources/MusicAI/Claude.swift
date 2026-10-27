@@ -1,3 +1,4 @@
+import AVFoundation
 import Security
 import SwiftUI
 
@@ -67,8 +68,93 @@ struct ClaudeKeySheet: View {
     }
 }
 
+/// Records the user singing into a temporary WAV file (one take, at most 30 seconds: that is all the voice maker uses).
+final class VoiceRecorder: NSObject, ObservableObject {
+    static let limit = 30.0
+    @Published var recording = false
+    @Published var seconds = 0.0
+    @Published var level = 0.0          // 0...1, how loud the singing is right now
+    @Published var message = ""
+    @Published var playing = false
+    @Published var take: URL?
+    private var recorder: AVAudioRecorder?
+    private var player: AVAudioPlayer?
+    private var timer: Timer?
+
+    func toggle() { recording ? stop() : start() }
+
+    private func start() {
+        stopPlayback()
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: begin()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { ok in
+                DispatchQueue.main.async { if ok { self.begin() } else { self.denied() } }
+            }
+        default: denied()
+        }
+    }
+
+    private func denied() {
+        message = "Composer can't use the microphone. Turn it on for Composer in System Settings, Privacy & Security, Microphone."
+    }
+
+    static func openMicrophoneSettings() {
+        if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") { NSWorkspace.shared.open(u) }
+    }
+
+    private func begin() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("composer-voice-\(UUID().uuidString).wav")
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44100.0, AVNumberOfChannelsKey: 1,
+                                       AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false]
+        do {
+            let r = try AVAudioRecorder(url: url, settings: settings)
+            r.isMeteringEnabled = true
+            guard r.record() else { message = "The microphone would not start."; return }
+            recorder = r
+            take = nil
+            seconds = 0
+            message = ""
+            recording = true
+            timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                guard let self, let r = self.recorder else { return }
+                r.updateMeters()
+                self.seconds = r.currentTime
+                self.level = max(0, min(1, Double((r.averagePower(forChannel: 0) + 50) / 50)))
+                if r.currentTime >= Self.limit { self.stop() }
+            }
+        } catch { message = "Couldn't record: \(error.localizedDescription)" }
+    }
+
+    func stop() {
+        guard recording, let r = recorder else { return }
+        r.stop()
+        timer?.invalidate()
+        recording = false
+        level = 0
+        take = r.url
+        recorder = nil
+        message = seconds < 8 ? "That is short. 10 to 30 seconds of singing with words works best." : ""
+    }
+
+    func togglePlayback() {
+        if playing { stopPlayback(); return }
+        guard let url = take, let p = try? AVAudioPlayer(contentsOf: url) else { return }
+        player = p
+        p.play()
+        playing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + p.duration + 0.2) { [weak self] in
+            if self?.player === p { self?.playing = false }
+        }
+    }
+
+    func stopPlayback() { player?.stop(); playing = false }
+    func finish() { if recording { stop() }; stopPlayback() }
+}
+
 final class VoiceForm: ObservableObject {
     @Published var file: URL?
+    @Published var recorded = false
     @Published var name = ""
     @Published var language = "English"
     @Published var permission = false
@@ -133,23 +219,55 @@ struct LyricsSheet: View {
 struct AddVoiceSheet: View {
     @ObservedObject var vm: ViewModel
     @StateObject private var form = VoiceForm()
+    @StateObject private var mic = VoiceRecorder()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add a voice").font(.title3).bold()
-            Text("Pick a recording of one person singing alone (no band or backing), 10 to 30 seconds, clean, with words. The model works out the words and notes in it (about a minute) and then sings in that voice. Everything stays on this Mac; the first 30 seconds are used.")
+            Text("Record yourself singing, or pick a recording of one person singing alone (no band or backing), 10 to 30 seconds, clean, with words. The model works out the words and notes in it (about a minute) and then sings in that voice. Everything stays on this Mac; the first 30 seconds are used.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Choose recording…") {
+                Button("Choose file…") {
                     let p = NSOpenPanel()
                     p.allowedContentTypes = [.audio]
                     p.allowsMultipleSelection = false
                     if p.runModal() == .OK, let u = p.url {
+                        mic.finish()
+                        form.recorded = false
                         form.file = u
                         if form.name.isEmpty { form.name = u.deletingPathExtension().lastPathComponent }
                     }
                 }
-                Text(form.file?.lastPathComponent ?? "No file chosen").foregroundStyle(.secondary).lineLimit(1)
+                Button(mic.recording ? "Stop" : "Record…") {
+                    mic.toggle()
+                    if !mic.recording, let t = mic.take { form.file = t; form.recorded = true; if form.name.isEmpty { form.name = "My voice" } }
+                }
+                .tint(mic.recording ? .red : nil)
+                .help("Sing into the microphone. Composer asks for microphone access the first time.")
+                Text(form.recorded ? "Your recording (\(Int(mic.seconds)) s)" : (form.file?.lastPathComponent ?? "No recording chosen"))
+                    .foregroundStyle(.secondary).lineLimit(1)
+            }
+            if mic.recording {
+                HStack {
+                    Image(systemName: "circle.fill").foregroundStyle(.red)
+                    Text(String(format: "%d:%02d / 0:30", Int(mic.seconds) / 60, Int(mic.seconds) % 60)).monospacedDigit()
+                    ProgressView(value: mic.level)
+                }
+                Text("Sing a verse or a few phrases, with words and no backing music. It stops by itself at 30 seconds.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if form.recorded {
+                HStack {
+                    Button(mic.playing ? "Stop" : "Play back") { mic.togglePlayback() }
+                    Text("Not happy with it? Press Record… again.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !mic.message.isEmpty {
+                HStack {
+                    Text(mic.message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    if mic.message.hasPrefix("Composer can't") {
+                        Button("Open Settings") { VoiceRecorder.openMicrophoneSettings() }
+                    }
+                }
             }
             TextField("Name of the voice", text: $form.name)
             Picker("Language sung in the recording", selection: $form.language) {
@@ -159,8 +277,9 @@ struct AddVoiceSheet: View {
             Toggle("It is my own voice, or I have the singer’s permission to copy it", isOn: $form.permission)
             HStack {
                 Spacer()
-                Button("Cancel") { vm.showAddVoice = false }
+                Button("Cancel") { mic.finish(); vm.showAddVoice = false }
                 Button("Make voice") {
+                    mic.finish()
                     if let file = form.file { vm.addVoice(file, name: form.name.trimmingCharacters(in: .whitespaces), language: form.language) }
                     vm.showAddVoice = false
                 }
