@@ -82,6 +82,7 @@ struct SheetView: NSViewRepresentable {
 struct ContentView: View {
     @StateObject private var vm = ViewModel()
     @AppStorage("showHistory") private var showHistory = true
+    @AppStorage("showAdvanced") private var showAdvanced = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -96,7 +97,6 @@ struct ContentView: View {
         }
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
-        .sheet(isPresented: $vm.showClaudeSheet) { ClaudeKeySheet(vm: vm) }
         .sheet(isPresented: $vm.showLyrics) { LyricsSheet(vm: vm) }
         .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
         .onChange(of: vm.ready) { _, _ in vm.loadMix() }
@@ -207,25 +207,30 @@ struct ContentView: View {
         }
     }
 
-    /// The settings steps 4 and 5 share.
+    /// The settings steps 4 and 5 share. Parts always respect each instrument's range and the melody's key.
     private var accompSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
+            let dynHelp = "How much the loudness of the accompaniment varies. Each instrument plays a little under the melody, swelling and fading with it, with the beat a little stronger. Zero: each instrument at one steady level. The melody keeps its own dynamics."
+            HStack {
+                Text("Dynamics"); Spacer()
+                Text(vm.accompDynamics <= 0 ? "Flat" : "\(Int(vm.accompDynamics))").monospacedDigit().foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle()).help(dynHelp)
+            Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
+            advancedBox {
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it with Hybrid. Small is quick; large is slower and usually better.")
-                Toggle("Playable parts (respect instrument ranges)", isOn: $vm.playable)
-                    .help("Keeps every instrument inside its real range and within the number of notes one player can sound at once")
-                Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
-                    .help("When a key was chosen for the melody, the added parts only use notes from that key")
-                let dynHelp = "How much the loudness of the accompaniment varies. Each instrument plays a little under the melody, swelling and fading with it, with the beat a little stronger. Zero: each instrument at one steady level. The melody keeps its own dynamics."
-                HStack {
-                    Text("Dynamics"); Spacer()
-                    Text(vm.accompDynamics <= 0 ? "Flat" : "\(Int(vm.accompDynamics))").monospacedDigit().foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle()).help(dynHelp)
-                Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
+                .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it. Small is quick; large is slower and usually better.")
+            }
+        }
+    }
+
+    /// Settings most people never change, folded away under one heading (open or closed everywhere at once).
+    private func advancedBox<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
+        DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+            VStack(alignment: .leading, spacing: 12) { content() }.padding(.top, 8)
         }
     }
 
@@ -406,11 +411,29 @@ struct ContentView: View {
             }
 
             complexityRow($vm.complexity)
-            llmPicker
-            characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
-                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider, strict: $vm.strictSlider, dynamics: $vm.dynamicsSlider,
-                              phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
+            VStack(alignment: .leading, spacing: 12) {
+                Divider()
+                Text("Character of the melody").font(.callout)
+                knobRow("Smooth ↔ Jumpy", $vm.shapeSlider, readout: shapeWord(vm.shapeSlider),
+                        help: "How the melody moves from note to note. Smooth: mostly small steps, like singing up and down a scale, and runs along the scale are fine. Jumpy: bigger leaps and more changes of direction, and runs are cut short; more angular and less predictable.")
+                knobRow("Steady pulse", $vm.pulseSlider,
+                        help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
+                knobRow("Dynamics: Flat ↔ Expressive", $vm.dynamicsSlider, readout: dynamicsWord(vm.dynamicsSlider),
+                        help: "How much the loudness varies: notes on the beat a little stronger, each phrase swelling and fading, the line rising towards its highest note, and the ending tapering. Zero: every note at one level. The accompaniment gets its own setting. The volume of each instrument is in the Mixer under the preview.")
+                if vm.modeHasFlavor {
+                    knobRow("Modal flavor", $vm.flavorSlider,
+                            help: "How strongly the melody uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th, Locrian's flat 5th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats.")
+                }
+                phrasingControls($vm.phrasing)
+                Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
+                    .help("Changes only the final note, so it ends on the tonic")
+            }
             optionsRow($vm.optionCount)
+            advancedBox {
+                llmPicker
+                knobRow("Scale: Relaxed ↔ Strict", $vm.strictSlider, readout: strictWord(vm.strictSlider),
+                        help: "How closely the melody keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
+            }
 
             Button(action: vm.generateMelodies) {
                 HStack {
@@ -437,28 +460,27 @@ struct ContentView: View {
                 Text("What should the new bars do?").font(.caption).foregroundStyle(.secondary)
                 ChipPicker(items: ViewModel.moves.map(\.label), selection: $vm.expandMoves,
                            help: Dictionary(uniqueKeysWithValues: ViewModel.moves.map { ($0.label, $0.text) }))
-                if vm.expandEngine == "hybrid", !vm.expandMoves.isDisjoint(with: ViewModel.llmOnlyMoves) {
-                    Text("“Answer the motif” and “return” are only followed in LLM only mode; Hybrid ignores them.")
-                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                if vm.expandEngine == "llm" {
+                    Text("“Answer the motif” is written by the language model (Advanced → Melody LLM); the other moves by the Anticipation model.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             describeBox("Anything else? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
-                .help("Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
+                .help("Free text for this expansion. The language model reads it as an instruction; the Anticipation model turns it into how busy, how high or low and how adventurous the new bars are.")
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
 
-            Picker("Written by", selection: $vm.expandEngine) {
-                Text("Hybrid: LLM + Anticipation").tag("hybrid")
-                Text("LLM only").tag("llm")
-            }
-            .help("Hybrid: the Anticipation model continues the melody, steered by the sliders; its rhythms are the more natural. LLM only: the language model continues it phrase by phrase and reads your direction.")
-
             complexityRow($vm.expandComplexity)
-            if vm.expandEngine == "llm" { llmPicker }
-            characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
-                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor, strict: $vm.expandStrict, dynamics: $vm.expandDynamics,
-                              phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
+            knobRow("Smooth ↔ Jumpy", $vm.expandShape, readout: shapeWord(vm.expandShape),
+                    help: "How the new bars move from note to note. Smooth: mostly small steps. Jumpy: bigger leaps and more changes of direction, and runs along the scale are cut short.")
+            knobRow("Bring the motif back", $vm.expandTheme,
+                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: the new bars are new material.")
+            knobRow("Dynamics: Flat ↔ Expressive", $vm.expandDynamics, readout: dynamicsWord(vm.expandDynamics),
+                    help: "How much the loudness varies in the new bars. Zero: every note at one level.")
+            Toggle("Resolve ending (finish on the home note)", isOn: $vm.expandResolve)
+                .help("Changes only the final note, so it ends on the tonic")
             optionsRow($vm.expandCount)
+            advancedBox { llmPicker }
 
             HStack {
                 Button(action: vm.expandMelody) {
@@ -498,13 +520,13 @@ struct ContentView: View {
                         example: "e.g. I don't think measure 2 leads into measure 3 very well, so connect them better")
                 .help("Say what is wrong and name the bars (\"measure 2\", \"bars 3-4\"). The LLM is only given those bars to rewrite.")
             HStack {
-                Text("Bars").foregroundStyle(.secondary)
-                TextField("or click bars in the roll", text: $vm.editBarsText)
+                Text("Bars to change").foregroundStyle(.secondary)
+                TextField("click bars in the roll, or type 2-3, 5", text: $vm.editBarsText)
                     .textFieldStyle(.roundedBorder)
-                    .help("Optional: the bars to change, as well as any you named above. The bar numbers are shown along the top of the hand editor and in the sheet music. If neither names a bar, nothing is changed.")
+                    .help("Exactly the bars that may change; nothing else is touched, however the sentence above is worded. Click bars in the piano roll or sheet music, or type them. If this is empty, the bars named in the sentence (\"measure 2\") are used instead.")
             }
             optionsRow($vm.editCount)
-            llmPicker
+            advancedBox { llmPicker }
             HStack {
                 Button(action: vm.startLLMEdit) {
                     HStack {
@@ -600,33 +622,8 @@ struct ContentView: View {
         .help("The language model that writes the melody, and the expansions and edits if you choose LLM only. Local models download once and are kept on disk. 14B needs about 8 GB of free memory and Mistral 24B about 10 GB, which is tight on a 16 GB Mac (close other apps first). The Claude entries run through the claude tool on this Mac (your subscription, online).")
     }
 
-    /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
-    private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
-                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>, strict: Binding<Double>, dynamics: Binding<Double>,
-                                   phrasing: Binding<Int>, resolve: Binding<Bool>, auto: Binding<Set<String>>, what: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Divider()
-            Text("Character of \(what)").font(.callout)
-            knobRow("Smooth ↔ Jumpy", shape, 0...10, auto: autoBinding(auto, "shape"), readout: shapeWord(shape.wrappedValue),
-                    help: "How \(what) moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
-            knobRow("Avoid scale runs", runs, 0...10, auto: autoBinding(auto, "runs"),
-                    help: "How much \(what) is kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn. Zero: runs are fine. Independent of Smooth ↔ Jumpy, so a smooth tune can still avoid runs.")
-            knobRow("Steady pulse", pulse, 0...10, auto: autoBinding(auto, "pulse"),
-                    help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
-            knobRow("Fit the harmony", harmony, 0...10, auto: autoBinding(auto, "harmony"),
-                    help: "Every bar is given a chord underneath. High: \(what) mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
-            knobRow("Phrase endings", endings, 0...10, auto: autoBinding(auto, "endings"),
-                    help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
-            knobRow("Recurring theme", theme, 0...10, auto: autoBinding(auto, "theme"),
-                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
-            knobRow("Scale: Relaxed ↔ Strict", strict, 0...10, auto: autoBinding(auto, "strict"),
-                    readout: strict.wrappedValue >= 10 ? "Strict" : strict.wrappedValue <= 0 ? "Relaxed" : "\(Int(strict.wrappedValue))",
-                    help: "How closely \(what) keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
-            knobRow("Dynamics: Flat ↔ Expressive", dynamics, 0...10, auto: autoBinding(auto, "dynamics"),
-                    readout: dynamics.wrappedValue <= 0 ? "Flat" : dynamics.wrappedValue >= 10 ? "Very expressive" : "\(Int(dynamics.wrappedValue))",
-                    help: "How much the loudness varies in \(what): notes on the beat a little stronger, each phrase swelling and fading, the line rising towards its highest note, and the ending tapering. Zero: every note at one level. The accompaniment gets its own setting. The volume of each instrument is in the Mixer under the preview.")
-            knobRow("Modal flavor", flavor, 0...10, auto: autoBinding(auto, "flavor"),
-                    help: "Only for the modes other than major and minor. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th, Locrian's flat 5th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
+    private func phrasingControls(_ phrasing: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: phrasing) {
                 Text("Flowing").tag(0)
@@ -635,36 +632,31 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented).labelsHidden()
             .help("Rests between ideas and phrases. Flowing: it never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
-            Toggle("Resolve ending (finish on the home note)", isOn: resolve)
-                .help("Changes only the final note, so it ends on the tonic")
         }
     }
 
-    private func autoBinding(_ set: Binding<Set<String>>, _ key: String) -> Binding<Bool> {
-        Binding(get: { set.wrappedValue.contains(key) },
-                set: { on in if on { set.wrappedValue.insert(key) } else { set.wrappedValue.remove(key) } })
-    }
-
-    /// A slider with an Auto switch: on Auto the slider is greyed and the LLM is given no instruction for it.
-    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, auto: Binding<Bool>,
-                         readout: String? = nil, help: String) -> some View {
+    /// A 0 to 10 slider with its name and current value; hovering anywhere on it explains it.
+    private func knobRow(_ title: String, _ value: Binding<Double>, readout: String? = nil, help: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(title); Spacer()
-                Text(auto.wrappedValue ? "Auto" : readout ?? (value.wrappedValue == 0 ? "off" : "\(Int(value.wrappedValue))"))
+                Text(readout ?? (value.wrappedValue == 0 ? "off" : "\(Int(value.wrappedValue))"))
                     .monospacedDigit().foregroundStyle(.secondary)
-                    .help(help)
-                Toggle("Auto", isOn: auto).toggleStyle(.checkbox).controlSize(.small)
-                    .help("Auto: don't set this. The LLM decides from your description (the engine uses its usual setting).")
             }
             .contentShape(Rectangle())
             .help(help)                  // hovering the name (or anywhere on the label row) explains the slider
-            Slider(value: value, in: range, step: 1).disabled(auto.wrappedValue).help(help)
+            Slider(value: value, in: 0...10, step: 1).help(help)
         }
     }
 
     private func shapeWord(_ v: Double) -> String {
         v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
+    }
+    private func dynamicsWord(_ v: Double) -> String {
+        v <= 0 ? "Flat" : v >= 10 ? "Very expressive" : "\(Int(v))"
+    }
+    private func strictWord(_ v: Double) -> String {
+        v >= 10 ? "Strict" : v <= 0 ? "Relaxed" : "\(Int(v))"
     }
 
     // MARK: History

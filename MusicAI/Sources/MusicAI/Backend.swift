@@ -66,7 +66,6 @@ enum BackendEvent {
     case notationError(midi: URL, text: String)
     case session(name: String, path: URL?, oldPath: URL?)
     case sessions([SessionInfo])
-    case claudeStatus(ok: Bool, text: String)
     /// A sung version of the melody (a .wav) has been written.
     case vocal(URL, backing: URL?)
     case voices([(key: String, name: String)])
@@ -195,7 +194,6 @@ final class Backend {
               let type = obj["type"] as? String else { return nil }
         switch type {
         case "ready": return .ready((obj["sliders"] as? [String: Double]) ?? [:])
-        case "claude_status": return .claudeStatus(ok: obj["ok"] as? Bool ?? false, text: obj["text"] as? String ?? "")
         case "voices":
             let items = (obj["items"] as? [[String: Any]] ?? []).compactMap { d -> (key: String, name: String)? in
                 guard let k = d["key"] as? String, let n = d["name"] as? String else { return nil }

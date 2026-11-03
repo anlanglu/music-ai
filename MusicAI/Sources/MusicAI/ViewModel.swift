@@ -81,6 +81,7 @@ struct EditNote: Identifiable, Equatable {
 struct EditSuggestion {
     let bars: [Int]
     let reason: String
+    let targets: [Int]      // the bars this edit was already allowed to change
 }
 
 /// A key's tonic (pitch class 0-11). The mode is chosen separately, so any tonic can be combined with any mode.
@@ -148,94 +149,65 @@ final class ViewModel: ObservableObject {
     @Published var keyMode = "auto"        // "auto", or one of Mode.all
     @Published var resolveEnding = true
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
-    // The five character sliders, each 0...10. The backend turns them into the sampler's numbers, and tells the app
-    // where they start (plan.SLIDER_DEFAULTS), so neither the scale nor the defaults are repeated here.
+    // The character sliders, each 0...10. The backend says where they start (plan.SLIDER_DEFAULTS); the ones not listed
+    // here (fit the harmony, phrase endings) keep those defaults, and avoiding scale runs follows shape.
     @Published var shapeSlider = 5.0    // smooth (0) .. jumpy (10)
     @Published var pulseSlider = 2.0    // notes start on the beat
-    @Published var harmonySlider = 3.0  // the melody fits each bar's chord
-    @Published var endingsSlider = 3.0  // phrases end on a stopping note
-    @Published var themeSlider = 0.0    // the opening idea returns in each phrase
-    @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
     @Published var strictSlider = 10.0  // relaxed (0) .. strict (10): how many notes may be outside the scale
     @Published var dynamicsSlider = 5.0 // flat (0) .. expressive (10): how much the loudness varies
     @Published var flavorSlider = 5.0   // how much the mode's own note (Lydian #4, Dorian ♮6...) is brought out
-    /// Sliders left on Auto are sent as "auto": the backend gives the LLM no instruction for them.
-    @Published var autoSliders: Set<String> = []
     var sliderValues: [String: Any] {
-        let v: [String: Double] = ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider,
-                                   "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider,
-                                   "flavor": flavorSlider, "strict": strictSlider,
-                                   "dynamics": dynamicsSlider]
-        return v.reduce(into: [String: Any]()) { $0[$1.key] = autoSliders.contains($1.key) ? "auto" : $1.value }
+        ["shape": shapeSlider, "pulse": pulseSlider, "flavor": flavorSlider, "strict": strictSlider, "dynamics": dynamicsSlider]
     }
+    /// The mode picker's choices that have a note of their own to bring out (Modal flavor does nothing in major or minor).
+    var modeHasFlavor: Bool { !["auto", "major", "minor"].contains(keyMode) }
     private func applySliderDefaults(_ d: [String: Double]) {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
-        harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
-        themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
         flavorSlider = d["flavor"] ?? flavorSlider; strictSlider = d["strict"] ?? strictSlider
         dynamicsSlider = d["dynamics"] ?? dynamicsSlider; accompDynamics = dynamicsSlider
+        expandTheme = d["theme"] ?? expandTheme
         copySettingsToExpansion()
     }
     /// Step 2 starts from step 1's settings; after that each step keeps its own.
     private func copySettingsToExpansion() {
-        expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
-        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider; expandStrict = strictSlider; expandDynamics = dynamicsSlider
-        expandComplexity = complexity; expandCount = optionCount
-        expandPhrasing = phrasing; expandResolve = resolveEnding; expandAuto = autoSliders
+        expandShape = shapeSlider; expandDynamics = dynamicsSlider
+        expandComplexity = complexity; expandCount = optionCount; expandResolve = resolveEnding
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
-    @Published var llm = "7B" {
-        didSet { if llm.hasPrefix("claude-") && !claudeKeySaved { showClaudeSheet = true } }
-    }
-    // Claude (cloud) as an alternative melody LLM; the key itself is only in the Keychain
-    @Published var claudeKeySaved = Keychain.get() != nil
-    @Published var claudeKeyOK = false
-    @Published var claudeChecking = false
-    @Published var claudeStatus = ""
-    @Published var showClaudeSheet = false
+    @Published var llm = "7B"
 
     // Step 2: expanding the chosen melody. It has its own settings, because each expansion can want a different character.
     @Published var expandBars = 4.0                // bars added at a time
-    @Published var expandEngine = "hybrid"         // "hybrid" (Anticipation continues it) or "llm"
     @Published var expandComplexity = 3.0
     @Published var expandCount = 3.0
     @Published var expandDirection = ""            // anything else to say about the new bars (optional)
     @Published var expandMoves: Set<String> = []
-    /// What each "what should the new bars do" chip tells the engine. The first two only mean something to the LLM.
+    /// What each "what should the new bars do" chip tells the engine. The second one only means something to the LLM.
     static let moves: [(label: String, text: String)] = [
         ("continue", "Continue the melody naturally."), ("answer the motif", "Answer the opening motif, like a reply to it."),
         ("build up", "Build up: gradually busier and higher, with more energy."), ("climax", "Reach a climax: the highest and most intense point."),
-        ("calm down", "Calm down: quieter, simpler and lower."), ("return", "Bring back the opening idea."),
+        ("calm down", "Calm down: quieter, simpler and lower."),
         ("contrast", "Contrast with what came before: a different character."),
     ]
-    static let llmOnlyMoves: Set<String> = ["answer the motif", "return"]
+    static let llmOnlyMoves: Set<String> = ["answer the motif"]
     var effectiveDirection: String {
         let chosen = Self.moves.filter { expandMoves.contains($0.label) }.map(\.text)
         return (chosen + [expandDirection.trimmingCharacters(in: .whitespacesAndNewlines)]).filter { !$0.isEmpty }.joined(separator: " ")
     }
     @Published var expandShape = 5.0
-    @Published var expandPulse = 2.0
-    @Published var expandHarmony = 3.0
-    @Published var expandEndings = 3.0
-    @Published var expandTheme = 0.0
-    @Published var expandRuns = 5.0
-    @Published var expandFlavor = 5.0
-    @Published var expandStrict = 10.0
+    @Published var expandTheme = 0.0                // how strongly the opening motif comes back in the new bars
     @Published var expandDynamics = 5.0
-    @Published var expandPhrasing = 1
     @Published var expandResolve = true
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     private var lastExpandBars = 4.0
-    @Published var expandAuto: Set<String> = []
+    /// Step 2 sends step 1's sliders with its own three on top.
     var expandSliderValues: [String: Any] {
-        let v: [String: Double] = ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony,
-                                   "endings": expandEndings, "theme": expandTheme, "runs": expandRuns,
-                                   "flavor": expandFlavor, "strict": expandStrict,
-                                   "dynamics": expandDynamics]
-        return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
+        sliderValues.merging(["shape": expandShape, "theme": expandTheme, "dynamics": expandDynamics]) { $1 }
     }
+    /// Only "answer the motif" needs the language model; every other move is written by the Anticipation model.
+    var expandEngine: String { expandMoves.isDisjoint(with: Self.llmOnlyMoves) ? "hybrid" : "llm" }
     // Step 3: editing the melody, by hand or by asking the LLM to change only the bars that are named
     @Published var editing = false                 // the piano roll is the note editor
     @Published var editNotes: [EditNote] = []
@@ -254,8 +226,6 @@ final class ViewModel: ObservableObject {
     var canExpand: Bool { ready && !busy && selected != nil && orchestration == nil && partsAdded.isEmpty && partOptions.isEmpty }
     // Stage 2: accompaniment
     @Published var ensemble = 0.0
-    @Published var playable = true
-    @Published var inKey = true
     @Published var partDirection = ""
     @Published var directionNote = ""   // what the backend understood from the direction
     // One-at-a-time mode: pick an instrument, choose among its options, approve, repeat
@@ -392,7 +362,6 @@ final class ViewModel: ObservableObject {
             applySliderDefaults(sliders)
             ready = true
             backendDown = false
-            if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
         case .voices(let items):
@@ -409,12 +378,6 @@ final class ViewModel: ObservableObject {
         case .vocal(let url, let backing):
             vocalURL = url
             if let backing { mixVocal(url, with: backing) } else { playVocal() }
-        case .claudeStatus(let ok, let text):
-            claudeChecking = false
-            claudeKeyOK = ok
-            claudeStatus = text
-            if ok { Keychain.set(pendingClaudeKey); claudeKeySaved = true }
-            pendingClaudeKey = ""
         case .log(let text):
             // direction.describe() in the backend starts its one-line report with one of these
             let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -478,8 +441,8 @@ final class ViewModel: ObservableObject {
             }
         case .mix(let path, let channels):
             gotMix(path, channels)
-        case .editSuggestion(let bars, let reason, _):
-            editSuggestion = EditSuggestion(bars: bars, reason: reason)
+        case .editSuggestion(let bars, let reason, let targets):
+            editSuggestion = EditSuggestion(bars: bars, reason: reason, targets: targets)
         case .partCandidate(let c):
             partOptions.append(c)
             status = "\(partInstrument.name) option \(c.index) ready"
@@ -515,8 +478,6 @@ final class ViewModel: ObservableObject {
             }
         }
     }
-
-    private var pendingClaudeKey = ""
 
     // MARK: Lyrics (demo): a melody with one note per syllable, sung by SoulX-Singer
 
@@ -605,23 +566,6 @@ final class ViewModel: ObservableObject {
     }
 
     func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
-
-    /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
-    func saveClaudeKey(_ key: String) {
-        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        pendingClaudeKey = key
-        claudeChecking = true
-        claudeStatus = "Checking the key…"
-        send(["cmd": "claude_key", "key": key, "test": true])
-    }
-
-    func removeClaudeKey() {
-        Keychain.remove()
-        claudeKeySaved = false; claudeKeyOK = false; claudeStatus = ""
-        send(["cmd": "claude_key", "key": ""])
-        if llm.hasPrefix("claude-") { llm = "7B" }
-    }
 
     private func send(_ request: [String: Any]) {
         do { try backend.send(request) } catch {
@@ -823,7 +767,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
-            "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
+            "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": phrasing,
             "lyrics": lyrics,
         ])
     }
@@ -916,7 +860,8 @@ final class ViewModel: ObservableObject {
         return out.sorted()
     }
 
-    /// Ask the LLM to change the bars named in the instruction (and in the bars box) and nothing else.
+    /// Ask the LLM to change the bars in the Bars box and nothing else. Only when the box is empty are the bars read, by
+    /// code, from the sentence ("measure 2"); the box always wins over the wording.
     func editWithLLM(extraBars: [Int] = []) {
         guard ready, canEdit, let c = selected else { return }
         let instruction = editRequest?.instruction ?? editInstruction
@@ -943,13 +888,12 @@ final class ViewModel: ObservableObject {
 
     /// The user agrees that the extra bars may change too: take back the answer that left them alone and run it again.
     func allowSuggestedBars() {
-        guard let sug = editSuggestion, let req = editRequest, !busy else { return }
+        guard let sug = editSuggestion, editRequest != nil, !busy else { return }
         if let last = expansionHistory.popLast() {
             candidates = last.candidates
             selectedID = last.selectedID
         }
-        let known = barsFromText(editBarsText)
-        editWithLLM(extraBars: Array(Set(req.bars + known + sug.bars)).sorted())
+        editWithLLM(extraBars: Array(Set(sug.targets + sug.bars)).sorted())
     }
 
     func declineSuggestedBars() {
@@ -972,7 +916,7 @@ final class ViewModel: ObservableObject {
         status = "Enriching the piece…"
         send([
             "cmd": "orchestrate", "source_midi": (base?.full ?? c.url).path, "ensemble": Int(ensemble), "size": size,
-            "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
+            "dynamics": Int(accompDynamics),
         ])
     }
 
@@ -1003,7 +947,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "add_part", "source_midi": source.path, "program": partInstrument.program,
             "count": Int(partOptionCount), "size": size,
-            "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
+            "dynamics": Int(accompDynamics),
             "texture": partInstrument.texture, "style": pianoStyle, "direction": partDirection,
         ])
     }

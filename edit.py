@@ -177,16 +177,17 @@ def _write(folder, name, k, notes, tempo, program, sig, total_beats):
 
 def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexity=3, log=print, on_candidate=None,
                 on_suggestion=None):
-    """Write up to `count` versions of the melody in which only the named bars differ. The bars are the ones the
-    instruction names ('measure 2 and 3') together with `bars` (the ones picked in the app, or agreed to after a question). Returns the list of option infos."""
+    """Write up to `count` versions of the melody in which only the chosen bars differ. `bars` (clicked in the app, or
+    agreed to after a question) are the bars exactly; only when none are given are they read from the instruction
+    ('measure 2 and 3'), by code and not by the model. Returns the list of option infos."""
     src = Path(source_midi)
     notes, tempo, sig, program, total = read_melody(src)
     if not notes:
         raise RuntimeError("There is no melody in that file to edit")
     bb = t.bar_beats(sig)
     n_bars = bar_count(total, bb)
-    named = parse_bars(instruction, n_bars)
-    targets = sorted(set(named) | {int(b) for b in (bars or []) if 1 <= int(b) <= n_bars})
+    chosen = sorted({int(b) for b in (bars or []) if 1 <= int(b) <= n_bars})
+    targets = chosen or parse_bars(instruction, n_bars)
     if not targets:
         raise RuntimeError(f"Say which bars to change, for example \"measure 2\" (the melody has {n_bars} bars)")
     shown = ", ".join(f"{a}" if a == b else f"{a}–{b}" for a, b in _runs(targets))

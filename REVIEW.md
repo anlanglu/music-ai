@@ -488,3 +488,22 @@ take `shape`, `form` and `knobs` (the review scripts and tests call them).
 - **Not verified**: how any of it sounds; the new Expand section on screen; a Hybrid expansion of a long melody; direction text
   for Hybrid is only turned into density, register, beat emphasis and adventurousness (not its dynamics or "answer the
   melody" parts, although the log line may say it understood them).
+
+
+## Simplifying the app (feature/simplify-ui)
+
+- **Fewer controls.** A motif is the theme, so step 1 no longer has *Recurring theme*; *Phrase endings*, *Fit the harmony*
+  and *Avoid scale runs* are gone from the app too. The first two keep their `plan.SLIDER_DEFAULTS` values; avoiding runs
+  now follows *Smooth ↔ Jumpy* (`plan.clean_sliders` sets `runs = shape`; 5 is what it always was). The per-slider *Auto*
+  switches are gone (`guidance_text` no longer has an auto case). *Modal flavor* shows only for a mode other than
+  major/minor. *Scale: Relaxed ↔ Strict*, the Melody LLM and the Music model sit under *Advanced*. The accompaniment's
+  "Playable parts" and "Keep in key" toggles are gone (always on, which was the default).
+- **Step 2** has five controls of its own (complexity, jumpy, *Bring the motif back* = the theme slider, dynamics,
+  resolve) and takes the rest from step 1. The engine is not chosen: only the "answer the motif" move needs the language
+  model, everything else is Hybrid. The "return" move chip is now the *Bring the motif back* slider.
+- **Step 3 enforcement.** The bars in the *Bars to change* box (clicked in the roll, or typed) are the bars exactly:
+  `edit.edit_melody` uses them and only reads bars out of the sentence (by regex, not by the model) when the box is empty.
+  Agreeing to the model's suggestion sends the earlier targets plus the suggested bars (`edit_suggestion.targets`).
+- **Deleted.** The Anthropic API-key route: the `anthropic` package, `claude_llm.complete/check/set_key`, the backend
+  `claude_key` command, the Keychain code and the key sheet. Claude is reached only through the `claude` command-line tool.
+- **Not verified:** none of the Swift UI has been clicked through; `make app` builds, the 151 Python tests pass.

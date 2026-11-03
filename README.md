@@ -12,13 +12,14 @@ Melody LLM menu (see below).
 ## What it does
 
 1. **Start with a motif.** A small musical idea of one to four bars: prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
-   ideas) and eight sliders for the line's character (see below). The language model writes every bar. You get N options
+   ideas) and a few sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
 2. **Extend the melody.** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
-   as you like (with Undo). Each expansion has its own settings: length, complexity, the eight sliders and a free-text
-   direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
-   continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
+   as you like (with Undo). Each expansion has its own settings: length, complexity, how jumpy, how strongly the
+   motif comes back, dynamics and a free-text direction ("build to a climax, then calm down"). It is written by the
+   Anticipation model, steered by the chords, cadences and opening idea, or by the language model for the "answer the
+   motif" move. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
 3. **Edit the melody.** Fix what you do not like before adding parts. By hand: the piano roll becomes a note editor (add,
    move, resize, delete), and saving redraws the sheet music. Or in words ("I don't think measure 2 leads into measure 3
@@ -50,28 +51,28 @@ apps; it is slower and tends to write fewer notes per attempt). Under it are **C
 they use your Claude subscription, so they count against its usage limits instead of being billed per request (check
 Anthropic's current terms for programmatic use). The prompt, the melody and your instructions leave the Mac. Claude fixes its
 own sampling, so the complexity setting does not change its randomness. Fable 5.1 is not offered: Claude Code bills it as
-extra usage credits. `claude_llm.py` also holds an Anthropic API-key route (key in the Keychain) that the menu does not
-currently show. The Anticipation model (extension and accompaniment) stays local.
+extra usage credits. The Anticipation model (extension and accompaniment) stays local.
 
 ## The character of the melody
 
-A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody section put one there:
+A melody with no shape behind it wanders. These sliders (0 to 10) in the Melody section put one there:
 
 | Slider | What it does |
 |---|---|
-| **Smooth ↔ Jumpy** | how the tune moves: small steps along the scale, or bigger leaps and turns |
+| **Smooth ↔ Jumpy** | how the tune moves: small steps along the scale, or bigger leaps and turns (jumpy also cuts one-way scale runs short) |
 | **Steady pulse** | how strongly notes start on the beat: loose and improvised, or square and regular |
-| **Fit the harmony** | every bar has a chord underneath, and the melody prefers its notes |
-| **Phrase endings** | each phrase finishes on a note that sounds like a stopping place, like a full stop |
-| **Recurring theme** | the opening idea comes back at the start of each phrase, moved onto its chord (off by default) |
-| **Avoid scale runs** | how much one-way runs up or down the scale are cut short, independent of Smooth ↔ Jumpy |
-| **Modal flavor** | with a mode (Dorian, Phrygian, Lydian, Mixolydian, Locrian) chosen next to the Key: how often the note that gives the mode its sound is used |
 | **Dynamics** | flat to expressive: how much the loudness varies (beat accents, phrase swells, a rise to the climax, a tapering end). The accompaniment has its own Dynamics slider |
+| **Modal flavor** | shown only when a mode other than major or minor is chosen: how often the note that gives the mode its sound is used |
+| **Scale: Relaxed ↔ Strict** (under *Advanced*) | whether notes outside the key may stay |
 
-The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
+In step 2 the motif has something to come back to, so **Bring the motif back** appears there: how strongly the opening
+idea returns at the start of each new phrase, moved onto its chord. A motif is the theme, so step 1 has no such slider.
+How much the melody fits each bar's chord and how firmly each phrase ends are fixed at sensible values
+(`plan.SLIDER_DEFAULTS`). Settings most people never change (the Melody LLM, the Music model, the scale rule) are folded
+under **Advanced**. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
 The accompaniment's sampling settings (randomness, retries, minimum density, beat-grid snapping, LLM directions) are fixed
-constants in `text2music.py`, not options. The command line has the same eight sliders as flags: `--smooth-jumpy`, `--pulse`,
+constants in `text2music.py`, not options. The command line still has the plan sliders as flags: `--smooth-jumpy`, `--pulse`,
 `--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
 numbers, for the app and the command line alike.
 

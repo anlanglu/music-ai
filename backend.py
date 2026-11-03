@@ -1,7 +1,7 @@
 """JSON-lines backend for the Swift app. Reads one JSON request per stdin line, writes events to stdout.
 
 Requests (one JSON object per line, "cmd" selects the stage):
-  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,runs: each 0..10}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
+  {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,flavor,strict,dynamics: each 0..10; missing ones take plan.SLIDER_DEFAULTS}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
   {"cmd":"save_edit", "source_midi":..., "notes":[[pitch, start_beat, duration_beats],...]}   (the melody as edited by hand)
@@ -11,7 +11,6 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
-  {"cmd":"claude_key", "key":..., "test":true}   (the Anthropic API key, held in memory only; test=true tries it and answers claude_status)
   {"cmd":"voice_add", "path":"a recording of a voice singing alone", "name", "language":"English"|"Mandarin"}  ->  voices{items:[{key,name}]}, melodies_done
   {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
   {"cmd":"lyrics_sing", "source_midi", "backing_midi"?, "voice"?: "en"|"zh"}  ->  vocal{path,backing} (the lyric lines sung, a .wav next to the melody; backing = the accompaniment without the Voice melody)
@@ -20,7 +19,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | voices{items:[{key,name}]} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
           done{melody,full,notes} | notation{midi,html,paged} | notation_error{midi,text} |
-          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | claude_status{ok,text} | vocal{path,backing} | error{text}      (notes = [[channel,pitch,start,end],...])
+          session{name,path,old_path} | sessions{items:[{name,path,created,files}]} | part_candidate{index,path,program,label,channel,added,programs,notes} | parts_done | part_approved{path,notes,programs} | edit_suggestion{bars,reason,targets} | vocal{path,backing} | error{text}      (notes = [[channel,pitch,start,end],...])
 """
 import json
 import os
@@ -155,14 +154,7 @@ def handle(r):
         seed_everything(int(r["seed"]))
     knobs = r.get("knobs") or None
     log = lambda s: send(type="log", text=s)
-    if cmd == "claude_key":   # the app's Keychain value; kept in memory only. test=True also tries it against the API
-        import claude_llm
-        if r.get("test"):
-            ok, text = claude_llm.check(r.get("key"))
-            send(type="claude_status", ok=ok, text=text)
-        else:
-            claude_llm.set_key(r.get("key"))
-    elif cmd == "session_list":
+    if cmd == "session_list":
         send(type="sessions", items=list_sessions())
     elif cmd == "session_new":  # lazily: the folder is only created once something is written
         reset_session()

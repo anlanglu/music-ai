@@ -109,19 +109,11 @@ def test_the_sliders_are_said_to_the_llm_in_words():
     assert "Theme" not in t.guidance_text({"theme": 0}, [(60, 0, 1)])
 
 
-def test_the_runs_slider_is_said_to_the_llm_and_zero_says_nothing():
-    assert "three notes" in t.guidance_text({"runs": 10})
-    assert "Scale runs" not in t.guidance_text({"runs": 0})
-    assert "Scale runs" in t.guidance_text({"shape": 0, "runs": 10}), "a smooth tune can still avoid runs"
-
-
-def test_an_automatic_slider_gets_no_instruction():
-    assert "Scale runs" in t.guidance_text({"runs": 10})
-    assert "Scale runs" not in t.guidance_text({"runs": "auto"})
-    assert "angular" not in t.guidance_text({"shape": "auto"}) and "mostly by step" not in t.guidance_text({"shape": "auto"})
-    s = t.plan.clean_sliders({"shape": "auto", "pulse": 7})
-    assert s["auto"] == ["shape"] and s["shape"] == t.plan.SLIDER_DEFAULTS["shape"], "the sampler still gets a number"
-    assert t.plan.clean_sliders(s)["auto"] == ["shape"], "cleaning twice keeps it"
+def test_scale_runs_follow_the_shape_slider():
+    assert "three notes" in t.guidance_text({"shape": 10})
+    assert "Scale runs" not in t.guidance_text({"shape": 0}), "smooth: runs are fine"
+    assert t.plan.clean_sliders({"shape": 7})["runs"] == 7.0
+    assert t.plan.clean_sliders()["runs"] == 5.0, "the default is what it always was"
 
 
 def test_a_direction_leads_the_prompt_and_is_spread_over_the_parts(monkeypatch):

@@ -266,7 +266,7 @@ _ant = {}
 def _get_llm(key="7B"):
     import claude_llm
 
-    if claude_llm.is_claude(key):   # nothing to load: the model runs at Anthropic
+    if claude_llm.is_claude(key):   # nothing to load: the `claude` tool runs it
         return claude_llm.ClaudeModel(key), claude_llm.ClaudeTok()
     if key not in _llm:
         from mlx_lm import load
@@ -288,9 +288,7 @@ def _generate(model, tok, prompt, max_tokens, temp=None, top_p=None):
     import claude_llm
 
     if isinstance(model, claude_llm.ClaudeModel):
-        if model.name.startswith("cc-"):   # Claude Code with your subscription
-            return claude_llm.complete_cli(model, prompt)
-        return claude_llm.complete(model, prompt, max_tokens)
+        return claude_llm.complete_cli(model, prompt)
     from mlx_lm import generate
     from mlx_lm.sample_utils import make_sampler
 
@@ -695,43 +693,36 @@ def guidance_text(sliders, motif=None, key=None):
     """The character sliders (0..10), said to the LLM in words. A language model cannot be told 'smoothness 3'; it can
     be told what the line should do."""
     s = plan.clean_sliders(sliders)
-    auto = set(s["auto"])             # an automatic slider gets no instruction: the LLM decides, from the prompt
     out = []
-    if "shape" in auto:
-        pass
-    elif s["shape"] < 2.5:
+    if s["shape"] < 2.5:
         out.append("Shape: move mostly by step (seconds, sometimes thirds), with no leap larger than a fourth; smooth and singable.")
     elif s["shape"] > 7.5:
         out.append("Shape: angular. Use frequent leaps of a fourth or more, often answered by a step the other way.")
     else:
         out.append("Shape: a mix of steps and leaps.")
-    if "runs" in auto:
-        pass
-    elif s["runs"] > 7.5:
+    if s["runs"] > 7.5:
         out.append("Scale runs: never play more than three notes in a row in one direction along the scale; break up any "
                    "run with a leap or a turn.")
     elif s["runs"] > 5.5:
         out.append("Scale runs: never play more than four notes in a row in one direction along the scale.")
     elif s["runs"] > 2.5:
         out.append("Scale runs: avoid long runs; no more than five notes in a row in one direction.")
-    if "pulse" in auto:
-        pass
-    elif s["pulse"] < 2.5:
+    if s["pulse"] < 2.5:
         out.append("Rhythm: loose and syncopated; start many notes off the beat and tie across the barline.")
     elif s["pulse"] > 7.5:
         out.append("Rhythm: square and regular; start almost every note on a beat.")
-    if "theme" not in auto and s["theme"] > 0 and motif:
+    if s["theme"] > 0 and motif:
         how = "nearly note for note" if s["theme"] > 6 else "recognisably but varied"
         out.append(f"Theme: begin each phrase with the piece's opening idea {json.dumps([[p, st, d] for p, st, d in motif])} "
                    f"(start_beat, duration_beats), moved to fit that phrase's chord, {how}.")
-    if key and "strict" not in auto:
+    if key:
         if s["strict"] >= 7:
             out.append("Scale rule: use only the notes of the scale.")
         elif s["strict"] >= 3:
             out.append("Scale rule: use the scale's notes; an occasional chromatic passing note on a weak beat is fine.")
         else:
             out.append("Scale rule: the scale is the home base, but chromatic notes and notes borrowed from other scales are welcome.")
-    if key and plan.is_modal(key[1]) and "flavor" not in auto and s["flavor"] > 2.5:
+    if key and plan.is_modal(key[1]) and s["flavor"] > 2.5:
         semis, what = plan.FLAVOR[key[1]]
         note = PC_NAMES[(key[0] + semis) % 12]
         if s["flavor"] > 7.5:

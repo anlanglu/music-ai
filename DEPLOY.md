@@ -162,7 +162,7 @@ session folder afterwards. The JSON-lines backend can be tried directly with `.v
 | Option | What it does |
 |---|---|
 | `--candidates N` | how many melodies to write and score; the best one is used |
-| `--smooth-jumpy`, `--pulse`, `--harmony`, `--endings`, `--theme` (each 0..10) | the same five sliders as the app's Melody section |
+| `--smooth-jumpy`, `--pulse`, `--harmony`, `--endings`, `--theme` (each 0..10) | the plan sliders (the app shows only some of them) |
 | `--phrasing 0..2` | rests between ideas and phrases: flowing, balanced, spacious |
 | `--key "D minor"` | force a key instead of guessing one from the prompt |
 | `--seed N` | make the run repeatable (the same seed gives the same music) |
