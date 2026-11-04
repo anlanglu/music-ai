@@ -436,7 +436,7 @@ final class ViewModel: ObservableObject {
             busy = false
         case .vocal(let url, let backing):
             vocalURL = url
-            if let backing { mixVocal(url, with: backing) } else { playVocal() }
+            if let backing { mixVocal(url, with: backing) } else { if let m = singingFor { sungAudio[m] = url }; playVocal() }
         case .log(let text):
             // direction.describe() in the backend starts its one-line report with one of these
             let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -541,6 +541,21 @@ final class ViewModel: ObservableObject {
     @Published var lyrics = ""
     @Published var showLyrics = false
     @Published var vocalURL: URL?
+    /// The sung version of a melody file (the voice mixed with its backing), by the melody's path. The main Play uses it
+    /// while it is newer than the file, so an edit or a new part falls back to the MIDI until it is sung again.
+    @Published private(set) var sungAudio: [URL: URL] = [:]
+    @Published var playSung = true
+    private var singingFor: URL?
+    private var audioPlayer: AVAudioPlayer?
+    /// The sung audio that goes with this melody file, if it is there and not older than the file.
+    func sungVersion(of url: URL) -> URL? {
+        guard playSung, let wav = sungAudio[url] else { return nil }
+        let fm = FileManager.default
+        guard let a = try? fm.attributesOfItem(atPath: wav.path)[.modificationDate] as? Date,
+              let b = try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date, a >= b else { return nil }
+        return wav
+    }
+    var hasSungAudio: Bool { displayURL.map { sungVersion(of: $0) != nil } ?? false }
     @Published var vocalPlaying = false
     @Published var singers = Singers()           // who sings the motif (each extension has its own: expandSingers)
     /// What the backend is told about who sings: the lead, any others (in the order of the list), and how.
@@ -583,6 +598,7 @@ final class ViewModel: ObservableObject {
         guard ready, !busy, let c = selected else { return }
         stopVocal()
         vocalURL = nil
+        singingFor = c.url
         busy = true
         status = "Singing the chosen melody (about 15 seconds per line)…"
         var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": singers.lead]
@@ -602,6 +618,7 @@ final class ViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.vocalURL = out
+                    if let m = self.singingFor { self.sungAudio[m] = out }
                     self.status = "Mixed: \(out.lastPathComponent)"
                 case .failure(let e):
                     self.status = "Couldn't mix the voice with the accompaniment (\(e.localizedDescription)); playing the voice alone."
@@ -1179,6 +1196,23 @@ final class ViewModel: ObservableObject {
 
     func play(_ url: URL, from position: Double = 0) {
         stop()
+        if let wav = sungVersion(of: url) {
+            do {
+                let p = try AVAudioPlayer(contentsOf: wav)
+                p.currentTime = position
+                p.prepareToPlay()
+                p.play()
+                audioPlayer = p
+                playingURL = url
+                timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        guard let s = self, let ap = s.audioPlayer else { return }
+                        if ap.isPlaying { s.playhead = ap.currentTime } else { s.stop() }
+                    }
+                }
+                return
+            } catch { status = "Couldn't play the sung version (\(error.localizedDescription)); playing the MIDI." }
+        }
         do {
             let p = try AVMIDIPlayer(contentsOf: url, soundBankURL: Self.soundBank)
             p.prepareToPlay()
@@ -1199,6 +1233,8 @@ final class ViewModel: ObservableObject {
     func stop() {
         player?.stop()
         player = nil
+        audioPlayer?.stop()
+        audioPlayer = nil
         finishedPlaying()
     }
 

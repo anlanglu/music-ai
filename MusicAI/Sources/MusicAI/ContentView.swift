@@ -945,6 +945,11 @@ struct ContentView: View {
                 if let url = vm.displayURL { vm.playingURL == url ? vm.stop() : vm.play(url) }
             }
             .disabled(vm.displayURL == nil)
+            if vm.displayURL.map({ vm.sungAudio[$0] != nil }) ?? false {
+                Toggle("Sung", isOn: $vm.playSung)
+                    .toggleStyle(.checkbox)
+                    .help("Play the sung version (the voice with the instruments under it) instead of the MIDI. It falls back to the MIDI after any change, until the melody is sung again.")
+            }
             Button("Show in Finder", action: vm.reveal).disabled(vm.displayURL == nil)
             Button(action: vm.exportPDF) {
                 HStack(spacing: 4) {
