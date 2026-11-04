@@ -300,13 +300,23 @@ struct ContentView: View {
             Text("A sung line over the melody, written to your lyrics (Lyrics button), a few bars at a time. It does not change the melody. Change its notes in step 3 (choose Singing), or lengthen the melody in step 2 and sing the new bars here.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             singerPicker($vm.singSingers)
-            HStack {
-                Text("Start at bar"); Spacer()
-                Text(vm.singStart == 0 ? "after the singing so far" : "\(Int(vm.singStart))").foregroundStyle(.secondary)
-                Stepper("", value: $vm.singStart, in: 0...64).labelsHidden()
+            if let r = vm.singRange {
+                HStack {
+                    Text("Singing bars \(r.from)–\(r.to)").font(.callout)
+                    Spacer()
+                    Button("Clear") { vm.singChosen = [] }.controlSize(.small)
+                }
+                .help("The bars picked in the roll. Click a bar next to them to add it, or at either end to take it off.")
+            } else {
+                Text("Click the bars to sing in the roll above, or set them here.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Start at bar"); Spacer()
+                    Text(vm.singStart == 0 ? "after the singing so far" : "\(Int(vm.singStart))").foregroundStyle(.secondary)
+                    Stepper("", value: $vm.singStart, in: 0...64).labelsHidden()
+                }
+                .help("Which bar the singing starts on. Auto starts right after the bars already sung, or at bar 1.")
+                barsRow("Bars to sing", $vm.singBars, range: 1...16, help: "How many bars of singing to write in one go. The next lyric lines that fit are used; the melody is not changed. Press \"Add more singing\" again to carry on from where the singing stopped.")
             }
-            .help("Which bar the singing starts on. Auto starts right after the bars already sung, or at bar 1.")
-            barsRow("Bars to sing", $vm.singBars, range: 1...16, help: "How many bars of singing to write in one go. The next lyric lines that fit are used; the melody is not changed. Press \"Add more singing\" again to carry on from where the singing stopped.")
             optionsRow($vm.singCount)
             HStack {
                 Button { vm.generateSinging() } label: {
@@ -910,7 +920,7 @@ struct ContentView: View {
         Group {
             if vm.editing {
                 MelodyEditor(notes: $vm.editNotes, selected: $vm.editSelected, beatsPerBar: vm.beatsPerBar,
-                             chosen: vm.chosenBars, toggle: { vm.toggleBar($0) })
+                             chosen: vm.chosenBars, toggle: { vm.clickBar($0) })
             } else if vm.displayNotes.isEmpty {
                 RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.09))
                     .overlay(Text("Your melody options will appear here").foregroundStyle(.secondary))
@@ -932,7 +942,7 @@ struct ContentView: View {
                 PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
                           playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
                           secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
-                          toggle: vm.canEdit ? { vm.toggleBar($0) } : nil)
+                          toggle: vm.canEdit ? { vm.clickBar($0) } : nil)
                     .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
             }
         }

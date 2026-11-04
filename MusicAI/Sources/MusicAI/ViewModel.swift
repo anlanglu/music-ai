@@ -921,7 +921,19 @@ final class ViewModel: ObservableObject {
     /// Bar lines are drawn while a single melody is shown (not the accompanied piece or a part audition).
     var barsShown: Bool { selected != nil && selectedPart == nil }
     var secondsPerBar: Double { beatsPerBar * 60 / Double(max(selected?.tempo ?? 120, 1)) }
-    var chosenBars: Set<Int> { Set(barsFromText(editBarsText)) }
+    var chosenBars: Set<Int> { step == 4 ? singChosen : Set(barsFromText(editBarsText)) }
+
+    /// Step 4: the bars to sing, picked in the roll (one run of neighbouring bars).
+    @Published var singChosen: Set<Int> = []
+    var singRange: (from: Int, to: Int)? { singChosen.isEmpty ? nil : (singChosen.min()!, singChosen.max()!) }
+    /// A click adds a bar next to the run, takes one off its end, or starts a new run.
+    func toggleSingBar(_ bar: Int) {
+        guard let r = singRange else { singChosen = [bar]; return }
+        if singChosen.contains(bar) { if bar == r.from || bar == r.to { singChosen.remove(bar) } else { singChosen = [bar] } }
+        else if (bar == r.from - 1 || bar == r.to + 1) && singChosen.count < 16 { singChosen.insert(bar) }   // 16 bars at a time at most
+        else { singChosen = [bar] }
+    }
+    func clickBar(_ bar: Int) { step == 4 ? toggleSingBar(bar) : toggleBar(bar) }
 
     /// Click a bar to choose it or drop it; the Bars box always shows the choice.
     func toggleBar(_ bar: Int) {
@@ -969,11 +981,13 @@ final class ViewModel: ObservableObject {
     /// Step 4: write a sung line over the chosen melody, to the next lyric lines, in the bars asked for.
     func generateSinging() {
         guard canExpand, let c = selected, hasLyrics else { return }
-        startEdit(label: "Added singing")
+        startEdit(label: singRange.map { "Added singing, bars \($0.from)–\($0.to)" } ?? "Added singing")
+        singChosen = []
         busy = true
         status = "Writing the singing…"
         send([
-            "cmd": "sing_part", "source_midi": c.url.path, "lyrics": lyrics, "bars": Int(singBars), "start_bar": Int(singStart),
+            "cmd": "sing_part", "source_midi": c.url.path, "lyrics": lyrics,
+            "bars": singRange.map { $0.to - $0.from + 1 } ?? Int(singBars), "start_bar": singRange?.from ?? Int(singStart),
             "count": Int(singCount), "llm": llm, "complexity": Int(complexity),
         ].merging(singerFields(singSingers)) { $1 })
     }
