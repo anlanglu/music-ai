@@ -220,6 +220,52 @@ def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, pian
     return best, bars
 
 
+# How harsh each interval (in semitones, mod 12) sounds between the voice and a piano note sounding with it.
+_CLASH = {0: 0.7, 1: 4.0, 2: 2.5, 3: 0.0, 4: 0.0, 5: 1.0, 6: 4.0, 7: 0.2, 8: 0.0, 9: 0.0, 10: 2.5, 11: 4.0}
+
+
+def harmonize_to_piano(notes, piano, key, chords=None, bb=4.0, span=RANGE, reach=4):
+    """Re-pitch a sung line (the words' rhythm is kept) so it sits well over the piano melody: each note moves, by up to
+    `reach` semitones, to a note of the key that makes thirds, sixths and fifths with the piano notes sounding with it, not
+    seconds, sevenths or a tritone, and not the piano's own note; stressed or long notes also like the bar's chord.
+    The best path through the line is chosen, so it stays smooth and does not jump about. `piano` is [(pitch, start,
+    duration)] in the line's own beats and `chords` one set of pitch classes per bar of it."""
+    if not notes or not piano:
+        return list(notes)
+    pcs = t.scale_pcs(key)
+    lo, hi = max(span[0], 0), min(span[1], 127)
+    rows = []
+    for p, s, d in notes:
+        cands = [c for c in range(p - reach, p + reach + 1) if lo <= c <= hi and c % 12 in pcs] or [p]
+        chord = chords[min(int(s // bb), len(chords) - 1)] if chords else None
+        sounding = [(q, min(s + d, qs + qd) - max(s, qs)) for q, qs, qd in piano if min(s + d, qs + qd) - max(s, qs) > 1e-6]
+        total = sum(w for _, w in sounding) or 1.0
+        stressed = s % bb < 1e-6 or d >= 2
+        cost = []
+        for c in cands:
+            clash = sum(w * _CLASH[abs(c - q) % 12] * (0.5 if abs(c - q) >= 12 else 1.0) for q, w in sounding) / total
+            own = 0.3 * abs(c - p)
+            off = (1.0 if stressed else 0.3) if chord and c % 12 not in chord else 0.0
+            cost.append(1.5 * clash + own + off)
+        rows.append((cands, cost))
+    best = [list(r[1]) for r in rows]
+    back = []
+    for i in range(1, len(rows)):
+        ptr = []
+        for j, c in enumerate(rows[i][0]):
+            k = min(range(len(rows[i - 1][0])), key=lambda m: best[i - 1][m] + 0.12 * max(0, abs(c - rows[i - 1][0][m]) - 4))
+            best[i][j] += best[i - 1][k] + 0.12 * max(0, abs(c - rows[i - 1][0][k]) - 4)
+            ptr.append(k)
+        back.append(ptr)
+    j = min(range(len(best[-1])), key=lambda m: best[-1][m])
+    picked = [rows[-1][0][j]]
+    for i in range(len(rows) - 1, 0, -1):
+        j = back[i - 1][j]
+        picked.append(rows[i - 1][0][j])
+    picked.reverse()
+    return [(c, s, d) for c, (_, s, d) in zip(picked, notes)]
+
+
 def _toward_chords(notes, chords, bb, key):
     """Stressed places (the first note of a bar, any note of two beats or more) move up to two semitones to the nearest
     note of that bar's chord, if it is in the key. `chords` is one set of pitch classes per bar."""
@@ -462,6 +508,8 @@ def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, lo
         first_bar = int(cursor // bb)
         here = [(p, s - cursor, d) for p, s, d in (piano or []) if cursor - 1e-6 <= s < cursor + want * bb - 1e-6]
         ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log, chords and chords[first_bar:], here or None, bars=want)
+        if here:
+            ln = harmonize_to_piano(ln, here, key, chords and chords[first_bar:], bb)
         notes += [(p, s + cursor, d) for p, s, d in ln]
         meta.append({"text": raw, "start_beat": cursor, "bars": bars})
         cursor += bars * bb

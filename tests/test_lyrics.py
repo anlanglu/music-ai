@@ -254,3 +254,19 @@ def test_a_duet_sings_the_same_notes_or_a_harmony_and_the_choice_is_stored(fake_
     calls.clear()
     L.sing_midi(same, log=lambda *_: None)
     assert calls["en"] == calls["zh"], "unticked: the same notes"
+
+
+def test_a_sung_line_is_moved_off_the_pianos_clashes_but_keeps_its_rhythm():
+    key = (2, "minor")                                                  # D minor
+    piano = [(74, 0.0, 2.0), (72, 2.0, 2.0), (70, 4.0, 2.0), (69, 6.0, 2.0)]
+    sung = [(73, 0.0, 1.0), (71, 1.0, 1.0), (71, 2.0, 2.0), (70, 4.0, 1.0), (68, 5.0, 1.0), (70, 6.0, 2.0)]   # mostly seconds and sevenths
+    chords = [{2, 5, 9}, {10, 2, 5}]
+    out = L.harmonize_to_piano(sung, piano, key, chords, 4.0)
+    assert [(s, d) for _, s, d in out] == [(s, d) for _, s, d in sung], "same rhythm, one note per syllable"
+    pcs = {(2 + x) % 12 for x in (0, 2, 3, 5, 7, 8, 10)}
+    assert all(p % 12 in pcs for p, _, _ in out) and all(57 <= p <= 74 for p, _, _ in out)
+    bad = {1, 2, 6, 10, 11}
+
+    def clashes(line):
+        return sum(1 for p, s, d in line for q, qs, qd in piano if min(s + d, qs + qd) > max(s, qs) and abs(p - q) % 12 in bad)
+    assert clashes(out) < clashes(sung) and clashes(out) == 0, (clashes(sung), clashes(out), out)
