@@ -113,7 +113,7 @@ struct LyricsSheet: View {
                 .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
                 .lineLimit(3)
             Divider()
-            Text("Singing (demo): a local voice model (SoulX-Singer) sings the lyric lines of the melody chosen on the right, each in the singer chosen for it in the Motif or Extend step. Parts of the melody for other instruments, and any accompaniment you added (steps 4–5), are mixed in. About 15 seconds a line.")
+            Text("Singing (demo): a local voice model (SoulX-Singer) sings the lyric lines of the melody chosen on the right: the singing added in step 4, or a melody for the Voice instrument, each in the singers chosen for it. Parts of the melody for other instruments, and any accompaniment you added (steps 4–5), are mixed in. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Check lyrics") { vm.checkLyrics() }

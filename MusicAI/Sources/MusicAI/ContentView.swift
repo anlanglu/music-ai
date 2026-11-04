@@ -269,8 +269,46 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Optional. Add instruments one at a time: choose an instrument, hear several options, approve one, repeat. The melody is not changed.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            singingControls
+            Divider()
             accompSettings
             oneByOneControls
+        }
+    }
+
+    /// Step 4: the singing voice, a sung line over the melody. A few bars at a time; the notes can be changed in step 3.
+    private var singingControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Singing voice").font(.headline)
+            Text("A sung line over the melody, written to your lyrics (Lyrics button), a few bars at a time. It does not change the melody. Change its notes in step 3 (choose Singing), or lengthen the melody in step 2 and sing the new bars here.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            singerPicker($vm.singSingers)
+            HStack {
+                Text("Start at bar"); Spacer()
+                Text(vm.singStart == 0 ? "after the singing so far" : "\(Int(vm.singStart))").foregroundStyle(.secondary)
+                Stepper("", value: $vm.singStart, in: 0...64).labelsHidden()
+            }
+            .help("Which bar the singing starts on. Auto starts right after the bars already sung, or at bar 1.")
+            barsRow("Bars to sing", $vm.singBars, range: 1...8, help: "How many bars of singing to write. The next lyric lines that fit are used; the melody is not changed.")
+            optionsRow($vm.singCount)
+            HStack {
+                Button { vm.generateSinging() } label: {
+                    Text(vm.hasSung ? "Add more singing" : "Add singing").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!vm.canExpand || !vm.hasLyrics)
+                Button("Lyrics…") { vm.showLyrics = true }.controlSize(.large)
+            }
+            if vm.selected == nil {
+                Text("Pick a melody first.").font(.caption).foregroundStyle(.secondary)
+            } else if !vm.hasLyrics {
+                Text("Add your lyrics first (Lyrics…).").font(.caption).foregroundStyle(.secondary)
+            }
+            if vm.hasSung {
+                Button { vm.singSelected() } label: { Text("Hear it sung (about 15 seconds a line)").frame(maxWidth: .infinity) }
+                    .disabled(vm.busy || !vm.ready)
+                    .help("Sings the lyric lines with the singers chosen for them and plays the result, with the melody under it")
+            }
         }
     }
 
@@ -550,6 +588,14 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Fix what you do not like before adding the accompaniment. Only the bars you name change; every other bar stays exactly as it is.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if vm.hasSung {
+                Picker("Change", selection: $vm.editPart) {
+                    Text("The melody").tag("melody")
+                    Text("The singing").tag("vocal")
+                }
+                .pickerStyle(.segmented)
+                .help("Which line the edit changes. The other one is kept exactly. Each bar of the singing keeps its number of notes, one for each syllable.")
+            }
             Button(action: vm.beginEditing) {
                 Label("Edit notes by hand", systemImage: "pencil").frame(maxWidth: .infinity)
             }

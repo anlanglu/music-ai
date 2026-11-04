@@ -13,7 +13,7 @@ from pathlib import Path
 import lyrics
 import plan
 import text2music as t
-from expand import program_at, read_melody, read_programs
+from expand import program_at, read_melody, read_programs, read_vocal
 from llmjson import extract_json
 
 GRID = 0.25     # edited notes are put on a sixteenth-note grid
@@ -131,7 +131,7 @@ def _listing(notes, bb, n_bars):
     return "\n".join(lines)
 
 
-def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_boost=0.0):
+def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_boost=0.0, extra=""):
     """Ask the model for new versions of the `targets` bars. Returns ({bar: [(p, beat, dur)]}, summary, suggestion)."""
     model, tok = t._get_llm(llm)
     bb = t.bar_beats(sig)
@@ -141,6 +141,7 @@ def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_b
             + (f" Key: {t.key_label(key)}. The notes of that scale are: {t.scale_names(key)}." if key else "")
             + f"\n\nThe melody:\n{_listing(notes, bb, n_bars)}"
             + f"\n\nInstruction from the composer: {instruction.strip() or '(none: improve these bars)'}"
+            + extra
             + f"\n\nRewrite ONLY bar(s) {runs}. Put exactly those bar numbers in \"bars\".")
     msgs = [{"role": "system", "content": SYSTEM.replace("{bar_beats:g}", f"{bb:g}")},
             {"role": "user", "content": user}]
@@ -169,22 +170,31 @@ def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_b
 
 # ------------------------------------------------------------------------------------------------------------- commands
 
-def _write(folder, name, k, notes, tempo, program, sig, total_beats):
+def _write(folder, name, k, notes, tempo, program, sig, total_beats, vocal=None):
     path = folder / f"{name}-opt{k}.mid"
-    t.write_melody_midi(path, tempo, notes, program, sig, total_beats)
+    t.write_melody_midi(path, tempo, notes, program, sig, total_beats, vocal=vocal)
     return path
 
 
+def _part_notes(src, part):
+    """(the notes of the part being changed, the notes of the other one). part: "melody" or "vocal" (the sung line)."""
+    melody = read_melody(src)[0]
+    vocal = read_vocal(src)
+    return (vocal, melody) if part == "vocal" else (melody, vocal)
+
+
 def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexity=3, log=print, on_candidate=None,
-                on_suggestion=None):
+                on_suggestion=None, part="melody"):
     """Write up to `count` versions of the melody in which only the chosen bars differ. `bars` (clicked in the app, or
     agreed to after a question) are the bars exactly; only when none are given are they read from the instruction
-    ('measure 2 and 3'), by code and not by the model. Returns the list of option infos."""
+    ('measure 2 and 3'), by code and not by the model. `part` "vocal" changes the sung line instead of the melody (the
+    melody stays as it is, and each bar keeps its number of notes: one per syllable). Returns the list of option infos."""
     src = Path(source_midi)
-    notes, tempo, sig, _first, total = read_melody(src)
+    _melody, tempo, sig, _first, total = read_melody(src)
     programs = read_programs(src)
+    notes, other = _part_notes(src, part)
     if not notes:
-        raise RuntimeError("There is no melody in that file to edit")
+        raise RuntimeError("There is no singing in that melody to edit" if part == "vocal" else "There is no melody in that file to edit")
     bb = t.bar_beats(sig)
     n_bars = bar_count(total, bb)
     chosen = sorted({int(b) for b in (bars or []) if 1 <= int(b) <= n_bars})
@@ -193,8 +203,14 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         raise RuntimeError(f"Say which bars to change, for example \"measure 2\" (the melody has {n_bars} bars)")
     shown = ", ".join(f"{a}" if a == b else f"{a}–{b}" for a, b in _runs(targets))
     log(f"  ▸ Changing bar{'s' if len(targets) > 1 else ''} {shown} only; every other bar is kept exactly as it is.")
-    key = t.key_for_file(src) or t.estimate_key(notes)
-    program = program_at(programs, (targets[0] - 1) * bb)      # the instrument at the first bar being changed
+    key = t.key_for_file(src) or t.estimate_key(_melody)
+    program = t.VOCAL_PROGRAM if part == "vocal" else program_at(programs, (targets[0] - 1) * bb)   # the instrument at the first bar changed
+    counts = {b: sum(1 for n in notes if bar_of(n[1], bb) == b) for b in targets} if part == "vocal" else {}
+    extra = ""
+    if part == "vocal":
+        extra = ("\n\nThis is the SUNG line: one note for each syllable of the words, so every bar must keep exactly its number "
+                 f"of notes ({', '.join(f'bar {b}: {n}' for b, n in counts.items())}); change pitches and rhythm only. "
+                 f"The piano melody under it, which must not change:\n{_listing(other, bb, n_bars)}")
     span = t.limits(program)[:2]
     folder = t.ensure_session()
     name = time.strftime("%H%M%S") + "-edit"
@@ -210,7 +226,7 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         tries += 1
         try:
             repl, summary_, sug = llm_rewrite(notes, set(targets), instruction, sig, key, tempo, llm, complexity,
-                                              temp_boost=0.1 * len(out))
+                                              temp_boost=0.1 * len(out), extra=extra)
         except (ValueError, KeyError, TypeError, RuntimeError) as e:
             log(f"      (attempt unusable, retrying: {str(e).splitlines()[0][:70]})")
             continue
@@ -227,6 +243,10 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         if thin:
             log(f"      (that attempt left bar {thin} mostly empty; trying again)")
             continue
+        wrong = [b for b, n in counts.items() if b in fitted and len(fitted[b]) != n]
+        if wrong:
+            log(f"      (bar {wrong[0]} must keep its {counts[wrong[0]]} sung notes, one per syllable; trying again)")
+            continue
         missing = [b for b in targets if b not in fitted]
         if missing:
             log(f"      (the model gave nothing for bar {missing[0]}; it stays as it was)")
@@ -241,7 +261,8 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         if any(new == _read(o["path"]) for o in out):
             continue
         k = len(out) + 1
-        path = _write(folder, name, k, new, tempo, programs, sig, total_beats)
+        path = _write(folder, name, k, other if part == "vocal" else new, tempo, programs, sig, total_beats,
+                      vocal=new if part == "vocal" else other)
         lyrics.carry(src, path)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,
                 "score": t.melody_score(new, total_beats, t.COMPLEXITY[complexity][1])[0]}
@@ -261,11 +282,13 @@ def _read(path):
     return read_melody(path)[0]
 
 
-def save_edit(source_midi, notes, log=print, on_candidate=None):
-    """Write the melody as the user edited it by hand. `notes` is [[pitch, start_beat, duration_beats], ...]."""
+def save_edit(source_midi, notes, log=print, on_candidate=None, part="melody"):
+    """Write the melody as the user edited it by hand. `notes` is [[pitch, start_beat, duration_beats], ...]. `part` "vocal"
+    is the sung line: the melody is kept, and every lyric line must keep one note per syllable."""
     src = Path(source_midi)
-    old, tempo, sig, _first, total = read_melody(src)
+    _melody, tempo, sig, _first, total = read_melody(src)
     programs = read_programs(src)
+    old, other = _part_notes(src, part)
     bb = t.bar_beats(sig)
     total_beats = max(bar_count(total, bb) * bb, 0)
     clean, seen = [], set()
@@ -280,7 +303,12 @@ def save_edit(source_midi, notes, log=print, on_candidate=None):
     clean = [(p, s, min(d, clean[i + 1][1] - s) if i + 1 < len(clean) else d) for i, (p, s, d) in enumerate(clean)]
     total_beats = max(total_beats, bar_count(clean[-1][1] + clean[-1][2], bb) * bb)
     folder = t.ensure_session()
-    path = _write(folder, time.strftime("%H%M%S") + "-hand", 1, clean, tempo, programs, sig, total_beats)
+    if part == "vocal":
+        problem = lyrics.line_problem(clean, lyrics.used_lines(src, "vocal"), bb)
+        if problem:
+            raise RuntimeError(problem)
+    path = _write(folder, time.strftime("%H%M%S") + "-hand", 1, other if part == "vocal" else clean, tempo, programs, sig,
+                  total_beats, vocal=clean if part == "vocal" else other)
     lyrics.carry(src, path)
     changed = [b for b in range(1, bar_count(total_beats, bb) + 1)
                if [n for n in old if bar_of(n[1], bb) == b] != [n for n in clean if bar_of(n[1], bb) == b]]

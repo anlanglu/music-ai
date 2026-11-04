@@ -22,12 +22,16 @@ Melody LLM menu (see below).
    Anticipation model, steered by the chords, cadences and opening idea, or by the language model for the "answer the
    motif" move. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
-3. **Edit the melody.** Fix what you do not like before adding parts. By hand: the piano roll becomes a note editor (add,
+3. **Edit the melody** (or, once there is one, the singing). Fix what you do not like before adding instruments. By hand: the piano roll becomes a note editor (add,
    move, resize, delete), and saving redraws the sheet music. Or in words ("I don't think measure 2 leads into measure 3
    very well, so connect them better"): the LLM is given only the bars you name, its answer is spliced in by code and
    checked, so every other bar stays exactly as it was. If it thinks other bars would need to change as well, it asks
    first and you decide.
-4. **Add accompaniment (optional).** One instrument at a time, written by the Anticipation model: type a free-text
+4. **Add singing and accompaniment (optional).** First the **Singing voice**: a sung line written over the melody to your lyrics (Lyrics button),
+   a few bars at a time, with one singer or a duet or choir (the same notes, or **Harmonize**). It is a second line in the
+   melody's own file, so the melody is not changed, and you can then change its notes in step 3 (choose *The singing*; every
+   bar keeps one note per syllable) or lengthen the melody in step 2 and sing the new bars. **Hear it sung** makes the audio, with the melody
+   under it. Then, as before, instruments one at a time, written by the Anticipation model: type a free-text
    direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or undo, repeat. Parts
    respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get chords,
    arpeggios, Alberti bass and more under an unchanged melody.

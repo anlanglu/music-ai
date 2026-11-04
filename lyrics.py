@@ -13,6 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import plan
 import text2music as t
 from llmjson import extract_json
 
@@ -134,13 +135,19 @@ and get longer notes; unstressed syllables are shorter. Sing in {key}, using onl
 a few leaps, a clear shape, and the last note of the line long and settled."""
 
 
-def _line_prompt(line, bars, sig, key, mood, before):
+def _line_prompt(line, bars, sig, key, mood, before, chords=None, piano=None):
     words = " ".join(f"{w['word']}({'/'.join('STRONG' if s == 1 else 'weak' for s in w['stress'])})" for w in line)
     msg = f"Lyric line ({count(line)} syllables): {words}"
     if line[0].get("token"):
         msg += "\n(Chinese: each character is one syllable and gets one note.)"
     if mood:
         msg += f"\nMood and style: {mood}"
+    if chords:
+        msg += "\nUnder this line the piano plays one chord per bar (notes of each): " + "; ".join(
+            f"bar {i}: {' '.join(t.PC_NAMES[pc] for pc in sorted(c))}" for i, c in enumerate(chords, 1)) + \
+            ". Put chord notes on the stressed syllables and the long notes."
+    if piano:
+        msg += f"\nThe piano melody in these bars (same format): {json.dumps([list(n) for n in piano])}. Fit with it; do not copy it."
     if before:
         msg += f"\nThe previous line's melody (same format): {json.dumps([list(n) for n in before])}. Answer it, do not copy it."
     return msg
@@ -180,13 +187,13 @@ def _tidy(notes, bars, bb):
     return out
 
 
-def line_melody(line, sig, key, llm, level, mood, before, log):
+def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, piano=None):
     n, bb = count(line), t.bar_beats(sig)
     bars = max(1, math.ceil(n / SYL_PER_BAR))
     model, tok = t._get_llm(llm)
     msgs = [{"role": "system", "content": SYSTEM.format(n=n, sig=sig, bb=bb, bars=bars, lo=RANGE[0], hi=RANGE[1],
                                                          key=t.key_label(key), scale=t.scale_names(key))},
-            {"role": "user", "content": _line_prompt(line, bars, sig, key, mood, before)}]
+            {"role": "user", "content": _line_prompt(line, bars, sig, key, mood, before, chords and chords[:bars], piano)}]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
     best, failed = None, 0
     while failed < t.MAX_FAILED_ATTEMPTS:
@@ -207,7 +214,24 @@ def line_melody(line, sig, key, llm, level, mood, before, log):
         log(f"      (adjusted {len(best)} notes to the {n} syllables)")
         best = _tidy(_fit(best, n), bars, bb)
     best = t.snap_to_key(best, key, RANGE)
+    if chords:
+        best = _toward_chords(best, chords, bb, key)
     return best, bars
+
+
+def _toward_chords(notes, chords, bb, key):
+    """Stressed places (the first note of a bar, any note of two beats or more) move up to two semitones to the nearest
+    note of that bar's chord, if it is in the key. `chords` is one set of pitch classes per bar."""
+    scale = t.scale_pcs(key)
+    out = []
+    for p, s, d in notes:
+        pcs = chords[min(int(s // bb), len(chords) - 1)]
+        if (s % bb < 1e-6 or d >= 2) and p % 12 not in pcs:
+            near = sorted((c for c in range(p - 2, p + 3) if c % 12 in pcs and c % 12 in scale), key=lambda c: (abs(c - p), c))
+            if near:
+                p = near[0]
+        out.append((p, s, d))
+    return out
 
 
 def syllabify(phones):
@@ -365,12 +389,27 @@ def sidecar(midi):
     return Path(midi).with_suffix(".lyrics.json")
 
 
-def used_lines(midi):
-    """[{"text", "start_beat", "bars"}] of the lyric lines a melody file was written to (none if it has no lyrics)."""
+def used_lines(midi, track=None):
+    """[{"text", "start_beat", "bars", ...}] of the lyric lines a melody file was written to (none if it has no lyrics).
+    Lines of the sung part over the melody have "track": "vocal"; `track` "vocal" or "melody" picks one kind."""
     try:
-        return json.loads(sidecar(midi).read_text())["lines"]
+        lines = json.loads(sidecar(midi).read_text())["lines"]
     except (OSError, ValueError, KeyError):
         return []
+    if track is None:
+        return lines
+    return [ln for ln in lines if (ln.get("track") == "vocal") == (track == "vocal")]
+
+
+def line_problem(notes, lines, bb):
+    """Why a sung line can no longer be sung (a lyric line whose notes are not one per syllable), or None."""
+    for i, ln in enumerate(lines, 1):
+        n = sum(1 for _p, st, _d in notes if ln["start_beat"] - 1e-6 <= st < ln["start_beat"] + ln["bars"] * bb - 1e-6)
+        want = count(parse_line(ln["text"]))
+        if n != want:
+            return (f"The sung line \u201c{ln['text']}\u201d has {want} syllables, so it needs {want} notes (it would have {n}). "
+                    "Move, lengthen or retune notes, but keep one note per syllable.")
+    return None
 
 
 def carry(src, dest):
@@ -390,7 +429,7 @@ def check(text):
     return rows, sorted(set(unknown))
 
 
-def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, log):
+def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, log, chords=None, piano=None):
     """Melody for the next lyric lines that fit in room_bars (always at least one, never more than the lyrics hold).
     Returns (notes in the section's own beats, [{"text", "start_beat", "bars"}], section length in beats)."""
     bb = t.bar_beats(sig)
@@ -409,7 +448,9 @@ def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, lo
         used += bars
     notes, meta, cursor = [], [], 0.0
     for raw, parsed in picks:
-        ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log)
+        first_bar = int(cursor // bb)
+        here = [(p, s - cursor, d) for p, s, d in (piano or []) if cursor - 1e-6 <= s < cursor + max(1, math.ceil(count(parsed) / SYL_PER_BAR)) * bb - 1e-6]
+        ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log, chords and chords[first_bar:], here or None)
         notes += [(p, s + cursor, d) for p, s, d in ln]
         meta.append({"text": raw, "start_beat": cursor, "bars": bars})
         cursor += bars * bb
@@ -489,9 +530,11 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
 
     src = Path(source_midi)
     raws = raw_lines(text)
-    done = used_lines(src)
+    everything = used_lines(src)
+    done = used_lines(src, "melody")
     if len(done) >= len(raws):
         return None
+    vocal = expand.read_vocal(src)                  # a sung part over the melody stays as it is
     notes, tempo, sig, _first, total = expand.read_melody(src)
     programs = expand.read_programs(src)
     programs += [] if programs[-1][1] == VOICE_PROGRAM else [(None, VOICE_PROGRAM)]      # the new part is the voice
@@ -517,8 +560,8 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, old + [(p, s + old_beats, d) for p, s, d in new],
-                            [(old_beats if b is None else b, pr) for b, pr in programs], sig, old_beats + length)
-        sidecar(path).write_text(json.dumps({"lines": done + [dict(m, start_beat=m["start_beat"] + old_beats, voice=singers[0], voices=singers, harmony=harmony) for m in meta]}))
+                            [(old_beats if b is None else b, pr) for b, pr in programs], sig, old_beats + length, vocal=vocal)
+        sidecar(path).write_text(json.dumps({"lines": everything + [dict(m, start_beat=m["start_beat"] + old_beats, voice=singers[0], voices=singers, harmony=harmony) for m in meta]}))
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}
         out.append(info)
         log(f"      option {k}: lyric lines {len(done) + 1}-{len(done) + len(meta)}")
@@ -526,6 +569,71 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
             on_candidate(info)
     if not out:
         raise RuntimeError("No usable melody was written for the next lyric lines; try again")
+    return out
+
+
+def sing_part(source_midi, text, start_bar=None, bars=4, llm="7B", level=3, mood="", count_=3, log=print, on_candidate=None,
+              voice="en", voices=None, harmony=False):
+    """Add a sung line over a melody (step 4): the next lyric lines that fit in `bars` bars, starting at bar `start_bar`
+    (default: after the last sung bar), written to the melody's key and chords and sung by `voice` and any `voices` with it.
+    The melody and the bars already sung are kept exactly. Returns the options."""
+
+    import expand
+
+    src = Path(source_midi)
+    raws = raw_lines(text)
+    if not raws:
+        raise ValueError("No lyrics found.")
+    notes, tempo, sig, _first, total = expand.read_melody(src)
+    programs = expand.read_programs(src)
+    vocal = expand.read_vocal(src)
+    everything = used_lines(src)
+    sung = used_lines(src, "vocal")
+    bb = t.bar_beats(sig)
+    n_bars = max(1, math.ceil(total / bb - 0.01))
+    after = max([ln["start_beat"] + ln["bars"] * bb for ln in sung], default=0.0)
+    first = int(start_bar) if start_bar else int(round(after / bb)) + 1
+    if first < 1 or first > n_bars:
+        raise RuntimeError(f"The melody has {n_bars} bars, so there is no bar {first} to sing. Extend the melody first (step 2).")
+    room = min(int(bars), n_bars - first + 1)
+    lo, hi = (first - 1) * bb, (first - 1 + room) * bb
+    if any(ln["start_beat"] < hi - 1e-6 and ln["start_beat"] + ln["bars"] * bb > lo + 1e-6 for ln in sung):
+        raise RuntimeError(f"Bars {first}-{first + room - 1} already have singing. Choose bars after it, or change it in step 3.")
+    if len(sung) >= len(raws):
+        raise RuntimeError("The sung part has already used all the lyrics. Add more lines in the Lyrics box.")
+    singers = singers_of(voice, voices)
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    theplan = t.plan_for_file(src)
+    chords = [set(c) for c in plan.plan_chord_pcs(theplan)] if theplan and len(theplan["chords"]) >= n_bars else \
+        [set(plan.chord_pcs(key[0], key[1], d)) for d in plan.infer_chords(notes, key, sig, n_bars)]
+    chords = chords[first - 1:first - 1 + room]
+    piano = [(p, s - lo, d) for p, s, d in notes if lo - 1e-6 <= s < hi - 1e-6]
+    tail = [(p, s - (sung[-1]["start_beat"] if sung else 0), d) for p, s, d in vocal if sung and s >= sung[-1]["start_beat"]] or None
+    folder = t.ensure_session()
+    name = time.strftime("%H%M%S") + "-sing"
+    out, fails = [], 0
+    log(f"  \u25b8 Writing a sung line for bars {first}-{first + room - 1} (lyric lines {len(sung) + 1} onward of {len(raws)}), "
+        f"over the melody, in {t.key_label(key)}.")
+    while len(out) < count_ and fails < t.MAX_FAILED_ATTEMPTS:
+        try:
+            new, meta, length = write_section(raws, len(sung), room, sig, key, llm, level, mood, tail, log, chords=chords, piano=piano)
+        except (RuntimeError, KeyError, TypeError) as e:
+            fails += 1
+            log(f"      (attempt unusable, retrying: {str(e).splitlines()[0][:70]})")
+            continue
+        k = len(out) + 1
+        path = folder / f"{name}-opt{k}.mid"
+        t.write_melody_midi(path, tempo, notes, programs, sig, n_bars * bb,
+                            vocal=vocal + [(p, s + lo, d) for p, s, d in new])
+        sidecar(path).write_text(json.dumps({"lines": everything + [
+            dict(m, start_beat=m["start_beat"] + lo, voice=singers[0], voices=singers, harmony=harmony, track="vocal") for m in meta]}))
+        info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}
+        out.append(info)
+        log(f"      option {k}: {len(new)} sung notes to {len(meta)} lyric line(s)")
+        if on_candidate:
+            on_candidate(info)
+    if not out:
+        raise RuntimeError("No usable sung line was written; try again")
     return out
 
 
@@ -600,6 +708,7 @@ def sing_midi(source_midi, log=print, voice="en"):
     if not lines:
         raise RuntimeError("This melody was not written to lyrics (choose the Voice instrument when generating).")
     notes, tempo, sig, _program, _total = expand.read_melody(src)
+    vocal = expand.read_vocal(src)
     key = t.key_for_file(src) or t.estimate_key(notes)
     bb = t.bar_beats(sig)
     groups = {}                                   # singer -> (parsed lines, melodies, starts)
@@ -607,7 +716,8 @@ def sing_midi(source_midi, log=print, voice="en"):
         who_all, harmony = line_singers(ln, voice)
         words = parse_line(ln["text"])
         s0, bars = ln["start_beat"], ln["bars"]
-        mine = [(p, s - s0, d) for p, s, d in notes if s0 - 1e-6 <= s < s0 + bars * bb - 1e-6]
+        source = vocal if ln.get("track") == "vocal" else notes
+        mine = [(p, s - s0, d) for p, s, d in source if s0 - 1e-6 <= s < s0 + bars * bb - 1e-6]
         if len(mine) != count(words):
             raise RuntimeError(f"Line {i} has {len(mine)} notes for {count(words)} syllables (was the melody edited?), so it can't be sung.")
         for k, who in enumerate(who_all):

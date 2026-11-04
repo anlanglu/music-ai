@@ -640,15 +640,25 @@ def melody_velocities(notes, sig="4/4", depth=1.0):
     return out
 
 
-def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True, depth=1.0):
-    """`program` is a General MIDI program, or [(beat, program), ...] when the instrument changes along the melody (the
-    melody stays on one channel; the changes are program_change events)."""
-    tpb = 480
-    mid = mido.MidiFile(type=1, ticks_per_beat=tpb)
-    mid.tracks.append(conductor_track(tempo, sig))
+VOCAL_CHANNEL = 1       # the sung line of a melody file (see lyrics.py) plays on this channel, as the Voice instrument (program 53)
+VOCAL_PROGRAM = 53
+
+
+def vocal_channel(mid):
+    """VOCAL_CHANNEL if this MIDI file has a sung line on it (the Voice program there), else None: an imported file may
+    use that channel for anything."""
+    for trk in mid.tracks:
+        for m in trk:
+            if m.type == "program_change" and m.channel == VOCAL_CHANNEL and m.program == VOCAL_PROGRAM:
+                return VOCAL_CHANNEL
+    return None
+
+
+def _line_track(mid, notes, channel, changes, sig, total_beats, dynamics, depth):
+    """Add one monophonic line to a MIDI file as its own track. `changes` is [(beat, program)]."""
+    tpb = mid.ticks_per_beat
     track = mido.MidiTrack()
     mid.tracks.append(track)
-    changes = [(0.0, program)] if isinstance(program, int) else sorted(program)
     events = [(round(b * tpb), 0.5, prog, 0) for b, prog in changes]   # a change comes after note-offs, before note-ons
     vels = melody_velocities(notes, sig, depth) if dynamics else [90] * len(notes)
     for (p, s, d), v in zip(notes, vels):
@@ -658,13 +668,25 @@ def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, 
     last = 0
     for tick, kind, p, v in events:
         if kind == 0.5:
-            track.append(mido.Message("program_change", program=p, channel=0, time=tick - last))
+            track.append(mido.Message("program_change", program=p, channel=channel, time=tick - last))
         else:
-            track.append(mido.Message("note_on" if kind else "note_off", note=p, velocity=v if kind else 0, channel=0,
+            track.append(mido.Message("note_on" if kind else "note_off", note=p, velocity=v if kind else 0, channel=channel,
                                       time=tick - last))
         last = tick
     if total_beats is not None:  # pad the file out to the final barline so its length is exactly N bars
         track.append(mido.MetaMessage("end_of_track", time=max(round(total_beats * tpb) - last, 0)))
+
+
+def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True, depth=1.0, vocal=None):
+    """`program` is a General MIDI program, or [(beat, program), ...] when the instrument changes along the melody (the
+    melody stays on one channel; the changes are program_change events). `vocal` is the optional sung line over it, as
+    [(pitch, start_beat, duration_beats)], written as a second track on VOCAL_CHANNEL."""
+    mid = mido.MidiFile(type=1, ticks_per_beat=480)
+    mid.tracks.append(conductor_track(tempo, sig))
+    changes = [(0.0, program)] if isinstance(program, int) else sorted(program)
+    _line_track(mid, notes, 0, changes, sig, total_beats, dynamics, depth)
+    if vocal:
+        _line_track(mid, vocal, VOCAL_CHANNEL, [(0.0, VOCAL_PROGRAM)], sig, total_beats, dynamics, depth)
     mid.save(str(path))
     return mid.length  # seconds
 

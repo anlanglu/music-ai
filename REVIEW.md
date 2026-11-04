@@ -541,3 +541,26 @@ take `shape`, `form` and `knobs` (the review scripts and tests call them).
   voice came out at about 45 % of the lead's RMS (the voices are not level-matched).
 - App: `Singers` (lead, extras, harmonize) replaces the single voice, in the Motif step and in each Extend step; extras are
   chips of the other voices. Not verified on screen.
+
+
+## The singing voice as a part of the melody (feature/sung-part)
+
+- **Where it lives.** The sung line is a second track in the melody file, on `text2music.VOCAL_CHANNEL` (1) with the Voice
+  program (53); `write_melody_midi(..., vocal=notes)` writes it, `expand.read_vocal` reads it, and `expand.read_melody` /
+  `read_programs` ignore it (only when a program-53 `program_change` is on that channel, so an imported file that uses channel 1
+  for something else is untouched). Because it rides in the file, Extend (`expand_melody`), `lyric_extend` and Edit all write it
+  back unchanged, the roll and sheet music show it, and the accompaniment model sees it as one more instrument.
+- **`lyrics.sing_part`** (backend `sing_part`): the next lyric lines that fit `bars` bars, from `start_bar` (default after the
+  last sung bar), over the melody. The line prompt gets the chord of each bar (from the session plan, or `plan.infer_chords`)
+  and the piano's notes in that stretch; afterwards stressed places move up to two semitones onto chord tones in the key
+  (`_toward_chords`). Overlapping earlier singing, bars past the melody and exhausted lyrics are errors. Each stretch stores its
+  own singers and `harmony`; lines carry `"track": "vocal"` in `*.lyrics.json` (`used_lines(midi, track)`).
+- **Edit** takes `part` ("melody" | "vocal"). A vocal LLM edit is told the note count of every bar and rejects attempts that change
+  it; a hand edit that breaks one-note-per-syllable is refused (`lyrics.line_problem`). The other line is rewritten exactly.
+- **Singing** reads each line's notes from the track it belongs to; the backing drops the Voice program wherever it is in
+  force, so the piano melody is mixed under the singing (even with no other accompaniment).
+- **Locking** is as before: adding an instrument or enriching freezes melody and singing (the voice itself never locks).
+- **Checked with the real model:** a piano melody, two lyric lines sung over it (Qwen 7B, duet with harmony), the melody
+  unchanged byte for byte, a cello part added over both, and the backing keeping only piano and cello.
+- **Not verified:** the new Step 4 box, the Melody/Singing picker in step 3 and hand-editing the singing on screen; how the
+  sung line sounds against the piano by ear; whether the chord-aware prompt makes it fit better than before (no comparison).

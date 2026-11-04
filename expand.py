@@ -25,10 +25,11 @@ CONTEXT_BARS = 8        # how much of the melody the Anticipation model is shown
 
 def read_melody(path):
     """(notes, tempo, sig, program, total_beats) of a melody file, as [(pitch, start_beat, duration_beats)] with one note at
-    a time (when notes overlap, the highest wins)."""
+    a time (when notes overlap, the highest wins). The sung line over it (read_vocal) is not part of the melody."""
     tempo, sig, seconds = t.midi_info(path)
     mid = mido.MidiFile(str(path))
     tpb = mid.ticks_per_beat
+    skip = (9, t.vocal_channel(mid))
     found, program = [], 0
     for trk in mid.tracks:
         tick, on, local, prog = 0, {}, [], None
@@ -36,7 +37,7 @@ def read_melody(path):
             tick += m.time
             if m.type == "program_change" and prog is None:
                 prog = m.program
-            elif m.type == "note_on" and m.velocity > 0 and m.channel != 9:
+            elif m.type == "note_on" and m.velocity > 0 and m.channel not in skip:
                 on[(m.channel, m.note)] = tick
             elif m.type in ("note_off", "note_on") and (m.channel, m.note) in on:
                 start = on.pop((m.channel, m.note))
@@ -54,18 +55,38 @@ def read_melody(path):
     return notes, tempo, sig, program, total
 
 
+def read_vocal(path):
+    """The sung line of a melody file, [(pitch, start_beat, duration_beats)], or [] if it has none."""
+    mid = mido.MidiFile(str(path))
+    tpb = mid.ticks_per_beat
+    out = []
+    if t.vocal_channel(mid) is None:
+        return out
+    for trk in mid.tracks:
+        tick, on = 0, {}
+        for m in trk:
+            tick += m.time
+            if m.type == "note_on" and m.velocity > 0 and m.channel == t.VOCAL_CHANNEL:
+                on[m.note] = tick
+            elif m.type in ("note_off", "note_on") and m.channel == t.VOCAL_CHANNEL and m.note in on:
+                start = on.pop(m.note)
+                out.append((m.note, start / tpb, max((tick - start) / tpb, 0.25)))
+    return sorted(out, key=lambda n: n[1])
+
+
 def read_programs(path):
     """[(beat, program)] of the melody track of a file: the instrument at the start, and each later change of instrument.
     A melody passed between instruments (or between a voice and an instrument) has more than one."""
     mid = mido.MidiFile(str(path))
     tpb = mid.ticks_per_beat
+    skip = (9, t.vocal_channel(mid))
     for trk in mid.tracks:
-        if not any(m.type == "note_on" and m.velocity > 0 and m.channel != 9 for m in trk):
+        if not any(m.type == "note_on" and m.velocity > 0 and m.channel not in skip for m in trk):
             continue
         tick, out = 0, []
         for m in trk:
             tick += m.time
-            if m.type == "program_change" and m.channel != 9 and (not out or out[-1][1] != m.program):
+            if m.type == "program_change" and m.channel not in skip and (not out or out[-1][1] != m.program):
                 out.append((tick / tpb, m.program))
         if out and out[0][0] > 1e-6:
             out.insert(0, (0.0, out[0][1]))
@@ -124,6 +145,7 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
     src = Path(source_midi)
     notes, tempo, sig, _first, total = read_melody(src)
     programs = read_programs(src)
+    vocal = read_vocal(src)                      # the sung line stays exactly as it was
     if program is None:
         program = programs[-1][1]
     if not notes:
@@ -206,7 +228,7 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, combined, programs + ([(old_beats, program)] if program != programs[-1][1] else []),
-                            sig, total_beats, depth=sl["dynamics"] / 5)
+                            sig, total_beats, depth=sl["dynamics"] / 5, vocal=vocal)
         import lyrics
         lyrics.carry(src, path)
         if not out:    # the accompaniment follows the plan of the whole, longer melody

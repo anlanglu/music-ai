@@ -29,13 +29,17 @@ def fake_llm_melody(prompt, bars, sig="4/4", level=3, llm="7B", before=None, phr
     return (tempo or 100), fake_notes(bars, sig, key, rng), "a rising idea that peaks mid-way", "C major", "a bright, simple tune"
 
 
-def fake_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_boost=0.0):
+def fake_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_boost=0.0, extra=""):
     """Stands in for the editing model: new notes for the target bars; asks about the next bar when told to 'connect'."""
     import edit
 
     bb = t.bar_beats(sig)
     rng = random.Random(hash((instruction, tuple(sorted(targets)), temp_boost)) & 0xFFFF)
     out = {b: fake_notes(1, sig, key, rng) for b in targets}
+    if "SUNG line" in extra:        # the sung line must keep its number of notes in every bar
+        import re
+        for b, n in re.findall(r"bar (\d+): (\d+)", extra.split("SUNG line")[1].split("The piano melody")[0]):
+            out[int(b)] = [(62 + (i * 2 + int(b)) % 7, i * (bb / max(int(n), 1)), bb / max(int(n), 1)) for i in range(int(n))]
     n_bars = edit.bar_count(max(s + d for _p, s, d in notes), bb)
     nxt = max(targets) + 1
     sug = {"bars": [nxt], "reason": "the next bar has to lead on from the new notes"} if "connect" in instruction and nxt <= n_bars else None
@@ -48,6 +52,18 @@ t.pick_key = lambda prompt, llm, log: (t.parse_key(prompt) or (7, "major"))
 import edit  # noqa: E402
 
 edit.llm_rewrite = fake_rewrite
+
+import lyrics  # noqa: E402
+
+
+def fake_line_melody(parsed, sig, key, llm, level, mood, before, log, chords=None, piano=None):
+    """One note per syllable, four to a bar, climbing a little."""
+    n = lyrics.count(parsed)
+    bars = max(1, -(-n // lyrics.SYL_PER_BAR))
+    return [(60 + (i * 2) % 7, float(i), 1.0) for i in range(n)], bars
+
+
+lyrics.line_melody = fake_line_melody
 
 import backend  # noqa: E402
 

@@ -3,7 +3,8 @@
 Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,flavor,strict,dynamics: each 0..10; missing ones take plan.SLIDER_DEFAULTS}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
-  {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
+  {"cmd":"sing_part", "source_midi", "lyrics", "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
+  {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
   {"cmd":"save_edit", "source_midi":..., "notes":[[pitch, start_beat, duration_beats],...]}   (the melody as edited by hand)
   {"cmd":"import", "path":...}
   {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
@@ -222,6 +223,16 @@ def handle(r):
             on_candidate=candidate_event, program=program,
         )
         send(type="melodies_done")
+    elif cmd == "sing_part":  # step 4: a sung line over the chosen melody, the next lyric lines in the bars asked for
+        begin()
+        import lyrics as ly
+        if not r.get("lyrics", "").strip():
+            raise RuntimeError("Add your lyrics with the Lyrics button first.")
+        ly.sing_part(r["source_midi"], r["lyrics"], r.get("start_bar") or None, max(1, min(16, int(r.get("bars", 4)))),
+                     r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
+                     on_candidate=candidate_event, voice=r.get("voice", "en"), voices=r.get("voices"),
+                     harmony=bool(r.get("harmony")))
+        send(type="melodies_done")
     elif cmd == "voice_add":  # a new singer from a recording of a voice singing alone
         import lyrics as ly
         ly.add_voice(r["path"], r["name"], r.get("language", "English"), log=log)
@@ -249,11 +260,12 @@ def handle(r):
             r["source_midi"], r.get("instruction", ""), r.get("bars"), int(r.get("count", 3)), r.get("llm", "7B"),
             int(r.get("complexity", 3)), log=log, on_candidate=candidate_event,
             on_suggestion=lambda sug, targets: send(type="edit_suggestion", bars=sug["bars"], reason=sug["reason"], targets=targets),
+            part=r.get("part", "melody"),
         )
         send(type="melodies_done")
     elif cmd == "save_edit":  # step 3, by hand: write the notes as the user left them
         begin()
-        save_edit(r["source_midi"], r["notes"], log=log, on_candidate=candidate_event)
+        save_edit(r["source_midi"], r["notes"], log=log, on_candidate=candidate_event, part=r.get("part", "melody"))
         send(type="melodies_done")
     elif cmd == "add_part":  # stage 2, one instrument at a time: several options for the chosen instrument
         begin()

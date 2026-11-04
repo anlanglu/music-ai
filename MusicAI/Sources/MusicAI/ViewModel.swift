@@ -229,7 +229,19 @@ final class ViewModel: ObservableObject {
     @Published var editSuggestion: EditSuggestion?
     private var editLabel: String?                 // set while an edit is running; the history entry it will get
     private var editRequest: (source: URL, instruction: String, bars: [Int])?
-    var editDirty: Bool { guard let c = selected else { return false }; return editNotes != Self.editNotes(of: c) }
+    var editDirty: Bool { guard let c = selected else { return false }; return editNotes != Self.editNotes(of: c, part: editPart) }
+    /// Which line step 3 works on: "melody", or "vocal" (the sung line added in step 4).
+    @Published var editPart = "melody"
+    static let vocalChannel = 1                    // text2music.VOCAL_CHANNEL
+    /// The chosen melody has a sung line over it.
+    var hasSung: Bool { selected.map { c in c.programs.contains(53) && c.notes.contains { $0.channel == Self.vocalChannel } } ?? false }
+    var editPartName: String { editPart == "vocal" && hasSung ? "vocal" : "melody" }
+
+    // Step 4: the singing voice, a sung line over the chosen melody
+    @Published var singSingers = Singers()
+    @Published var singStart = 0.0                 // 0: right after the bars already sung
+    @Published var singBars = 4.0
+    @Published var singCount = 3.0
     /// Editing, like expanding, changes the melody, so it is only offered before any accompaniment exists.
     var canEdit: Bool { canExpand }
     var canEditBusyHint: Bool { editLabel != nil }
@@ -379,8 +391,8 @@ final class ViewModel: ObservableObject {
             if !items.isEmpty {
                 let added = items.first { item in !voiceChoices.contains { $0.key == item.key } }
                 voiceChoices = items.map { ($0.key, Self.shortVoiceName($0.name)) }
-                if let added { singers.lead = added.key; expandSingers.lead = added.key; status = "Voice “\(added.name)” is ready." }
-                for which in [\ViewModel.singers, \ViewModel.expandSingers] {
+                if let added { singers.lead = added.key; expandSingers.lead = added.key; singSingers.lead = added.key; status = "Voice “\(added.name)” is ready." }
+                for which in [\ViewModel.singers, \ViewModel.expandSingers, \ViewModel.singSingers] {
                     let keys = Set(voiceChoices.map(\.key))
                     if !keys.contains(self[keyPath: which].lead) { self[keyPath: which].lead = "en" }
                     self[keyPath: which].extras.formIntersection(keys)
@@ -803,9 +815,9 @@ final class ViewModel: ObservableObject {
 
     // MARK: Stage 3: edit the melody
 
-    private static func editNotes(of c: Candidate) -> [EditNote] {
+    private static func editNotes(of c: Candidate, part: String) -> [EditNote] {
         let k = Double(c.tempo) / 60
-        return c.notes.filter { $0.channel != 9 }.sorted { $0.start < $1.start }.map {
+        return c.notes.filter { part == "vocal" ? $0.channel == vocalChannel : ($0.channel != 9 && $0.channel != vocalChannel) }.sorted { $0.start < $1.start }.map {
             EditNote(pitch: $0.pitch, start: (($0.start * k) * 4).rounded() / 4, dur: max((($0.end - $0.start) * k * 4).rounded() / 4, 0.25))
         }
     }
@@ -819,7 +831,7 @@ final class ViewModel: ObservableObject {
     func beginEditing() {
         guard canEdit, let c = selected else { return }
         stop()
-        editNotes = Self.editNotes(of: c)
+        editNotes = Self.editNotes(of: c, part: editPartName)
         editSelected = nil
         editSuggestion = nil
         viewMode = .roll
@@ -840,7 +852,7 @@ final class ViewModel: ObservableObject {
         startEdit(label: "Edited by hand")
         busy = true
         status = "Saving your edit…"
-        send(["cmd": "save_edit", "source_midi": c.url.path,
+        send(["cmd": "save_edit", "source_midi": c.url.path, "part": editPartName,
               "notes": editNotes.sorted { $0.start < $1.start }.map { [$0.pitch, $0.start, $0.dur] as [Any] }])
     }
 
@@ -896,8 +908,20 @@ final class ViewModel: ObservableObject {
         startEdit(label: "Edited with the LLM")
         busy = true
         status = "Rewriting only the bars you named…"
-        send(["cmd": "edit", "source_midi": source.path, "instruction": instruction, "bars": bars,
+        send(["cmd": "edit", "source_midi": source.path, "instruction": instruction, "bars": bars, "part": editPartName,
               "count": Int(editCount), "llm": llm, "complexity": Int(complexity)])
+    }
+
+    /// Step 4: write a sung line over the chosen melody, to the next lyric lines, in the bars asked for.
+    func generateSinging() {
+        guard canExpand, let c = selected, hasLyrics else { return }
+        startEdit(label: "Added singing")
+        busy = true
+        status = "Writing the singing…"
+        send([
+            "cmd": "sing_part", "source_midi": c.url.path, "lyrics": lyrics, "bars": Int(singBars), "start_bar": Int(singStart),
+            "count": Int(singCount), "llm": llm, "complexity": Int(complexity),
+        ].merging(singerFields(singSingers)) { $1 })
     }
 
     func startLLMEdit() {
