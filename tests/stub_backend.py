@@ -56,7 +56,7 @@ edit.llm_rewrite = fake_rewrite
 import lyrics  # noqa: E402
 
 
-def fake_line_melody(parsed, sig, key, llm, level, mood, before, log, chords=None, piano=None, bars=None):
+def fake_line_melody(parsed, sig, key, llm, level, mood, before, log, chords=None, piano=None, bars=None, scales=None):
     """One note per syllable, four to a bar, climbing a little."""
     n = lyrics.count(parsed)
     bars = bars or max(1, -(-n // lyrics.SYL_PER_BAR))

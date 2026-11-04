@@ -135,13 +135,21 @@ and get longer notes; unstressed syllables are shorter. Sing in {key}, using onl
 a few leaps, a clear shape, and the last note of the line long and settled."""
 
 
-def _line_prompt(line, bars, sig, key, mood, before, chords=None, piano=None):
+def _scale_at(scales, bb):
+    """A function from a beat of a line to the scale in force there, from one set of pitch classes per bar; None for no scales."""
+    return (lambda beat: scales[min(max(int(beat // bb), 0), len(scales) - 1)]) if scales else None
+
+
+def _line_prompt(line, bars, sig, key, mood, before, chords=None, piano=None, scales=None):
     words = " ".join(f"{w['word']}({'/'.join('STRONG' if s == 1 else 'weak' for s in w['stress'])})" for w in line)
     msg = f"Lyric line ({count(line)} syllables): {words}"
     if line[0].get("token"):
         msg += "\n(Chinese: each character is one syllable and gets one note.)"
     if mood:
         msg += f"\nMood and style: {mood}"
+    if scales and any(sc != scales[0] for sc in scales):
+        msg += "\nThe scale changes between bars; use only these notes in each: " + "; ".join(
+            f"bar {i}: {' '.join(t.PC_NAMES[pc] for pc in sorted(sc))}" for i, sc in enumerate(scales[:bars], 1)) + "."
     if chords:
         msg += "\nUnder this line the piano plays one chord per bar (notes of each): " + "; ".join(
             f"bar {i}: {' '.join(t.PC_NAMES[pc] for pc in sorted(c))}" for i, c in enumerate(chords, 1)) + \
@@ -187,14 +195,15 @@ def _tidy(notes, bars, bb):
     return out
 
 
-def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, piano=None, bars=None):
-    """Notes for one lyric line, one per syllable, over `bars` bars (default: about four syllables to a bar)."""
+def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, piano=None, bars=None, scales=None):
+    """Notes for one lyric line, one per syllable, over `bars` bars (default: about four syllables to a bar). `scales` is the
+    scale of each bar of the line (one set of pitch classes per bar) when bars have modes of their own."""
     n, bb = count(line), t.bar_beats(sig)
     bars = bars or max(1, math.ceil(n / SYL_PER_BAR))
     model, tok = t._get_llm(llm)
     msgs = [{"role": "system", "content": SYSTEM.format(n=n, sig=sig, bb=bb, bars=bars, lo=RANGE[0], hi=RANGE[1],
                                                          key=t.key_label(key), scale=t.scale_names(key))},
-            {"role": "user", "content": _line_prompt(line, bars, sig, key, mood, before, chords and chords[:bars], piano)}]
+            {"role": "user", "content": _line_prompt(line, bars, sig, key, mood, before, chords and chords[:bars], piano, scales and scales[:bars])}]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
     best, failed = None, 0
     while failed < t.MAX_FAILED_ATTEMPTS:
@@ -214,9 +223,9 @@ def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, pian
     if len(best) != n:
         log(f"      (adjusted {len(best)} notes to the {n} syllables)")
         best = _tidy(_fit(best, n), bars, bb)
-    best = t.snap_to_key(best, key, RANGE)
+    best = t.snap_to_key(best, key, RANGE, scale_at=_scale_at(scales, bb))
     if chords:
-        best = _toward_chords(best, chords, bb, key)
+        best = _toward_chords(best, chords, bb, key, scales)
     return best, bars
 
 
@@ -224,19 +233,22 @@ def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, pian
 _CLASH = {0: 0.7, 1: 4.0, 2: 2.5, 3: 0.0, 4: 0.0, 5: 1.0, 6: 4.0, 7: 0.2, 8: 0.0, 9: 0.0, 10: 2.5, 11: 4.0}
 
 
-def harmonize_to_piano(notes, piano, key, chords=None, bb=4.0, span=RANGE, reach=4):
+def harmonize_to_piano(notes, piano, key, chords=None, bb=4.0, span=RANGE, reach=4, scales=None):
     """Re-pitch a sung line (the words' rhythm is kept) so it sits well over the piano melody: each note moves, by up to
     `reach` semitones, to a note of the key that makes thirds, sixths and fifths with the piano notes sounding with it, not
     seconds, sevenths or a tritone, and not the piano's own note; stressed or long notes also like the bar's chord.
     The best path through the line is chosen, so it stays smooth and does not jump about. `piano` is [(pitch, start,
-    duration)] in the line's own beats and `chords` one set of pitch classes per bar of it."""
+    duration)] in the line's own beats and `chords` one set of pitch classes per bar of it; `scales` likewise, when bars have
+    modes of their own (a note then belongs to its bar's scale rather than the key's)."""
     if not notes or not piano:
         return list(notes)
     pcs = t.scale_pcs(key)
+    scale_at = _scale_at(scales, bb)
     lo, hi = max(span[0], 0), min(span[1], 127)
     rows = []
     for p, s, d in notes:
-        cands = [c for c in range(p - reach, p + reach + 1) if lo <= c <= hi and c % 12 in pcs] or [p]
+        here = scale_at(s) if scale_at else pcs
+        cands = [c for c in range(p - reach, p + reach + 1) if lo <= c <= hi and c % 12 in here] or [p]
         chord = chords[min(int(s // bb), len(chords) - 1)] if chords else None
         sounding = [(q, min(s + d, qs + qd) - max(s, qs)) for q, qs, qd in piano if min(s + d, qs + qd) - max(s, qs) > 1e-6]
         total = sum(w for _, w in sounding) or 1.0
@@ -266,15 +278,17 @@ def harmonize_to_piano(notes, piano, key, chords=None, bb=4.0, span=RANGE, reach
     return [(c, s, d) for c, (_, s, d) in zip(picked, notes)]
 
 
-def _toward_chords(notes, chords, bb, key):
+def _toward_chords(notes, chords, bb, key, scales=None):
     """Stressed places (the first note of a bar, any note of two beats or more) move up to two semitones to the nearest
     note of that bar's chord, if it is in the key. `chords` is one set of pitch classes per bar."""
     scale = t.scale_pcs(key)
+    scale_at = _scale_at(scales, bb)
     out = []
     for p, s, d in notes:
         pcs = chords[min(int(s // bb), len(chords) - 1)]
         if (s % bb < 1e-6 or d >= 2) and p % 12 not in pcs:
-            near = sorted((c for c in range(p - 2, p + 3) if c % 12 in pcs and c % 12 in scale), key=lambda c: (abs(c - p), c))
+            here = scale_at(s) if scale_at else scale
+            near = sorted((c for c in range(p - 2, p + 3) if c % 12 in pcs and c % 12 in here), key=lambda c: (abs(c - p), c))
             if near:
                 p = near[0]
         out.append((p, s, d))
@@ -476,7 +490,7 @@ def check(text):
     return rows, sorted(set(unknown))
 
 
-def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, log, chords=None, piano=None):
+def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, log, chords=None, piano=None, scales=None):
     """Melody for the next lyric lines that fit in room_bars (always at least one, never more than the lyrics hold).
     Returns (notes in the section's own beats, [{"text", "start_beat", "bars"}], section length in beats)."""
     bb = t.bar_beats(sig)
@@ -507,9 +521,10 @@ def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, lo
     for (raw, parsed), want in zip(picks, sizes):
         first_bar = int(cursor // bb)
         here = [(p, s - cursor, d) for p, s, d in (piano or []) if cursor - 1e-6 <= s < cursor + want * bb - 1e-6]
-        ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log, chords and chords[first_bar:], here or None, bars=want)
+        ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log, chords and chords[first_bar:], here or None, bars=want,
+                              scales=scales and scales[first_bar:])
         if here:
-            ln = harmonize_to_piano(ln, here, key, chords and chords[first_bar:], bb)
+            ln = harmonize_to_piano(ln, here, key, chords and chords[first_bar:], bb, scales=scales and scales[first_bar:])
         notes += [(p, s + cursor, d) for p, s, d in ln]
         meta.append({"text": raw, "start_beat": cursor, "bars": bars})
         cursor += bars * bb
@@ -666,6 +681,10 @@ def sing_part(source_midi, text, start_bar=None, bars=4, llm="7B", level=3, mood
     chords = [set(c) for c in plan.plan_chord_pcs(theplan)] if theplan and len(theplan["chords"]) >= n_bars else \
         [set(plan.chord_pcs(key[0], key[1], d)) for d in plan.infer_chords(notes, key, sig, n_bars)]
     chords = chords[first - 1:first - 1 + room]
+    scales = None            # the scale of each bar, when some bars have a mode of their own
+    if theplan and theplan.get("modes") and any(theplan["modes"]):
+        scales = [plan.bar_scale(theplan, b) | (set(chords[i]) if theplan.get("harmony") and i < len(chords) else set())
+                  for i, b in enumerate(range(first - 1, first - 1 + room))]     # ... and the notes of chords the user wrote
     piano = [(p, s - lo, d) for p, s, d in notes if lo - 1e-6 <= s < hi - 1e-6]
     tail = [(p, s - (sung[-1]["start_beat"] if sung else 0), d) for p, s, d in vocal if sung and s >= sung[-1]["start_beat"]] or None
     folder = t.ensure_session()
@@ -675,7 +694,8 @@ def sing_part(source_midi, text, start_bar=None, bars=4, llm="7B", level=3, mood
         f"over the melody, in {t.key_label(key)}.")
     while len(out) < count_ and fails < t.MAX_FAILED_ATTEMPTS:
         try:
-            new, meta, length = write_section(raws, len(sung), room, sig, key, llm, level, mood, tail, log, chords=chords, piano=piano)
+            new, meta, length = write_section(raws, len(sung), room, sig, key, llm, level, mood, tail, log, chords=chords, piano=piano,
+                                              scales=scales)
         except (RuntimeError, KeyError, TypeError) as e:
             fails += 1
             log(f"      (attempt unusable, retrying: {str(e).splitlines()[0][:70]})")

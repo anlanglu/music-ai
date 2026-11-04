@@ -308,7 +308,8 @@ def handle(r):
         if r.get("chords"):             # chords for the new bars, to be sung to
             from expand import expand_chords
             expand_chords(r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), program, int(r.get("count", 3)),
-                          int(r.get("complexity", 3)), log=log, on_candidate=candidate_event, progression=progression_of(r))
+                          int(r.get("complexity", 3)), log=log, on_candidate=candidate_event, progression=progression_of(r),
+                          modes=modes_of(r))
             send(type="melodies_done")
             return
         expand_melody(

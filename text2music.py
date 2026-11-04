@@ -1488,9 +1488,9 @@ def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_
     theplan = plan_for_file(source_midi)
     plan_chords = None
     if theplan is not None and plan.form_weights(theplan.get("form", DEFAULT_FORM)).get("chord"):
-        plan_chords = plan.bar_chords(theplan) if theplan.get("harmony") else theplan["chords"]
+        plan_chords = plan.bar_chords(theplan) if theplan.get("harmony") or theplan.get("modes") else theplan["chords"]
     for k in range(1, count + 1):
-        label, part = tx.option(notes, tempo, sig, key, style, k, program, d, plan_chords)
+        label, part = tx.option(notes, tempo, sig, key, style, k, program, d, plan_chords, plan.scale_pcs_at(theplan))
         path = parts_dir / f"{name}-{slugify(label0)}-{slugify(label)}-b{lo_bar}-{hi_bar}-{k}.mid"
         add_layers_file(source_midi, path, {program: sorted(part, key=lambda n: (n[1], n[0]))}, lo_beat, hi_beat)
         dynamics_mod.finish(path, source_midi, sig, dynamics)

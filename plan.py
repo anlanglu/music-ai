@@ -260,6 +260,7 @@ def bar_chords(plan):
     user wrote ("harmony") come first; bars without one have the triad of the plan's scale degree."""
     tonic, mode = plan["key"]
     named = plan.get("harmony") or []
+    modes = bar_modes(plan)
     out = []
     for i, deg in enumerate(plan["chords"]):
         bar = None
@@ -268,7 +269,7 @@ def bar_chords(plan):
                 bar = [harmony.parse(x) for x in named[i]]
             except ValueError:
                 bar = None
-        out.append(bar or [harmony.parse(degree_symbol(tonic, mode, deg))])
+        out.append(bar or [harmony.parse(degree_symbol(tonic, modes[i], deg))])     # a bar's own mode builds its own triad
     return out
 
 

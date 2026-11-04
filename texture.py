@@ -164,7 +164,7 @@ def melody_program(notes, exclude=None):
     return max(by, key=lambda k: sum(by[k]) / len(by[k])) if by else None
 
 
-def _double(notes, key, program, d, variant):
+def _double(notes, key, program, d, variant, scale_at=None):
     """Play the melody itself at an interval (an octave below, a sixth below, ...), kept in the key and in the
     instrument's range, one note at a time."""
     mel = melody_program(notes, exclude=program)
@@ -178,8 +178,9 @@ def _double(notes, key, program, d, variant):
     out = []
     for p, st, du, prog in sorted((n for n in notes if n[3] == mel), key=lambda n: n[1]):
         q = p + shift
-        if q % 12 not in pcs:
-            q = min((x for x in range(q - 2, q + 3) if x % 12 in pcs), key=lambda x: (abs(x - q), x))
+        here = scale_at(st) if scale_at else pcs                 # bars with a mode of their own keep to it
+        if q % 12 not in here:
+            q = min((x for x in range(q - 2, q + 3) if x % 12 in here), key=lambda x: (abs(x - q), x))
         q = fold_pitch(q, program)
         if out and st < out[-1][1] + out[-1][2]:       # monophonic: end the previous note where this one begins
             out[-1] = (out[-1][0], out[-1][1], max(0.25, st - out[-1][1]))
@@ -187,7 +188,7 @@ def _double(notes, key, program, d, variant):
     return out
 
 
-def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None, lead=False):
+def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None, lead=False, scale_at=None):
     """The accompaniment as [(pitch, start_beat, dur_beats)] for one instrument.
 
     Keyboards play it as a left hand tucked under the melody; any other instrument gets a window inside its own
@@ -197,7 +198,7 @@ def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=No
     its own range rather than under a melody (the chords are all there is in those bars)."""
     d = d or {}
     if style == "double":
-        return _double(notes, key, program, d, variant)
+        return _double(notes, key, program, d, variant, scale_at)
     num, den = (int(x) for x in sig.split("/"))
     bar = num * 4 / den
     compound = den == 8 and num % 3 == 0
@@ -282,7 +283,7 @@ def style_order(sig):
     return ["arpeggio", "alberti", "block", "oompah", "sustained"]
 
 
-def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None):
+def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None, scale_at=None):
     """Option number k (1-based). style='mix' cycles through the styles; otherwise the same style gets a different
     voicing for each option. Returns (label, [(pitch, start_beat, dur_beats)])."""
     if style == "mix":
@@ -296,6 +297,6 @@ def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None):
                  -4: "a third below", -8: "a sixth below", -9: "a sixth below", 7: "a fifth above", 5: "a fourth above"}
         iv = ([ivs[0]] + [x for x in (-12, 12, -24) if x != ivs[0]])[variant % 4]
         label = "Doubling " + names.get(iv, f"{iv:+d} semitones")
-        return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords)
+        return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords, scale_at=scale_at)
     label = STYLE_LABELS[chosen] + (f" (voicing {variant + 1})" if variant else "")
-    return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords)
+    return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords, scale_at=scale_at)

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import expand
+import lyrics as L
 import harmony as h
 import plan
 import text2music as t
@@ -169,3 +170,32 @@ def test_set_modes_is_kept_and_shown_and_extend_adds_modes_for_the_new_bars(back
     cand = [e for e in done if e["type"] == "candidate"][0]
     backend.send(cmd="chords", source_midi=cand["path"])
     assert backend.until({"chords", "error"})[-1]["modes"] == ["", "", "", "dorian", "", "", "lydian", ""]
+
+
+def test_a_bar_with_its_own_mode_gets_a_triad_of_that_mode_when_no_chord_is_written():
+    p = plan.build_plan(4, "4/4", (0, "major"))
+    p["chords"] = [1, 1, 1, 1]
+    plan.set_modes(p, ["", "", "", "lydian"])
+    names = [bar[0].symbol for bar in plan.bar_chords(p)]
+    assert names[:3] == ["Dm"] * 3 and names[3] == "D", names           # II is D minor in C major, D major in C lydian
+
+
+def test_doubling_keeps_to_each_bars_scale():
+    p = plan.build_plan(2, "4/4", (0, "major"))
+    plan.set_modes(p, ["", "lydian"])
+    melody = [(66, 0.0, 1.0, 73), (66, 4.0, 1.0, 73)]               # F# in bar 1 (major) and in bar 2 (lydian)
+    out = tx.build(melody, 100, "4/4", (0, "major"), "double", 0, 0, {"double_interval": 0}, None, scale_at=plan.scale_pcs_at(p))
+    assert out[0][0] % 12 != 6 and out[1][0] % 12 == 6, out
+
+
+def test_the_sung_line_is_held_to_each_bars_scale():
+    scales = [{0, 2, 4, 5, 7, 9, 11}, {0, 2, 4, 6, 7, 9, 11}]        # C major, then C lydian
+    notes = [(66, 0.0, 1.0), (66, 4.0, 1.0)]
+    at = L._scale_at(scales, 4.0)
+    snapped = t.snap_to_key(notes, (0, "major"), L.RANGE, scale_at=at)
+    assert snapped[0][0] % 12 != 6 and snapped[1][0] == 66
+    piano = [(60, 0.0, 1.0), (60, 4.0, 1.0)]
+    moved = L.harmonize_to_piano(notes, piano, (0, "major"), None, 4.0, scales=scales)
+    assert moved[0][0] % 12 != 6, "no raised 4th in the major bar"
+    prompt = L._line_prompt([{"word": "la", "stress": [1]}], 2, "4/4", (0, "major"), "", None, None, None, scales)
+    assert "scale changes between bars" in prompt and "bar 2: C D E F# G A B" in prompt

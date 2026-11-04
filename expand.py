@@ -411,7 +411,7 @@ def _chord_line(section):
 CHORD_STYLES = ["block", "arpeggio", "oompah", "sustained", "alberti"]
 
 
-def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=print, on_candidate=None, progression=None):
+def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=print, on_candidate=None, progression=None, modes=None):
     """Add `add_bars` bars of chords for one instrument (piano, guitar...) on the end of a melody, to be sung to later. The
     chords are the plan's for those bars and every option is the same progression in a different pattern (block, arpeggio,
     bass and chords...). The new bars are a chord layer in the file; the melody line has no notes in them."""
@@ -432,7 +432,7 @@ def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=pri
         meta = {}
     key = t.key_for_file(src) or t.estimate_key(notes)
     whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity,
-                                 progression=progression)
+                                 progression=progression, modes=modes)
     form = int((meta.get("plan") or {}).get("form", 0) or 0)
     t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
     name = time.strftime("%H%M%S") + "-chords"
