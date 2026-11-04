@@ -3,6 +3,7 @@ import pytest
 import torch
 
 import plan
+import sessions
 import text2music as t
 from anticipation import sample as smp
 from anticipation.vocab import CONTROL_OFFSET, MAX_NOTE, MAX_PITCH, NOTE_OFFSET
@@ -250,7 +251,7 @@ def test_the_targets_the_plan_makes_are_where_the_phrase_is():
 # ---- the session keeps the plan, so the accompaniment can follow it
 def test_the_plan_is_stored_with_the_session(tmp_path):
     import json
-    t.OUT_DIR = tmp_path
+    sessions.OUT_DIR = tmp_path
     try:
         t.new_session("planned")
         p = plan.build_plan(8, "4/4", (7, "major"))
@@ -262,19 +263,19 @@ def test_the_plan_is_stored_with_the_session(tmp_path):
         assert back["form"] == 3
         assert json.loads((t.current_session() / "session.json").read_text())["plan"]["chords"] == p["chords"]
     finally:
-        t.OUT_DIR = tmp_path.parent / "output"
+        sessions.OUT_DIR = tmp_path.parent / "output"
 
 
 def test_the_key_can_be_read_from_the_plan_alone(tmp_path):
     """A session made from the command line may only have the plan; the accompaniment still needs the key."""
-    t.OUT_DIR = tmp_path
+    sessions.OUT_DIR = tmp_path
     try:
         t.new_session("planned")
         p = plan.build_plan(8, "4/4", (9, "minor"))
         t._write_meta(t.current_session(), plan=t.plan_json(p, 3), form=3)
         assert t.key_for_file(t.current_session() / "x") == (9, "minor")
     finally:
-        t.OUT_DIR = tmp_path.parent / "output"
+        sessions.OUT_DIR = tmp_path.parent / "output"
 
 
 def test_the_shape_slider_blends_the_presets():

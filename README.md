@@ -114,7 +114,8 @@ Try it without the app (uses the language model; it downloads on first use):
 |---|---|
 | `MusicAI/` | the SwiftUI app (SwiftPM) and the build script |
 | `backend.py` | JSON-lines server the app talks to |
-| `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
+| `text2music.py` | the melody pipeline (compose, finish, rank) and the CLI |
+| `config.py`, `sessions.py`, `models.py`, `keys.py`, `midifiles.py`, `melody_llm.py`, `parts.py` | settings, session folders, model loading, keys and scales, MIDI files, the LLM melody, accompaniment options (see ARCHITECTURE.md) |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
 | `harmony.py` | chord names → notes (`Dm7`, `G7#9`, `C/E`...), and progressions written as text |
 | `expand.py` | step 2: grow a melody by 2–16 bars (LLM or Anticipation) |
@@ -147,7 +148,7 @@ the full log is at `~/Library/Logs/Composer/backend.log`.
 ## Documentation
 
 - [DEPLOY.md](DEPLOY.md): requirements, models and sizes, install, build, run, troubleshooting.
-- [REVIEW.md](REVIEW.md): architecture, what was verified and how, known issues, and a guide for code review.
+- [ARCHITECTURE.md](ARCHITECTURE.md): how the pieces fit, the decisions behind them, how it is verified, known limits.
 
 ## Status and limitations
 

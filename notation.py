@@ -10,7 +10,8 @@ import verovio
 from music21 import chord, clef, converter, dynamics, key, layout, meter, note, stream
 
 import plan
-from text2music import GM_NAMES, TMP_DIR, key_for_file
+import sessions
+from text2music import GM_NAMES, key_for_file
 
 
 def _strip_drums(path, dest):
@@ -174,8 +175,8 @@ def render(midi_path, title=None, scale=45, paged=False):
     paged=True lays the score out on fixed A4 pages (<midi>-print.html) for PDF export instead of one
     continuous, screen-friendly column."""
     midi_path = Path(midi_path)
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = TMP_DIR / "_notation_tmp.mid"
+    sessions.TMP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = sessions.TMP_DIR / "_notation_tmp.mid"
     _strip_drums(midi_path, tmp)
     programs = _part_programs(tmp)
 

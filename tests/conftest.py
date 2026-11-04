@@ -17,11 +17,11 @@ import pytest  # noqa: E402
 @pytest.fixture
 def out_dir(tmp_path, monkeypatch):
     """A fresh output folder for one test, with the module's session state reset."""
-    import text2music as t
+    import sessions
 
-    monkeypatch.setattr(t, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(t, "TMP_DIR", tmp_path / ".tmp")
-    monkeypatch.setattr(t, "_session", None)
+    monkeypatch.setattr(sessions, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(sessions, "TMP_DIR", tmp_path / ".tmp")
+    monkeypatch.setattr(sessions, "_session", None)
     return tmp_path
 
 

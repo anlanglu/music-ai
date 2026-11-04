@@ -46,10 +46,11 @@ import re
 import time
 from pathlib import Path
 
-from text2music import (  # noqa: E402
-    add_part_options, approve_part, bar_beats, clear_layers_file, current_session, ensure_session, layers_of, list_sessions, make_melodies, make_music, midi_info, new_session, open_session, piece_bars, rename_session,
-    reset_session, seed_everything, session_info,
-)
+from config import bar_beats  # noqa: E402
+from midifiles import clear_layers_file, layers_of, midi_info, piece_bars  # noqa: E402
+from parts import add_part_options, approve_part  # noqa: E402
+from sessions import current_session, ensure_session, list_sessions, new_session, open_session, rename_session, reset_session, seed_everything, session_info  # noqa: E402
+from text2music import make_melodies, make_music  # noqa: E402
 import harmony  # noqa: E402
 import mixer  # noqa: E402
 import plan  # noqa: E402

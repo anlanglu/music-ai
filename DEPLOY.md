@@ -43,8 +43,7 @@ music21, verovio, numpy, tqdm, huggingface-hub (see `requirements.txt` for the e
 ## 2. Get the project folder in place
 
 Copy or clone the project to the target Mac. The default location is `/Users/Shared/music-ai`; any other location works
-if you set `MUSIC_AI_ROOT` (see 6.3). The folder must contain: `backend.py`, `text2music.py`, `expand.py`, `plan.py`,
-`texture.py`, `direction.py`, `playable.py`, `notation.py`, `variety.py`, `requirements.txt`, `MusicAI/` and
+if you set `MUSIC_AI_ROOT` (see 6.3). The folder must contain: every `*.py` in the project root (`backend.py`, `text2music.py`, `config.py`, `sessions.py`, ...), `soulx/`, `requirements.txt`, `MusicAI/` and
 `anticipation/`.
 
 **The vendored `anticipation/` directory contains local modifications** (metrical grid, instrument steering, KV cache,
