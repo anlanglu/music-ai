@@ -52,7 +52,7 @@ def test_the_voice_is_a_second_line_over_the_melody_and_the_melody_is_untouched(
     assert expand.read_melody(one["path"])[0] == expand.read_melody(src["path"])[0], "read_melody ignores the singing"
     two = sing(backend, one, voice="zh", voices=["en"], harmony=True)           # more bars of singing, after the first
     lines = L.used_lines(two["path"], "vocal")
-    assert lines[1]["start_beat"] == 4.0 and lines[1]["voices"] == ["zh", "en"] and lines[1]["harmony"] is True
+    assert lines[1]["start_beat"] == lines[0]["start_beat"] + lines[0]["bars"] * 4 and lines[1]["voices"] == ["zh", "en"] and lines[1]["harmony"] is True
     assert lines[0]["voices"] == ["en"], "each stretch keeps its own singers"
     assert vocal_notes(two)[:3] == vocal_notes(one), "the first stretch is kept"
 
@@ -77,7 +77,8 @@ def test_extending_the_melody_keeps_the_singing_and_it_can_be_sung_on_the_new_ba
     assert vocal_notes(longer) == vocal_notes(sung) and len(longer["notes"]) > len(sung["notes"])
     assert L.used_lines(longer["path"], "vocal")[0]["text"] == "Little star"
     again = sing(backend, longer, bars=4)                                          # the next lines, on the new bars
-    assert [ln["start_beat"] for ln in L.used_lines(again["path"], "vocal")][:2] == [0, 4.0]
+    first = L.used_lines(again["path"], "vocal")
+    assert [ln["start_beat"] for ln in first][:2] == [0, first[0]["bars"] * 4.0]
 
 
 def test_editing_the_singing_keeps_the_melody_and_one_note_per_syllable(backend):
@@ -93,7 +94,8 @@ def test_editing_the_singing_keeps_the_melody_and_one_note_per_syllable(backend)
     backend.send(cmd="edit", source_midi=sung["path"], instruction="calmer", bars=[2], count=1, seed=3)
     ev = backend.until({"melodies_done", "error"})
     new = [e for e in ev if e["type"] == "candidate"][0]
-    assert vocal_notes(new) == vocal_notes(sung)
+    rounded = lambda c: [[n[0], n[1], round(n[2], 3), round(n[3], 3)] for n in vocal_notes(c)]  # noqa: E731
+    assert rounded(new) == rounded(sung)
 
 
 def test_a_hand_edit_of_the_singing_may_not_break_one_note_per_syllable(backend):
@@ -116,3 +118,12 @@ def test_the_backing_drops_only_the_voice_so_the_melody_is_mixed_in(backend):
     back = L.backing(sung["path"])
     channels = {m.channel for tr in mido.MidiFile(str(back)).tracks for m in tr if m.type == "note_on"}
     assert channels == {0}
+
+
+def test_the_bars_asked_for_are_filled_when_the_lines_leave_bars_over(backend):
+    src = melody(backend, bars=8)
+    sung = sing(backend, src, bars=8)
+    lines = L.used_lines(sung["path"], "vocal")
+    assert lines[0]["start_beat"] == 0
+    assert all(a["start_beat"] + a["bars"] * 4 == b["start_beat"] for a, b in zip(lines, lines[1:])), "one line after another"
+    assert lines[-1]["start_beat"] + lines[-1]["bars"] * 4 == 8 * 4, "the singing runs to the end of the 8 bars"

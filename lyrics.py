@@ -187,9 +187,10 @@ def _tidy(notes, bars, bb):
     return out
 
 
-def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, piano=None):
+def line_melody(line, sig, key, llm, level, mood, before, log, chords=None, piano=None, bars=None):
+    """Notes for one lyric line, one per syllable, over `bars` bars (default: about four syllables to a bar)."""
     n, bb = count(line), t.bar_beats(sig)
-    bars = max(1, math.ceil(n / SYL_PER_BAR))
+    bars = bars or max(1, math.ceil(n / SYL_PER_BAR))
     model, tok = t._get_llm(llm)
     msgs = [{"role": "system", "content": SYSTEM.format(n=n, sig=sig, bb=bb, bars=bars, lo=RANGE[0], hi=RANGE[1],
                                                          key=t.key_label(key), scale=t.scale_names(key))},
@@ -446,11 +447,21 @@ def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, lo
             break
         picks.append((raw, parsed))
         used += bars
+    base = [max(1, math.ceil(count(p) / SYL_PER_BAR)) for _, p in picks]
+    sizes, spare = list(base), room_bars - sum(base)
+    grew = True
+    while spare > 0 and grew:        # bars left over: give them to the lines as slower, longer notes (by up to half again)
+        grew = False
+        for i in range(len(sizes)):
+            if spare > 0 and sizes[i] < base[i] + max(1, base[i] // 2):
+                sizes[i] += 1
+                spare -= 1
+                grew = True
     notes, meta, cursor = [], [], 0.0
-    for raw, parsed in picks:
+    for (raw, parsed), want in zip(picks, sizes):
         first_bar = int(cursor // bb)
-        here = [(p, s - cursor, d) for p, s, d in (piano or []) if cursor - 1e-6 <= s < cursor + max(1, math.ceil(count(parsed) / SYL_PER_BAR)) * bb - 1e-6]
-        ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log, chords and chords[first_bar:], here or None)
+        here = [(p, s - cursor, d) for p, s, d in (piano or []) if cursor - 1e-6 <= s < cursor + want * bb - 1e-6]
+        ln, bars = line_melody(parsed, sig, key, llm, level, mood, before, log, chords and chords[first_bar:], here or None, bars=want)
         notes += [(p, s + cursor, d) for p, s, d in ln]
         meta.append({"text": raw, "start_beat": cursor, "bars": bars})
         cursor += bars * bb

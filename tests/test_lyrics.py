@@ -52,10 +52,10 @@ def fake_lines(monkeypatch, tmp_path):
     """line_melody replaced by one note per syllable, one bar per four syllables; the session goes to a temp folder."""
     import text2music as t
 
-    def line(parsed, sig, key, llm, level, mood, before, log, chords=None, piano=None):
+    def line(parsed, sig, key, llm, level, mood, before, log, chords=None, piano=None, bars=None):
         n = L.count(parsed)
-        bars = max(1, -(-n // L.SYL_PER_BAR))
-        return [(60 + i % 5, float(i), 1.0) for i in range(n)], bars
+        bars = bars or max(1, -(-n // L.SYL_PER_BAR))
+        return [(60 + i % 5, round(i * bars * 4 / n * 4) / 4, 1.0) for i in range(n)], bars
     monkeypatch.setattr(L, "line_melody", line)
     monkeypatch.setattr(t, "OUTPUT_DIR", tmp_path / "out", raising=False)
     monkeypatch.setattr(t, "SESSION_DIR", None, raising=False)
