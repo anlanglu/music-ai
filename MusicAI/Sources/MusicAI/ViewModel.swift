@@ -345,7 +345,7 @@ final class ViewModel: ObservableObject {
     private let backend = Backend()
     private var player: AVMIDIPlayer?
     private var timer: Timer?
-    private static let soundBank = URL(fileURLWithPath: "/System/Library/Components/CoreAudio.component/Contents/Resources/gs_instruments.dls")
+    private nonisolated static let soundBank = URL(fileURLWithPath: "/System/Library/Components/CoreAudio.component/Contents/Resources/gs_instruments.dls")
 
     var selected: Candidate? { candidates.first { $0.id == selectedID } }
     /// What the big piano roll shows: the finished piece, else the picked melody, else the first option.

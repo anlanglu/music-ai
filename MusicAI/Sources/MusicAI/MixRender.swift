@@ -31,8 +31,10 @@ enum MixRender {
             engine.attach(synth)
             engine.connect(synth, to: engine.mainMixerNode, format: nil)
             var bankURL = bank as CFURL
-            var status = AudioUnitSetProperty(synth.audioUnit, AudioUnitPropertyID(kMusicDeviceProperty_SoundBankURL),
-                                              kAudioUnitScope_Global, 0, &bankURL, UInt32(MemoryLayout<CFURL>.size))
+            var status = withUnsafeMutablePointer(to: &bankURL) {
+                AudioUnitSetProperty(synth.audioUnit, AudioUnitPropertyID(kMusicDeviceProperty_SoundBankURL),
+                                     kAudioUnitScope_Global, 0, $0, UInt32(MemoryLayout<CFURL>.size))
+            }
             guard status == noErr else { throw Failure(message: "The sound bank would not load (\(status)).") }
             // load every instrument the file uses before it plays (offline, nothing waits for a late load)
             var on: UInt32 = 1
