@@ -18,6 +18,7 @@ from pathlib import Path
 import mido
 
 import plan
+import sessions
 import text2music as t
 
 CONTEXT_BARS = 8        # how much of the melody the Anticipation model is shown (its clock tops out at 100 s)
@@ -272,8 +273,8 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     edge = old_bars * bb - ctx_beats
     ctx = [(p, s - edge, dd) for p, s, dd in notes if s >= edge - 1e-6]
     model = t._get_ant(size)
-    t.TMP_DIR.mkdir(parents=True, exist_ok=True)
-    seed_path = t.TMP_DIR / "_expand_seed.mid"
+    sessions.TMP_DIR.mkdir(parents=True, exist_ok=True)
+    seed_path = sessions.TMP_DIR / "_expand_seed.mid"
     seed_sec = t.write_melody_midi(seed_path, tempo, ctx, program, sig, ctx_beats)
     seed_events, _ = extract_instruments(midi_to_events(str(seed_path)), [])
     length = (ctx_beats + add_bars * bb) * 60 / tempo

@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-14   # Apple silicon: mlx needs it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: |
+          pip install -r requirements-dev.txt
+          pip install --no-deps -e ./anticipation
+      - name: Lint
+        run: python -m ruff check .
+      - name: Tests
+        run: python -m pytest tests -q
+
+  swift:
+    runs-on: macos-14
+    continue-on-error: true   # not yet seen to pass on a hosted runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the app
+        run: zsh MusicAI/build_app.sh
