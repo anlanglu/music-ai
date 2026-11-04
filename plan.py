@@ -456,7 +456,7 @@ def form_weights(form, k=None):
 def shape_weights(shape, k=None):
     """The melodic bias the sampler applies: the shape's preset, with any of its numbers overridden."""
     k = k or {}
-    bias = dict(SHAPE_BIAS.get(max(0, min(3, int(shape))), None) or {})
+    bias = dict(SHAPE_BIAS.get(max(0, min(3, int(shape)))) or {})
     for name in ("run", "leap", "repeat", "variety"):
         if name in k and k[name] is not None:
             bias[name] = k[name]

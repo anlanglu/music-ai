@@ -76,7 +76,7 @@ def finish(path, source_path, sig="4/4", amount=5.0):
         near = env[lo:hi] or [min(env, key=lambda e: abs(e[0] - tick))]
         return sum(v for _, v in near) / len(near)
 
-    for trk, m, tick, prog in _notes(mid):
+    for _trk, m, tick, prog in _notes(mid):
         hits = old.get((prog, m.note), [])
         i = bisect.bisect_left(hits, (tick - 2, 0))
         if i < len(hits) and abs(hits[i][0] - tick) <= 2:

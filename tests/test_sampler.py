@@ -1,5 +1,4 @@
 """The sampler constraints, tested on synthetic logits (no model needed)."""
-import numpy as np
 import torch
 
 from anticipation import sample as smp

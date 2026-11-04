@@ -47,8 +47,7 @@ import time
 from pathlib import Path
 
 from text2music import (  # noqa: E402
-    add_part_options, approve_part, bar_beats, clear_layers_file, current_session, ensure_session, instrument_name,
-    layers_of, list_sessions, make_melodies, make_music, midi_info, new_session, open_session, piece_bars, rename_session,
+    add_part_options, approve_part, bar_beats, clear_layers_file, current_session, ensure_session, layers_of, list_sessions, make_melodies, make_music, midi_info, new_session, open_session, piece_bars, rename_session,
     reset_session, seed_everything, session_info,
 )
 import harmony  # noqa: E402
@@ -229,7 +228,6 @@ def handle(r):
     cmd = r.get("cmd", "orchestrate")
     if r.get("seed") is not None:
         seed_everything(int(r["seed"]))
-    knobs = r.get("knobs") or None
     log = lambda s: send(type="log", text=s)
     if cmd == "session_list":
         send(type="sessions", items=list_sessions())

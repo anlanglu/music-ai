@@ -17,7 +17,7 @@ def _set(programs, lo, hi, poly):
         _TABLE[p] = (lo, hi, poly)
 
 
-_set(range(0, 8), 21, 108, 8)        # pianos, harpsichord, clavinet
+_set(range(8), 21, 108, 8)        # pianos, harpsichord, clavinet
 _set([8], 60, 108, 4)                # celesta
 _set([9], 79, 108, 2)                # glockenspiel
 _set([10], 60, 108, 3)               # music box

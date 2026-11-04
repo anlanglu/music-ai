@@ -180,7 +180,6 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
 
     d = None
     if direction.strip():
-        import direction as dr
 
         if engine == "llm":
             log(f"  ▸ Your direction goes to the LLM as its first instruction: \"{direction.strip()}\".")
@@ -365,7 +364,7 @@ def repeat_bars(source_midi, from_bar, to_bar, times=1, log=print, on_candidate=
                 new_programs.append((old_bars * bb + k * span + b - lo, prog))
     combined = list(notes) + copies(notes)
     sung = vocal + copies(vocal) if vocal else None
-    tpb, lo_t, hi_t = 480, round(lo * 480), round(hi * 480)
+    lo_t, hi_t = round(lo * 480), round(hi * 480)
     layers = []
     for trk in acc:
         have = t._track_notes(trk)

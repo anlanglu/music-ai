@@ -119,7 +119,7 @@ Leave "suggest_also" out when no other bar needs to change."""
 
 
 def _name(p):
-    return f"{'C C# D D# E F F# G G# A A# B'.split()[p % 12]}{p // 12 - 1}"
+    return f"{['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][p % 12]}{p // 12 - 1}"
 
 
 def _listing(notes, bb, n_bars):
@@ -235,9 +235,9 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         suggestion = suggestion or sug
         fitted = {}
         for bar, items in repl.items():
-            base = (bar - 1) * bb
             fit = [(t.fold_pitch(p, program), s_, d) for p, s_, d in items]
-            scale_at = (lambda _beat, pcs=plan.bar_scale(theplan, bar - 1): pcs) if own_modes else None   # keep to that bar's mode
+            pcs = plan.bar_scale(theplan, bar - 1) if own_modes else None
+            scale_at = (lambda _beat, pcs=pcs: pcs) if own_modes else None   # keep to that bar's mode
             fit = t.limit_outside(fit, key, 10, span, scale_at=scale_at) if key and fit else fit
             fitted[bar] = fit
         thin = None if re.search(r"rest|sparse|silen|pause|breath|fewer|simpl|empty|thin|space", instruction, re.I) else \

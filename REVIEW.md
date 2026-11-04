@@ -14,10 +14,10 @@ it fits together, what was verified and how, and where I think the risk is. Sect
 - Python: `.venv/bin/python` 3.11 (torch 2.14 with MPS, transformers 5.20, mlx-lm 0.32, mido, music21, verovio; see `requirements.txt`).
 - Swift: SwiftPM, Command Line Tools only (no Xcode), Swift 5 mode, no macros (so no `@State`; state is in
   an `ObservableObject`).
-- Total size: about 2,800 lines Python (`text2music.py` is 1,237 lines), about 1,450 lines Swift, and a 53-test pytest
-  suite in `tests/` (`make test`, about 3 seconds, no model downloads). Section 5 says what it does and does not cover.
+- Total size: about 6,000 lines Python (`text2music.py` is about 1,750 lines), about 3,600 lines Swift, and a 203-test pytest
+  suite in `tests/` (`make test`, about 30 seconds, no model downloads; `make lint` runs ruff). Section 5 says what it does and does not cover.
 
-> **Read this first (branch `feature/expand-melody`).** The melody workflow was redesigned after most of this document was
+> **Read this first (history; everything below is now on `main`).** The melody workflow was redesigned after most of this document was
 > written: step 1 is now written entirely by the language model, a new step 2 expands it, and the rule-based "theory
 > composer" and the Hybrid step 1 were removed. Sections 3.2 (melody engines), 3.4 (theory composer) and the parts of 4c
 > that benchmark Hybrid step 1 describe code that no longer exists; section 4e at the end describes what replaced them.

@@ -464,7 +464,7 @@ def used_lines(midi, track=None):
 
 def line_problem(notes, lines, bb):
     """Why a sung line can no longer be sung (a lyric line whose notes are not one per syllable), or None."""
-    for i, ln in enumerate(lines, 1):
+    for ln in lines:
         n = sum(1 for _p, st, _d in notes if ln["start_beat"] - 1e-6 <= st < ln["start_beat"] + ln["bars"] * bb - 1e-6)
         want = count(parse_line(ln["text"]))
         if n != want:

@@ -78,7 +78,7 @@ def parse(symbol):
     if slash:
         bass, rest = _note(slash.group(1)), rest[:slash.start()]
     rest = rest.replace("6/9", "69")
-    third, fifth, seventh, sixth = 4, 7, None, False
+    third, fifth, seventh = 4, 7, None
     ext = []
     pending_maj = False
     pos = 0

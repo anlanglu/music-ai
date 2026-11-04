@@ -10,7 +10,7 @@ import math
 import mido
 
 from playable import fold_pitch, limits
-from plan import DEG_MAJOR as _MAJOR, DEG_MINOR as _MINOR, deg_scale, key_pcs, mode_family
+from plan import deg_scale, key_pcs, mode_family
 from plan import chord_triple
 
 STYLES = ["block", "arpeggio", "alberti", "oompah", "sustained", "bassline", "walking", "pulse", "double"]
@@ -20,7 +20,7 @@ STYLE_LABELS = {
     "pulse": "Pulsing chords", "double": "Melody doubling",
 }
 MIX = ["block", "arpeggio", "alberti", "oompah", "sustained"]   # what "mix" cycles through
-LEFT_HAND = set(range(0, 9)) | set(range(16, 21))                # keyboards: tuck under the melody like a left hand
+LEFT_HAND = set(range(9)) | set(range(16, 21))                # keyboards: tuck under the melody like a left hand
 
 
 def piece_notes(path):
@@ -176,7 +176,7 @@ def _double(notes, key, program, d, variant, scale_at=None):
     tonic, mode = key
     pcs = key_pcs(tonic, mode)
     out = []
-    for p, st, du, prog in sorted((n for n in notes if n[3] == mel), key=lambda n: n[1]):
+    for p, st, du, _prog in sorted((n for n in notes if n[3] == mel), key=lambda n: n[1]):
         q = p + shift
         here = scale_at(st) if scale_at else pcs                 # bars with a mode of their own keep to it
         if q % 12 not in here:

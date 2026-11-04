@@ -26,9 +26,7 @@ import plan
 import variety
 from llmjson import extract_json
 from playable import DRUMS, fold_pitch, limits, sampler_pool
-from plan import SCALE_MAJOR as _SCALE_MAJOR, SCALE_MINOR as _SCALE_MINOR
 
-from anticipation.vocab import NOTE_OFFSET
 
 OUT_DIR = Path(os.environ.get("MUSIC_AI_OUT") or Path(__file__).parent / "output")   # holds one folder per session
 TMP_DIR = OUT_DIR / ".tmp"                    # scratch files (seed melodies, notation intermediates)
@@ -90,7 +88,7 @@ def bar_beats(sig):
     num, den = (int(x) for x in sig.split("/"))
     return num * 4 / den
 
-GM_NAMES = """Acoustic Grand Piano|Bright Acoustic Piano|Electric Grand Piano|Honky-tonk Piano|Electric Piano 1|Electric Piano 2|Harpsichord|Clavinet|Celesta|Glockenspiel|Music Box|Vibraphone|Marimba|Xylophone|Tubular Bells|Dulcimer|Drawbar Organ|Percussive Organ|Rock Organ|Church Organ|Reed Organ|Accordion|Harmonica|Tango Accordion|Nylon Guitar|Steel Guitar|Jazz Guitar|Clean Guitar|Muted Guitar|Overdriven Guitar|Distortion Guitar|Guitar Harmonics|Acoustic Bass|Finger Bass|Pick Bass|Fretless Bass|Slap Bass 1|Slap Bass 2|Synth Bass 1|Synth Bass 2|Violin|Viola|Cello|Contrabass|Tremolo Strings|Pizzicato Strings|Orchestral Harp|Timpani|String Ensemble 1|String Ensemble 2|Synth Strings 1|Synth Strings 2|Choir Aahs|Voice Oohs|Synth Voice|Orchestra Hit|Trumpet|Trombone|Tuba|Muted Trumpet|French Horn|Brass Section|Synth Brass 1|Synth Brass 2|Soprano Sax|Alto Sax|Tenor Sax|Baritone Sax|Oboe|English Horn|Bassoon|Clarinet|Piccolo|Flute|Recorder|Pan Flute|Blown Bottle|Shakuhachi|Whistle|Ocarina|Square Lead|Saw Lead|Calliope Lead|Chiff Lead|Charang Lead|Voice Lead|Fifths Lead|Bass + Lead|New Age Pad|Warm Pad|Polysynth Pad|Choir Pad|Bowed Pad|Metallic Pad|Halo Pad|Sweep Pad|Rain FX|Soundtrack FX|Crystal FX|Atmosphere FX|Brightness FX|Goblins FX|Echoes FX|Sci-Fi FX|Sitar|Banjo|Shamisen|Koto|Kalimba|Bagpipe|Fiddle|Shanai|Tinkle Bell|Agogo|Steel Drums|Woodblock|Taiko Drum|Melodic Tom|Synth Drum|Reverse Cymbal|Guitar Fret Noise|Breath Noise|Seashore|Bird Tweet|Telephone Ring|Helicopter|Applause|Gunshot""".split("|")
+GM_NAMES = ["Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano", "Honky-tonk Piano", "Electric Piano 1", "Electric Piano 2", "Harpsichord", "Clavinet", "Celesta", "Glockenspiel", "Music Box", "Vibraphone", "Marimba", "Xylophone", "Tubular Bells", "Dulcimer", "Drawbar Organ", "Percussive Organ", "Rock Organ", "Church Organ", "Reed Organ", "Accordion", "Harmonica", "Tango Accordion", "Nylon Guitar", "Steel Guitar", "Jazz Guitar", "Clean Guitar", "Muted Guitar", "Overdriven Guitar", "Distortion Guitar", "Guitar Harmonics", "Acoustic Bass", "Finger Bass", "Pick Bass", "Fretless Bass", "Slap Bass 1", "Slap Bass 2", "Synth Bass 1", "Synth Bass 2", "Violin", "Viola", "Cello", "Contrabass", "Tremolo Strings", "Pizzicato Strings", "Orchestral Harp", "Timpani", "String Ensemble 1", "String Ensemble 2", "Synth Strings 1", "Synth Strings 2", "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit", "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn", "Brass Section", "Synth Brass 1", "Synth Brass 2", "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet", "Piccolo", "Flute", "Recorder", "Pan Flute", "Blown Bottle", "Shakuhachi", "Whistle", "Ocarina", "Square Lead", "Saw Lead", "Calliope Lead", "Chiff Lead", "Charang Lead", "Voice Lead", "Fifths Lead", "Bass + Lead", "New Age Pad", "Warm Pad", "Polysynth Pad", "Choir Pad", "Bowed Pad", "Metallic Pad", "Halo Pad", "Sweep Pad", "Rain FX", "Soundtrack FX", "Crystal FX", "Atmosphere FX", "Brightness FX", "Goblins FX", "Echoes FX", "Sci-Fi FX", "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bagpipe", "Fiddle", "Shanai", "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock", "Taiko Drum", "Melodic Tom", "Synth Drum", "Reverse Cymbal", "Guitar Fret Noise", "Breath Noise", "Seashore", "Bird Tweet", "Telephone Ring", "Helicopter", "Applause", "Gunshot"]
 
 
 def conductor_track(tempo, sig):
@@ -376,7 +374,8 @@ def _clean_notes(items):
     for it in items:
         try:
             if isinstance(it, dict):
-                get = lambda *ks: next(it[k] for k in ks if k in it)
+                def get(*ks, item=it):
+                    return next(item[k] for k in ks if k in item)
                 p, s, d = get("pitch", "note", "p"), get("start", "time", "onset", "s"), get("duration", "dur", "length", "d")
             else:
                 p, s, d = it[0], it[1], it[2]
@@ -615,13 +614,13 @@ def melody_velocities(notes, sig="4/4", depth=1.0):
     span = max(notes[-1][1] - notes[0][1], 1e-9)
     climax = (notes[top][1] - notes[0][1]) / span
     phrase_of, first = [], 0
-    for i, (p, s, d) in enumerate(notes):                  # a phrase ends where a rest follows
+    for i, (_p, s, d) in enumerate(notes):                  # a phrase ends where a rest follows
         gap = (notes[i + 1][1] - (s + d)) if i + 1 < len(notes) else 1.0
         phrase_of.append((first, i))
         if gap >= 0.45:
             first = i + 1
     out = []
-    for i, (p, s, d) in enumerate(notes):
+    for i, (_p, s, d) in enumerate(notes):
         v = 76.0
         pos = s % bb
         v += 8 if pos < 1e-6 else 4 if abs(pos % 1.0) < 1e-6 else 0
@@ -1051,17 +1050,17 @@ def breathe(notes, boundaries, phrasing=1):
     phrasing 0 = flowing (no rests), 1 = balanced, 2 = spacious. Safe to apply twice."""
     idea_rest, phrase_rest = {0: (0.0, 0.0), 1: (0.5, 1.0), 2: (1.0, 1.5)}[phrasing]
     out = [list(n) for n in notes]
-    for time, kind in boundaries:
+    for at, kind in boundaries:
         rest = phrase_rest if kind == "phrase" else idea_rest
-        cut = time - rest
+        cut = at - rest
         if rest <= 0:
             continue
-        kept_before = [n for n in out if time - 4.0 <= n[1] < cut - 1e-9]
+        kept_before = [n for n in out if at - 4.0 <= n[1] < cut - 1e-9]
         if len(kept_before) < 2:   # never hollow out a bar
             continue
         nxt = []
         for n in out:
-            if cut - 1e-9 <= n[1] < time - 1e-9:
+            if cut - 1e-9 <= n[1] < at - 1e-9:
                 continue
             if n[1] < cut - 1e-9 < n[1] + n[2]:
                 n[2] = cut - n[1]
@@ -1403,7 +1402,7 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
     out = []
     for k in range(1, count + 1):
         best = []
-        for attempt in range(1, ATTEMPTS + 1):
+        for _attempt in range(1, ATTEMPTS + 1):
             part = generate(model, start_sec, end_sec, inputs=[], controls=controls, top_p=top_p, grid=grid, instruments=pool)
             n = len(part) // 3
             if n > len(best) // 3:

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import expand
 import lyrics as L
 import harmony as h
 import plan

@@ -1,5 +1,4 @@
 """The musical plan: the phrases, the harmony under them, and how much of it a melody follows."""
-import numpy as np
 import pytest
 import torch
 

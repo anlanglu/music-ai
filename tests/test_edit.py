@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 import edit
-import text2music as t
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_protocol import MELODY, Backend, backend  # noqa: E402,F401

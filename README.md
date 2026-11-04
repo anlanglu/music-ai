@@ -132,7 +132,8 @@ Try it without the app (uses the language model; it downloads on first use):
 
 ```bash
 uv pip install --python .venv/bin/python -r requirements-dev.txt
-make test          # about 3 seconds, no model downloads
+make test          # about 30 seconds, no model downloads
+make lint          # ruff: unused names, shadowed names, loop-variable capture
 make test-full     # adds a sweep of about 140,000 composer settings
 make app           # rebuild Composer.app after Swift changes
 ```

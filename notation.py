@@ -36,7 +36,7 @@ def _part_programs(path):
 
 
 # Each instrument's usual notation (concert pitch). Anything not listed is a single treble staff.
-GRAND_STAFF = set(range(0, 9)) | set(range(16, 24)) | {12, 46} | set(range(48, 55)) | set(range(88, 96))
+GRAND_STAFF = set(range(9)) | set(range(16, 24)) | {12, 46} | set(range(48, 55)) | set(range(88, 96))
 BASS_CLEF = set(range(32, 40)) | {42, 43, 47, 57, 58, 70}   # basses, cello, contrabass, timpani, trombone, tuba, bassoon
 ALTO_CLEF = {41}                                           # viola
 TENOR_TOO = {42, 57, 70}                                   # cello, trombone, bassoon use tenor clef for their upper range
@@ -127,7 +127,7 @@ def _mark_dynamics(staff):
             last, last_i = label, i
     for i, label, first in marks:
         measures[i].insert(first.offset, dynamics.Dynamic(label))
-    for (i, a, first), (j, b, _) in zip(marks, marks[1:]):
+    for (_i, a, first), (j, b, _) in zip(marks, marks[1:]):
         before = [el for el in measures[j - 1].recurse().notes]
         if before and a != b:
             cls = dynamics.Crescendo if _ORDER.index(b) > _ORDER.index(a) else dynamics.Diminuendo

@@ -115,7 +115,6 @@ def test_the_new_bars_can_be_for_another_instrument_and_the_voice_needs_lyrics(b
 
 
 def hybrid_available():
-    import text2music
     hub = Path(os.environ.get("HF_HUB_CACHE") or Path.home() / ".cache/huggingface/hub")
     return (hub / "models--stanford-crfm--music-small-800k").exists()
 
