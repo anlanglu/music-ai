@@ -25,18 +25,21 @@ CONTEXT_BARS = 8        # how much of the melody the Anticipation model is shown
 
 def read_melody(path):
     """(notes, tempo, sig, program, total_beats) of a melody file, as [(pitch, start_beat, duration_beats)] with one note at
-    a time (when notes overlap, the highest wins)."""
+    a time (when notes overlap, the highest wins). The sung line over it (read_vocal) is not part of the melody."""
     tempo, sig, seconds = t.midi_info(path)
     mid = mido.MidiFile(str(path))
     tpb = mid.ticks_per_beat
+    skip = (9, t.vocal_channel(mid))
     found, program = [], 0
     for trk in mid.tracks:
+        if t.is_acc_track(trk):
+            continue
         tick, on, local, prog = 0, {}, [], None
         for m in trk:
             tick += m.time
             if m.type == "program_change" and prog is None:
                 prog = m.program
-            elif m.type == "note_on" and m.velocity > 0 and m.channel != 9:
+            elif m.type == "note_on" and m.velocity > 0 and m.channel not in skip:
                 on[(m.channel, m.note)] = tick
             elif m.type in ("note_off", "note_on") and (m.channel, m.note) in on:
                 start = on.pop((m.channel, m.note))
@@ -52,6 +55,54 @@ def read_melody(path):
     notes = [(p, s, min(d, notes[i + 1][1] - s) if i + 1 < len(notes) else d) for i, (p, s, d) in enumerate(notes)]
     total = max(seconds * tempo / 60, notes[-1][1] + notes[-1][2] if notes else 0)
     return notes, tempo, sig, program, total
+
+
+def read_vocal(path):
+    """The sung line of a melody file, [(pitch, start_beat, duration_beats)], or [] if it has none."""
+    mid = mido.MidiFile(str(path))
+    tpb = mid.ticks_per_beat
+    out = []
+    if t.vocal_channel(mid) is None:
+        return out
+    for trk in mid.tracks:
+        tick, on = 0, {}
+        for m in trk:
+            tick += m.time
+            if m.type == "note_on" and m.velocity > 0 and m.channel == t.VOCAL_CHANNEL:
+                on[m.note] = tick
+            elif m.type in ("note_off", "note_on") and m.channel == t.VOCAL_CHANNEL and m.note in on:
+                start = on.pop(m.note)
+                out.append((m.note, start / tpb, max((tick - start) / tpb, 0.25)))
+    return sorted(out, key=lambda n: n[1])
+
+
+def read_programs(path):
+    """[(beat, program)] of the melody track of a file: the instrument at the start, and each later change of instrument.
+    A melody passed between instruments (or between a voice and an instrument) has more than one."""
+    mid = mido.MidiFile(str(path))
+    tpb = mid.ticks_per_beat
+    skip = (9, t.vocal_channel(mid))
+    for trk in mid.tracks:
+        if t.is_acc_track(trk) or not any(m.type == "note_on" and m.velocity > 0 and m.channel not in skip for m in trk):
+            continue
+        tick, out = 0, []
+        for m in trk:
+            tick += m.time
+            if m.type == "program_change" and m.channel not in skip and (not out or out[-1][1] != m.program):
+                out.append((tick / tpb, m.program))
+        if out and out[0][0] > 1e-6:
+            out.insert(0, (0.0, out[0][1]))
+        return out or [(0.0, 0)]
+    return [(0.0, 0)]
+
+
+def program_at(programs, beat):
+    """The program in force at `beat` of a [(beat, program)] list."""
+    now = programs[0][1]
+    for b, prog in programs:
+        if b <= beat + 1e-6:
+            now = prog
+    return now
 
 
 def _hybrid_reading(d):
@@ -76,10 +127,10 @@ def _direction_for_sampler(d, grid, q, top_p, lo, hi):
     """What a free-text direction can change in the Anticipation sampler: how busy the line is, how much it leans on the beat,
     where in the range it sits and how adventurous the sampling is. Returns the (top_p, lo, hi) to use."""
     dens, reg = d["density"], d["register"]
-    grid["max_gap"] = q * {-2: 6, -1: 4, 0: 2, 1: 1, 2: 0.5}[dens]
+    grid["max_gap"] = q * {-2: 6, -1: 4, 0: 2, 1: 1, 2: 0.75}[dens]
     if dens < 0:
         grid["min_gap"] = int(q * {-2: 3, -1: 2}[dens])
-    boost = {-2: -2.5, -1: -1.5, 1: 2.0, 2: 3.5}.get(d["rhythm"])
+    boost = {-2: -2.5, -1: -1.5, 1: 2.0, 2: 2.5}.get(d["rhythm"])
     if boost is not None:
         grid["beat_boost"], grid["bar_boost"] = boost, boost * 2
     if reg:
@@ -89,11 +140,18 @@ def _direction_for_sampler(d, grid, q, top_p, lo, hi):
 
 
 def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small", llm="7B", complexity=3, sliders=None,
-                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None):
+                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None, program=None, progression=None, modes=None):
     """Write `count` options, each the source melody plus `add_bars` more bars, to the session folder. Returns the list of
-    {index, path, tempo, sig, score}; on_candidate(info) is called as each one is ready."""
+    {index, path, tempo, sig, score}; on_candidate(info) is called as each one is ready. `program` is the instrument the
+    new bars are written for (default: the one the melody ends on); if it differs, the melody is passed to it. `progression`
+    ([[chord name, ...] per bar], see harmony.py) is the chords the new bars follow, instead of ones the plan picks."""
     src = Path(source_midi)
-    notes, tempo, sig, program, total = read_melody(src)
+    notes, tempo, sig, _first, total = read_melody(src)
+    programs = read_programs(src)
+    vocal = read_vocal(src)                      # the sung line stays exactly as it was
+    acc = t.read_acc(src)                        # ... and so does the accompaniment
+    if program is None:
+        program = programs[-1][1]
     if not notes:
         raise RuntimeError("There is no melody in that file to expand")
     bb = t.bar_beats(sig)
@@ -112,7 +170,12 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
     if key is None:
         key = t.estimate_key(notes)
         log(f"  ▸ The melody has no stored key; continuing in {t.key_label(key)}, the best fit for its notes.")
-    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity)
+    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity,
+                                 progression=progression, modes=modes)
+    if modes:
+        log(f"  ▸ Mode by bar for the new bars: {' '.join(m or '-' for m in section['modes'])}")
+    if progression:
+        log(f"  ▸ Chords for the new bars: {' | '.join(' '.join(b) for b in section['harmony'])}")
     form = max(mine["form"], int((meta.get("plan") or {}).get("form", 0) or 0))
 
     d = None
@@ -125,6 +188,9 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
             d = t.interpret_direction(direction, "melody", "", log)
             if not d["empty"]:
                 log("  ▸ " + _hybrid_reading(d))
+    if engine != "llm" and not any(s >= old_beats - min(old_bars, CONTEXT_BARS) * bb - 1e-6 for _, s, _ in notes):
+        raise RuntimeError("The last bars of this melody are chords only, so the Anticipation model has no melody to "
+                           "continue. Choose LLM only, or extend from a melody that ends in notes.")
     log(f"  ▸ Allowed notes in {t.key_label(key)}: {t.scale_names(key)}"
         + ("." if sl["strict"] >= 10 else f" (relaxed: up to {round((10 - sl['strict']) * 2.5)}% of the new notes may be outside)."))
     log(f"  ▸ Expanding {old_bars} bars by {add_bars} bars to {old_bars + add_bars}, in {t.key_label(key)} "
@@ -173,7 +239,10 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         combined = old + [(p, s_ + old_beats, dd) for p, s_, dd in new]
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
-        t.write_melody_midi(path, tempo, combined, program, sig, total_beats, depth=sl["dynamics"] / 5)
+        t.write_melody_midi(path, tempo, combined, programs + ([(old_beats, program)] if program != programs[-1][1] else []),
+                            sig, total_beats, depth=sl["dynamics"] / 5, vocal=vocal, acc=acc)
+        import lyrics
+        lyrics.carry(src, path)
         if not out:    # the accompaniment follows the plan of the whole, longer melody
             t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,
@@ -193,7 +262,7 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     from anticipation.convert import midi_to_events
     from anticipation.sample import generate
     from anticipation.tokenize import extract_instruments
-    from anticipation.vocab import NOTE_OFFSET
+    from anticipation.vocab import DUR_OFFSET, NOTE_OFFSET
     from playable import limits
 
     bb = t.bar_beats(sig)
@@ -226,14 +295,23 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
         lo, hi = plo, phi
     pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}}
     if plan.clean_sliders(sl)["strict"] >= 6:       # a relaxed scale lets the sampler wander; finish_melody then limits it
-        pool["pitch_classes"] = t.scale_pcs(key)
+        pool["pitch_classes"] = t.scale_pcs(key) | (plan.plan_harmony_pcs(section) or set())    # a written chord's own notes too
+        regions = plan.scale_regions(section, tempo, start_tick)
+        if regions:
+            pool["scale_regions"] = regions                                                       # ... and each bar's own mode
     weights = plan.form_weights(form, kn)
     bias = plan.shape_weights(plan.from_sliders(sl)["shape"], kn)
+    # A busy line with a strong pull to the motif has few pitches to choose from and repeats one; penalise that more.
+    busy = max(0, d["density"]) if d is not None and not d["empty"] else 0
+    extra = 0.4 * busy + 0.08 * weights.get("motif", 0) + 0.2 * weights.get("chord", 0)   # the chord pull leaves 3 pitch classes
+    if extra:
+        bias = dict(bias or {}, repeat=(bias or {}).get("repeat", 0.0) + extra)
+    bias = dict(bias or {}, loop=2.0 + busy)     # a figure that has just been played is not played again
     if bias:
         pool["melodic"] = dict(bias, instrument=program)
     if weights.get("chord"):
         pool["regions"] = plan.plan_regions(section, tempo, start_tick)
-        pool["chord_weight"] = weights["chord"]
+        pool["chord_weight"] = weights["chord"] * (0.6 if busy else 1.0) * (1.5 if section.get("harmony") else 1.0)   # chords the user wrote count for more     # a busy line needs more than the chord's three notes
     targets = []
     if weights.get("motif"):
         for i in range(len(section["phrases"])):
@@ -243,10 +321,136 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
         targets += plan.cadence_targets(section, near, tempo, start_tick)
     if targets:
         pool.setdefault("melodic", {"instrument": program}).update({
-            "targets": targets, "target_weight": max(weights.get("motif", 0), weights.get("cadence", 0)),
-            "target_tol": q * kn["tol"], "target_sigma": kn["sigma"],
+            "targets": targets, "target_weight": min(max(weights.get("motif", 0), weights.get("cadence", 0)), 3.5),
+            "target_tol": q * kn["tol"], "target_sigma": max(kn["sigma"], 2.5),
         })
     ev = generate(model, seed_sec, length, inputs=seed_events, top_p=top_p, grid=grid, instruments=pool)
-    raw = [((n - NOTE_OFFSET) % 128, tt / 100 * tempo / 60, dd / 100 * tempo / 60)
+    raw = [((n - NOTE_OFFSET) % 128, tt / 100 * tempo / 60, (dd - DUR_OFFSET) / 100 * tempo / 60)
            for tt, dd, n in zip(ev[0::3], ev[1::3], ev[2::3])]
     return [(p, s - ctx_beats, dd) for p, s, dd in raw if s >= ctx_beats - 1e-6]
+
+
+def repeat_bars(source_midi, from_bar, to_bar, times=1, log=print, on_candidate=None):
+    """Copy bars `from_bar`..`to_bar` (1-based, inclusive) of a melody onto its end, `times` times over: the melody, the
+    instruments in force, the sung line with its lyric lines (so the same words are sung again, by the same singers), and
+    the accompaniment in those bars. Nothing is generated, so there is one result. Returns [{index, path, tempo, sig, score}]."""
+    import lyrics
+
+    src = Path(source_midi)
+    notes, tempo, sig, _first, total = read_melody(src)
+    if not notes:
+        raise RuntimeError("There is no melody in that file to repeat")
+    programs, vocal, acc = read_programs(src), read_vocal(src), t.read_acc(src)
+    bb = t.bar_beats(sig)
+    old_bars = max(1, math.ceil(max(total, max((s + d for _, s, d in vocal), default=0)) / bb - 0.01))
+    lo_bar, hi_bar = max(1, int(from_bar or 1)), min(old_bars, int(to_bar or old_bars))
+    if lo_bar > hi_bar:
+        raise RuntimeError(f"Bars {lo_bar}-{hi_bar} are not in the melody (it has {old_bars} bars)")
+    times = max(1, min(4, int(times or 1)))
+    lo, hi = (lo_bar - 1) * bb, hi_bar * bb
+    span = hi - lo
+    add_bars = (hi_bar - lo_bar + 1) * times
+
+    def part(items):
+        return [(p, s, min(d, hi - s)) for p, s, d in items if lo - 1e-6 <= s < hi - 1e-6]
+
+    def copies(items):
+        return [(p, s + old_bars * bb + k * span - lo, d) for k in range(times) for p, s, d in part(items)]
+
+    new_programs = list(programs)
+    for k in range(times):
+        here = program_at(programs, lo)
+        for b, prog in [(lo, here)] + [x for x in programs if lo < x[0] < hi]:
+            if prog != new_programs[-1][1]:
+                new_programs.append((old_bars * bb + k * span + b - lo, prog))
+    combined = list(notes) + copies(notes)
+    sung = vocal + copies(vocal) if vocal else None
+    tpb, lo_t, hi_t = 480, round(lo * 480), round(hi * 480)
+    layers = []
+    for trk in acc:
+        have = t._track_notes(trk)
+        more = [[s - lo_t + round(old_bars * bb * 480) + k * (hi_t - lo_t), min(d, hi_t - s), p, v, ch]
+                for k in range(times) for s, d, p, v, ch in have if lo_t <= s < hi_t]
+        layers.append(t._rebuild_track(trk, have + more))
+    folder = t.ensure_session()
+    path = folder / f"{time.strftime('%H%M%S')}-rep-b{lo_bar}-{hi_bar}.mid"
+    t.write_melody_midi(path, tempo, combined, new_programs, sig, (old_bars + add_bars) * bb, vocal=sung, acc=layers)
+    lines = lyrics.used_lines(src)
+    if lines:
+        extra = [dict(ln, start_beat=ln["start_beat"] + old_bars * bb + k * span - lo)
+                 for k in range(times) for ln in lines if lo - 1e-6 <= ln["start_beat"] < hi - 1e-6]
+        lyrics.sidecar(path).write_text(json.dumps({"lines": lines + extra}))
+    try:
+        meta = json.loads((folder / "session.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    whole, _ = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes)
+    chords = whole["chords"]
+    named = whole.get("harmony")
+    for i in range(add_bars):
+        if lo_bar - 1 + i % (hi_bar - lo_bar + 1) < len(chords):
+            chords[old_bars + i] = chords[lo_bar - 1 + i % (hi_bar - lo_bar + 1)]
+            if named is not None and lo_bar - 1 + i % (hi_bar - lo_bar + 1) < len(named):
+                named[old_bars + i] = list(named[lo_bar - 1 + i % (hi_bar - lo_bar + 1)])
+    t._write_meta(folder, key=list(key), plan=t.plan_json(whole, int((meta.get("plan") or {}).get("form", 0) or 0)),
+                  form=int((meta.get("plan") or {}).get("form", 0) or 0))
+    log(f"  ▸ Bars {lo_bar}-{hi_bar} copied onto the end{' ' + str(times) + ' times' if times > 1 else ''}: "
+        f"{old_bars} bars become {old_bars + add_bars}.")
+    info = {"index": 1, "path": path, "tempo": tempo, "sig": sig, "score": t.melody_score(combined, (old_bars + add_bars) * bb, 2)[0]}
+    if on_candidate:
+        on_candidate(info)
+    return [info]
+
+
+def _chord_line(section):
+    """The chords of a plan as text: 'Dm7 G7 | Cmaj7 | ...' (the triads of its scale degrees, when none were written)."""
+    return " | ".join(" ".join(c.symbol for c in bar) for bar in plan.bar_chords(section))
+
+
+CHORD_STYLES = ["block", "arpeggio", "oompah", "sustained", "alberti"]
+
+
+def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=print, on_candidate=None, progression=None, modes=None):
+    """Add `add_bars` bars of chords for one instrument (piano, guitar...) on the end of a melody, to be sung to later. The
+    chords are the plan's for those bars and every option is the same progression in a different pattern (block, arpeggio,
+    bass and chords...). The new bars are a chord layer in the file; the melody line has no notes in them."""
+    import texture as tx
+
+    src = Path(source_midi)
+    notes, tempo, sig, _first, total = read_melody(src)
+    programs, vocal, acc = read_programs(src), read_vocal(src), t.read_acc(src)
+    if not notes:
+        raise RuntimeError("There is no melody in that file to extend")
+    bb = t.bar_beats(sig)
+    old_bars = max(1, math.ceil(max(total, max((s + d for _, s, d in vocal), default=0)) / bb - 0.01))
+    old_beats = old_bars * bb
+    folder = t.ensure_session()
+    try:
+        meta = json.loads((folder / "session.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity,
+                                 progression=progression, modes=modes)
+    form = int((meta.get("plan") or {}).get("form", 0) or 0)
+    t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
+    name = time.strftime("%H%M%S") + "-chords"
+    span = [(60, 0.0, add_bars * bb, program)]        # tells the pattern how long the section is
+    out = []
+    log(f"  \u25b8 {add_bars} bars of {t.instrument_name(program).lower()} chords in {t.key_label(key)}: {_chord_line(section)}.")
+    for k in range(1, count + 1):
+        style, variant = CHORD_STYLES[(k - 1) % len(CHORD_STYLES)], (k - 1) // len(CHORD_STYLES)
+        part = tx.build(span, tempo, sig, key, style, variant, program, None, plan.bar_chords(section), lead=True)
+        path = folder / f"{name}-opt{k}.mid"
+        t.write_melody_midi(path, tempo, notes, programs, sig, old_beats + add_bars * bb, vocal=vocal or None, acc=acc)
+        t.add_layers_file(path, path, {program: [(p, s + old_beats, d) for p, s, d in part]}, old_beats)
+        t.dynamics_mod.finish(path, src, sig, 5.0)
+        import lyrics
+        lyrics.carry(src, path)
+        info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}
+        out.append(info)
+        log(f"      option {k}: {tx.STYLE_LABELS[style].lower()}, {len(part)} notes")
+        if on_candidate:
+            on_candidate(info)
+    return out

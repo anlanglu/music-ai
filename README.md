@@ -12,31 +12,40 @@ Melody LLM menu (see below).
 ## What it does
 
 1. **Start with a motif.** A small musical idea of one to four bars: prompt plus time signature, BPM, key, length, instrument, complexity, **Phrasing** (rests between
-   ideas) and eight sliders for the line's character (see below). The language model writes every bar. You get N options
+   ideas) and a few sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
-2. **Extend the melody.** Pick an option and add bars (2–16) at a time, as new options to choose from, as often
-   as you like (with Undo). Each expansion has its own settings: length, complexity, the eight sliders and a free-text
-   direction ("build to a climax, then calm down"), and it is written either by **Hybrid** (the Anticipation model
-   continues the melody, steered by the chords, cadences and opening idea) or by **LLM only**. What was written is kept;
+2. **Extend the melody.** (**Chords (optional)** in the Motif and Extend steps take a progression to write to, such as `Dm7 G7 | Cmaj7 | Am7 D7`: bars are separated by `|`, and two chords in a bar change at the half bar. Chords can be as rich as `Cmaj9`, `G7#9`, `Bbm7b5`, `C/E` or `Csus4` (`harmony.py` reads the names). A strip of chords sits under the piano roll, lined up with the bars; click a bar to change its chords, which later steps (Extend, chord instruments, the singing) then follow. A bar turns orange when its chord has notes the melody's mode doesn't have. **Mode by bar** gives some bars a mode of their own (`major*3 lydian`: three bars in major, then one in lydian; or click the row under the chords): notes are held to each bar's scale, the mode's characteristic note is brought into the bars whose mode has one, and a chord is checked against its own bar's mode. The Motif's language model only sees the chord names, so the first bars follow them loosely; the Extend sampler follows them more closely, including notes outside the key that a chord brings.) (**Piano chords** and **Guitar chords** in the Instrument list write the new bars as chords in the melody's harmony instead of a melody line, in a few patterns, to be sung to in step 4.) (Under the Expand button, **Or repeat part of the melody** copies bars — one or several times — onto the end, with their sung line, lyrics, singers and accompaniment: a verse sung again by the same duet or choir. Nothing is generated.) Pick an option and add bars (2–16) at a time, each time for an **Instrument** of your choice (the melody is passed
+   on to it from there; with the Voice instrument the bars are sung to the next lyric lines, by a singer picked for that step), as new options to choose from, as often
+   as you like (with Undo). Each expansion has its own settings: length, complexity, how jumpy, how strongly the
+   motif comes back, dynamics and a free-text direction ("build to a climax, then calm down"). It is written by the
+   Anticipation model, steered by the chords, cadences and opening idea, or by the language model for the "answer the
+   motif" move. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
-3. **Edit the melody.** Fix what you do not like before adding parts. By hand: the piano roll becomes a note editor (add,
+3. **Edit the melody** (or, once there is one, the singing). Fix what you do not like, at any point (the accompaniment already written stays as it is). By hand: the piano roll becomes a note editor (add,
    move, resize, delete), and saving redraws the sheet music. Or in words ("I don't think measure 2 leads into measure 3
    very well, so connect them better"): the LLM is given only the bars you name, its answer is spliced in by code and
    checked, so every other bar stays exactly as it was. If it thinks other bars would need to change as well, it asks
    first and you decide.
-4. **Add accompaniment (optional).** One instrument at a time, written by the Anticipation model: type a free-text
-   direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or undo, repeat. Parts
-   respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get chords,
-   arpeggios, Alberti bass and more under an unchanged melody.
+4. **Add singing and accompaniment (optional).** First the **Singing voice**: a sung line written over the melody to your lyrics (Lyrics button),
+   a few bars at a time, with one singer or a duet or choir (the same notes, or **Harmonize**). It is a second line in the
+   melody's own file, so the melody is not changed, and you can then change its notes in step 3 (choose *The singing*; every
+   bar keeps one note per syllable) or lengthen the melody in step 2 and sing the new bars. **Hear it sung** makes the audio, with the melody
+   under it. Then instruments, one at a time, written by the Anticipation model **for the bars you choose**
+   (*Bars from … to …*): type a free-text direction ("answer the melody in the gaps, high and cheeky"), audition options, approve
+   or undo, repeat. Parts respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get
+   chords, arpeggios, Alberti bass and more. So a piece is built section by section: a full band for bars 1-4, then
+   **Take the accompaniment out of these bars** to leave the singer alone in bars 5-8, then a different set of instruments for
+   bars 9-12. Each instrument is listed with its bars and can be taken out. The melody and the singing stay editable (step 3) and
+   extendable (step 2) throughout; new bars start without accompaniment.
 5. **Enrich (optional).** The Anticipation model adds a whole ensemble (up to 16 instruments) around the piece so far,
-   including the parts approved in step 4, which stay exactly as they are. Press again to re-roll it, or undo it.
+   including the parts approved in step 4, which stay exactly as they are. It always covers the whole piece. Press again to re-roll it, or undo it.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
 7. **Lyrics (demo).** The **Lyrics** button keeps your words apart from the melody (put in as many lines as you like; it checks
    that every word can be pronounced). Choose the **Voice** instrument in the Motif step and the melody is written with
    one note per syllable to as many lines as fit the bars you asked for; each extension of a Voice melody carries on with the next
    line, and never has to use them all. The lines a melody was written to are stored beside it (`*.lyrics.json`). **Sing the chosen
-   melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav, in the written key, in one of two voices (the two reference singers that come with SoulX; a voice is copied from a short recording, so more voices need more recordings). If accompaniment has been added (steps 4–5), the voice and the accompaniment are mixed into one `*.mix.wav`, rendered offline with the same Apple sound bank as playback. English and Mandarin (Chinese
+   melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav, in the written key, in the singer chosen for each part: the Motif step and every Extend step have their own **Singer**, and can add more singers with them for a duet or choir (up to four voices: all on the same notes, or ticking **Harmonize** gives each extra singer a part, a third above, a third below and a fifth above, always in the key) (the two reference singers that come with SoulX, or voices you add; a voice is copied from a short recording, so more voices need more recordings). If accompaniment has been added (steps 4–5), the voice and the accompaniment are mixed into one `*.mix.wav`, rendered offline with the same Apple sound bank as playback. English and Mandarin (Chinese
    characters are one syllable and one note each); unusual English words need respelling. **Add voice…** makes a new singer
    from your own singing (recorded with the microphone, 10–30 seconds) or from a file of someone singing alone (setup: DEPLOY.md 4c; only for voices you own or have permission to copy).
 8. **Sheet music.** Per-instrument clefs (grand staff for piano and harp), key signatures, PDF export (A4), MusicXML for
@@ -50,28 +59,28 @@ apps; it is slower and tends to write fewer notes per attempt). Under it are **C
 they use your Claude subscription, so they count against its usage limits instead of being billed per request (check
 Anthropic's current terms for programmatic use). The prompt, the melody and your instructions leave the Mac. Claude fixes its
 own sampling, so the complexity setting does not change its randomness. Fable 5.1 is not offered: Claude Code bills it as
-extra usage credits. `claude_llm.py` also holds an Anthropic API-key route (key in the Keychain) that the menu does not
-currently show. The Anticipation model (extension and accompaniment) stays local.
+extra usage credits. The Anticipation model (extension and accompaniment) stays local.
 
 ## The character of the melody
 
-A melody with no shape behind it wanders. Five sliders (0 to 10) in the Melody section put one there:
+A melody with no shape behind it wanders. These sliders (0 to 10) in the Melody section put one there:
 
 | Slider | What it does |
 |---|---|
-| **Smooth ↔ Jumpy** | how the tune moves: small steps along the scale, or bigger leaps and turns |
+| **Smooth ↔ Jumpy** | how the tune moves: small steps along the scale, or bigger leaps and turns (jumpy also cuts one-way scale runs short) |
 | **Steady pulse** | how strongly notes start on the beat: loose and improvised, or square and regular |
-| **Fit the harmony** | every bar has a chord underneath, and the melody prefers its notes |
-| **Phrase endings** | each phrase finishes on a note that sounds like a stopping place, like a full stop |
-| **Recurring theme** | the opening idea comes back at the start of each phrase, moved onto its chord (off by default) |
-| **Avoid scale runs** | how much one-way runs up or down the scale are cut short, independent of Smooth ↔ Jumpy |
-| **Modal flavor** | with a mode (Dorian, Phrygian, Lydian, Mixolydian, Locrian) chosen next to the Key: how often the note that gives the mode its sound is used |
 | **Dynamics** | flat to expressive: how much the loudness varies (beat accents, phrase swells, a rise to the climax, a tapering end). The accompaniment has its own Dynamics slider |
+| **Modal flavor** | shown only when a mode other than major or minor is chosen: how often the note that gives the mode its sound is used |
+| **Scale: Relaxed ↔ Strict** (under *Advanced*) | whether notes outside the key may stay |
 
-The three plan sliders at zero give a free melody. The same plan is kept with the session, so the accompaniment is
+In step 2 the motif has something to come back to, so **Bring the motif back** appears there: how strongly the opening
+idea returns at the start of each new phrase, moved onto its chord. A motif is the theme, so step 1 has no such slider.
+How much the melody fits each bar's chord and how firmly each phrase ends are fixed at sensible values
+(`plan.SLIDER_DEFAULTS`). Settings most people never change (the Melody LLM, the Music model, the scale rule) are folded
+under **Advanced**. The same plan is kept with the session, so the accompaniment is
 harmonised with the melody instead of separately. `plan.py` holds the plan (phrases, chord of every bar, cadences, motif).
 The accompaniment's sampling settings (randomness, retries, minimum density, beat-grid snapping, LLM directions) are fixed
-constants in `text2music.py`, not options. The command line has the same eight sliders as flags: `--smooth-jumpy`, `--pulse`,
+constants in `text2music.py`, not options. The command line still has the plan sliders as flags: `--smooth-jumpy`, `--pulse`,
 `--harmony`, `--endings`, `--theme` (each 0 to 10); `plan.from_sliders` is the one place that turns them into the sampler's
 numbers, for the app and the command line alike.
 
@@ -107,6 +116,7 @@ Try it without the app (uses the language model; it downloads on first use):
 | `backend.py` | JSON-lines server the app talks to |
 | `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
+| `harmony.py` | chord names → notes (`Dm7`, `G7#9`, `C/E`...), and progressions written as text |
 | `expand.py` | step 2: grow a melody by 2–16 bars (LLM or Anticipation) |
 | `lyrics.py`, `soulx/` | lyrics to a melody (one note per syllable) and the singing voice (vendored SoulX-Singer, Apache 2.0) |
 | `edit.py` | step 3: change only the named bars (LLM) or save a hand edit |

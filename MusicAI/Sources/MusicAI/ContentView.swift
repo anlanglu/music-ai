@@ -59,6 +59,108 @@ struct PianoRoll: View {
     }
 }
 
+/// The chord of each bar, under the piano roll and lined up with its bars. A bar with a change at the half bar shows two
+/// chords. A chord with notes the melody's mode doesn't have turns its bar orange. Click a bar to type other chords.
+struct ChordStrip: View {
+    let bars: [[ChordCell]]
+    let key: String
+    let duration: Double
+    let secondsPerBar: Double
+    let edit: (Int, String) -> Void
+    @ObservedObject var vm: ViewModel       // holds which bar is being edited, and its text
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = duration > 0 ? secondsPerBar / duration * geo.size.width : 0
+            ZStack(alignment: .topLeading) {
+                ForEach(bars.indices, id: \.self) { i in
+                    VStack(spacing: 2) {
+                        cell(i).frame(height: 28)
+                        modeCell(i).frame(height: 14)
+                    }
+                    .frame(width: max(w - 2, 4), height: geo.size.height)
+                    .offset(x: Double(i) * w + 1)
+                }
+            }
+        }
+        .frame(height: 46)
+    }
+
+    private func label(_ i: Int) -> String { i < vm.chordLabels.count ? vm.chordLabels[i] : key }
+    private func own(_ i: Int) -> String { i < vm.chordModes.count ? vm.chordModes[i] : "" }
+
+    /// The row under the chords: the bar's own mode when it has one, else a faint dot; click to choose.
+    private func modeCell(_ i: Int) -> some View {
+        let mine = own(i)
+        return Text(mine.isEmpty ? "·" : String(mine.prefix(5)))
+            .font(.system(size: 9, weight: .semibold)).lineLimit(1)
+            .foregroundStyle(mine.isEmpty ? Color.secondary.opacity(0.5) : Color.teal)
+            .frame(maxWidth: .infinity)
+            .background(mine.isEmpty ? Color.clear : Color.teal.opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+            .contentShape(Rectangle())
+            .help("Bar \(i + 1) is in \(label(i)). Click to give this bar a mode of its own.")
+            .onTapGesture { vm.modeEditing = i }
+            .popover(isPresented: Binding(get: { vm.modeEditing == i }, set: { if !$0 { vm.modeEditing = nil } })) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Bar \(i + 1) mode").font(.headline)
+                    Button("The piece's mode (\(key))") { vm.setMode(bar: i, mode: ""); vm.modeEditing = nil }
+                        .buttonStyle(.plain).foregroundStyle(mine.isEmpty ? Color.accentColor : Color.primary)
+                    ForEach(vm.modeNames, id: \.self) { m in
+                        Button(m.capitalized) { vm.setMode(bar: i, mode: m); vm.modeEditing = nil }
+                            .buttonStyle(.plain).foregroundStyle(mine == m ? Color.accentColor : Color.primary)
+                    }
+                    Text("Notes and chords in this bar are held to this mode.").font(.caption).foregroundStyle(.secondary)
+                        .frame(width: 200, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+            }
+    }
+
+    private func mismatch(_ bar: [ChordCell]) -> [ChordCell] { bar.filter { !$0.outside.isEmpty } }
+
+    private func help(_ i: Int, _ bar: [ChordCell]) -> String {
+        var lines = bar.map { "\($0.symbol): \($0.notes)" }
+        for c in bar where !c.outside.isEmpty {
+            lines.append("\(c.symbol) has \(c.outside.joined(separator: ", ")), which \(label(i)) doesn't have.")
+        }
+        lines += bar.map(\.remark).filter { !$0.isEmpty }
+        return lines.joined(separator: "\n") + "\nClick to change."
+    }
+
+    private func cell(_ i: Int) -> some View {
+        let bar = bars[i]
+        let off = !mismatch(bar).isEmpty
+        return HStack(spacing: 2) {
+            ForEach(bar) { c in
+                Text(c.symbol).font(.caption2.bold()).lineLimit(1).minimumScaleFactor(0.5)
+                    .foregroundStyle(c.outside.isEmpty ? Color.primary : Color.orange)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 2)
+        .background((off ? Color.orange.opacity(0.28) : Color(white: 0.16)), in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(off ? Color.orange : Color.clear, lineWidth: 1))
+        .contentShape(Rectangle())
+        .help(help(i, bar))
+        .onTapGesture { vm.chordEditText = bar.map(\.symbol).joined(separator: " "); vm.chordEditing = i }
+        .popover(isPresented: Binding(get: { vm.chordEditing == i }, set: { if !$0 { vm.chordEditing = nil } })) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Bar \(i + 1) chords in \(key)").font(.headline)
+                TextField("Dm7  or  Dm7 G7", text: $vm.chordEditText).textFieldStyle(.roundedBorder).frame(width: 220)
+                    .onSubmit { edit(i, vm.chordEditText); vm.chordEditing = nil }
+                Text("One chord, or two (a space apart) for a change at the half bar. Try Cmaj9, G7#9, Bbm7b5, C/E, Csus4.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).frame(width: 220)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { vm.chordEditing = nil }
+                    Button("Set") { edit(i, vm.chordEditText); vm.chordEditing = nil }.keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(12)
+        }
+    }
+}
+
 /// Shows an engraved score (a local HTML file with inline SVG).
 struct SheetView: NSViewRepresentable {
     let html: URL
@@ -82,6 +184,8 @@ struct SheetView: NSViewRepresentable {
 struct ContentView: View {
     @StateObject private var vm = ViewModel()
     @AppStorage("showHistory") private var showHistory = true
+    @AppStorage("showAdvanced") private var showAdvanced = false
+    private let lyricsVoiceProgram = 53          // lyrics.VOICE_PROGRAM
 
     var body: some View {
         VStack(spacing: 0) {
@@ -96,10 +200,10 @@ struct ContentView: View {
         }
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
-        .sheet(isPresented: $vm.showClaudeSheet) { ClaudeKeySheet(vm: vm) }
         .sheet(isPresented: $vm.showLyrics) { LyricsSheet(vm: vm) }
-        .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
-        .onChange(of: vm.ready) { _, _ in vm.loadMix() }
+        .sheet(isPresented: $vm.showAddVoice) { AddVoiceSheet(vm: vm) }
+        .onChange(of: vm.displayURL) { _, _ in vm.loadMix(); vm.loadChords() }
+        .onChange(of: vm.ready) { _, _ in vm.loadMix(); vm.loadChords() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
     }
 
@@ -207,25 +311,75 @@ struct ContentView: View {
         }
     }
 
-    /// The settings steps 4 and 5 share.
+    /// The settings steps 4 and 5 share. Parts always respect each instrument's range and the melody's key.
     private var accompSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
+            let dynHelp = "How much the loudness of the accompaniment varies. Each instrument plays a little under the melody, swelling and fading with it, with the beat a little stronger. Zero: each instrument at one steady level. The melody keeps its own dynamics."
+            HStack {
+                Text("Dynamics"); Spacer()
+                Text(vm.accompDynamics <= 0 ? "Flat" : "\(Int(vm.accompDynamics))").monospacedDigit().foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle()).help(dynHelp)
+            Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
+            advancedBox {
                 Picker("Music model", selection: $vm.size) {
                     ForEach(["small", "medium", "large"], id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it with Hybrid. Small is quick; large is slower and usually better.")
-                Toggle("Playable parts (respect instrument ranges)", isOn: $vm.playable)
-                    .help("Keeps every instrument inside its real range and within the number of notes one player can sound at once")
-                Toggle("Keep parts in the melody's key", isOn: $vm.inKey)
-                    .help("When a key was chosen for the melody, the added parts only use notes from that key")
-                let dynHelp = "How much the loudness of the accompaniment varies. Each instrument plays a little under the melody, swelling and fading with it, with the beat a little stronger. Zero: each instrument at one steady level. The melody keeps its own dynamics."
-                HStack {
-                    Text("Dynamics"); Spacer()
-                    Text(vm.accompDynamics <= 0 ? "Flat" : "\(Int(vm.accompDynamics))").monospacedDigit().foregroundStyle(.secondary)
+                .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it. Small is quick; large is slower and usually better.")
+            }
+        }
+    }
+
+    /// Who sings: a lead from the built-in singers and the voices added from recordings, and optionally others with the
+    /// lead (a duet or choir), singing the same notes or harmonizing.
+    private func singerPicker(_ who: Binding<Singers>) -> some View {
+        let others = vm.voiceChoices.filter { $0.key != who.wrappedValue.lead }
+        let names = Binding<Set<String>>(
+            get: { Set(others.filter { who.wrappedValue.extras.contains($0.key) }.map(\.name)) },
+            set: { chosen in who.wrappedValue.extras = Set(others.filter { chosen.contains($0.name) }.map(\.key)) })
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Picker("Singer", selection: who.lead) {
+                    ForEach(vm.voiceChoices, id: \.key) { Text($0.name).tag($0.key) }
                 }
-                .contentShape(Rectangle()).help(dynHelp)
-                Slider(value: $vm.accompDynamics, in: 0...10, step: 1).help(dynHelp)
+                .help("Who sings these bars. Singers A and B are the two reference voices that come with SoulX-Singer.")
+                Button("Add voice…") { vm.showAddVoice = true }
+                    .disabled(vm.busy || !vm.ready)
+                    .help("Make a new singer from a recording of a voice singing alone")
+            }
+            if !others.isEmpty {
+                Text("Also sung by (a duet or choir, up to four voices)").font(.caption).foregroundStyle(.secondary)
+                ChipPicker(items: others.map(\.name), selection: names, limit: Lyrics.maxSingers - 1)
+                if !who.wrappedValue.extras.isEmpty {
+                    Toggle("Harmonize (a third above, a third below, a fifth above)", isOn: who.harmonize)
+                        .help("Ticked: each extra singer takes a harmony part, in the key. Unticked: they all sing the same notes. Every extra singer adds the same singing time again.")
+                }
+            }
+        }
+    }
+
+    /// Settings most people never change, folded away under one heading (open or closed everywhere at once).
+    private func advancedBox<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
+        DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+            VStack(alignment: .leading, spacing: 12) { content() }.padding(.top, 8)
+        }
+    }
+
+    /// Step 2: copy bars of the melody onto the end, with whatever is sung or played in them.
+    private var repeatBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Or repeat part of the melody").font(.subheadline.weight(.medium))
+            HStack {
+                Text("Bars"); Spacer()
+                Stepper("from \(vm.repeatBars.from)", value: $vm.repeatFrom, in: 1...max(vm.barCount, 1))
+                Stepper(vm.repeatTo == 0 ? "to the end" : "to \(vm.repeatBars.to)", value: $vm.repeatTo, in: 0...max(vm.barCount, 1))
+            }
+            Stepper(vm.repeatTimes == 1 ? "once" : "\(vm.repeatTimes) times", value: $vm.repeatTimes, in: 1...4)
+            Button("Repeat bars \(vm.repeatBars.from)–\(vm.repeatBars.to)", action: vm.repeatMelody)
+                .controlSize(.large).frame(maxWidth: .infinity).disabled(!vm.canExpand)
+                .help("Nothing is generated: those bars are copied onto the end, with the singing, its lyrics and singers, and the accompaniment in them. A verse comes back sung by the same duet or choir.")
         }
     }
 
@@ -234,8 +388,56 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Optional. Add instruments one at a time: choose an instrument, hear several options, approve one, repeat. The melody is not changed.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            singingControls
+            Divider()
             accompSettings
             oneByOneControls
+        }
+    }
+
+    /// Step 4: the singing voice, a sung line over the melody. A few bars at a time; the notes can be changed in step 3.
+    private var singingControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Singing voice").font(.headline)
+            Text("A sung line over the melody, written to your lyrics (Lyrics button), a few bars at a time. It does not change the melody. Change its notes in step 3 (choose Singing), or lengthen the melody in step 2 and sing the new bars here.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            singerPicker($vm.singSingers)
+            if let r = vm.singRange {
+                HStack {
+                    Text("Singing bars \(r.from)–\(r.to)").font(.callout)
+                    Spacer()
+                    Button("Clear") { vm.singChosen = [] }.controlSize(.small)
+                }
+                .help("The bars picked in the roll. Click a bar next to them to add it, or at either end to take it off.")
+            } else {
+                Text("Click the bars to sing in the roll above, or set them here.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Start at bar"); Spacer()
+                    Text(vm.singStart == 0 ? "after the singing so far" : "\(Int(vm.singStart))").foregroundStyle(.secondary)
+                    Stepper("", value: $vm.singStart, in: 0...64).labelsHidden()
+                }
+                .help("Which bar the singing starts on. Auto starts right after the bars already sung, or at bar 1.")
+                barsRow("Bars to sing", $vm.singBars, range: 1...16, help: "How many bars of singing to write in one go. The next lyric lines that fit are used; the melody is not changed. Press \"Add more singing\" again to carry on from where the singing stopped.")
+            }
+            optionsRow($vm.singCount)
+            HStack {
+                Button { vm.generateSinging() } label: {
+                    Text(vm.hasSung ? "Add more singing" : "Add singing").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!vm.canExpand || !vm.hasLyrics)
+                Button("Lyrics…") { vm.showLyrics = true }.controlSize(.large)
+            }
+            if vm.selected == nil {
+                Text("Pick a melody first.").font(.caption).foregroundStyle(.secondary)
+            } else if !vm.hasLyrics {
+                Text("Add your lyrics first (Lyrics…).").font(.caption).foregroundStyle(.secondary)
+            }
+            if vm.hasSung {
+                Button { vm.singSelected() } label: { Text("Hear it sung (about 15 seconds a line)").frame(maxWidth: .infinity) }
+                    .disabled(vm.busy || !vm.ready)
+                    .help("Sings the lyric lines with the singers chosen for them and plays the result, with the melody under it")
+            }
         }
     }
 
@@ -286,23 +488,53 @@ struct ContentView: View {
         }
     }
 
+    /// What accompanies the chosen option and in which bars, with the means to take it out again.
+    private var accompanimentList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Accompaniment").font(.callout)
+                Spacer()
+                Button("Undo last") { vm.undoPart() }
+                    .controlSize(.small).disabled(vm.partHistory.isEmpty || vm.busy)
+            }
+            let layers = vm.selected?.layers ?? []
+            if layers.isEmpty {
+                Text("None yet: the melody and the singing stand alone.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Array(layers.enumerated()), id: \.offset) { _, l in
+                HStack {
+                    Text("\(Instrument.partName(l.program)) · bars \(l.from)–\(l.to)").font(.callout)
+                    Spacer()
+                    Button("Take out") { vm.clearBars(from: l.from, to: l.to, program: l.program) }
+                        .controlSize(.small).disabled(vm.busy)
+                        .help("Remove this instrument from the piece (everywhere it plays)")
+                }
+            }
+            HStack {
+                Text("Bars"); Spacer()
+                Stepper("from \(vm.partBars.from)", value: $vm.partFrom, in: 1...max(vm.barCount, 1))
+                Stepper(vm.partTo == 0 ? "to the end" : "to \(vm.partBars.to)", value: $vm.partTo, in: 0...max(vm.barCount, 1))
+            }
+            .help("The bars the next instrument plays in. Section by section: put a full band in some bars and leave others to the voice.")
+            if !layers.isEmpty {
+                Button("Take the accompaniment out of these bars") { vm.clearBars(from: vm.partBars.from, to: vm.partBars.to) }
+                    .controlSize(.small).disabled(vm.busy)
+                    .help("Every instrument stops in these bars, so the melody and the singing stand alone")
+            }
+        }
+    }
+
     /// Add instruments one at a time: choose an instrument, hear several options, approve one, repeat.
     private var oneByOneControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             if vm.currentPieceURL == nil {
                 Text("Pick a melody first.").font(.caption).foregroundStyle(.secondary)
             } else {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(vm.partsAdded.isEmpty ? "Piece: melody only" : "Piece: melody + " + vm.partsAdded.joined(separator: ", "))
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button("Undo last") { vm.undoPart() }
-                        .controlSize(.small).disabled(vm.partHistory.isEmpty || vm.busy)
-                }
+                accompanimentList
             }
             Picker("Instrument", selection: $vm.partInstrument) {
                 ForEach(Instrument.parts) { inst in
-                    Text(vm.presentPrograms.contains(inst.program) ? "\(inst.name) (in piece)" : inst.name).tag(inst)
+                    Text(vm.presentPrograms.contains(inst.program) ? "\(inst.name) (plays somewhere)" : inst.name).tag(inst)
                 }
             }
             if vm.partInstrument.texture {
@@ -341,7 +573,7 @@ struct ContentView: View {
             .tint(vm.partOptions.isEmpty ? .accentColor : .gray)
             .disabled(!vm.ready || vm.busy || vm.currentPieceURL == nil || vm.partInstrumentTaken)
             if vm.partInstrumentTaken {
-                Text("\(vm.partInstrument.name) is already in the piece.").font(.caption).foregroundStyle(.secondary)
+                Text("\(vm.partInstrument.name) already plays in these bars. Take it out of them first, or choose other bars.").font(.caption).foregroundStyle(.secondary)
             }
             if !vm.partOptions.isEmpty {
                 Button(action: vm.approvePart) {
@@ -375,11 +607,13 @@ struct ContentView: View {
             }
             describeBox("Anything else? (optional)", text: $vm.prompt, height: 54,
                         example: "e.g. like a music box, rising slowly then settling")
+            progressionBox($vm.motifProgression, modes: $vm.motifModes)
             barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
             }
+            if vm.instrument.program == lyricsVoiceProgram { singerPicker($vm.singers) }
             Picker("Time signature", selection: $vm.sig) {
                 ForEach(ViewModel.timeSigs, id: \.self) { Text($0).tag($0) }
             }
@@ -406,15 +640,33 @@ struct ContentView: View {
             }
 
             complexityRow($vm.complexity)
-            llmPicker
-            characterControls(shape: $vm.shapeSlider, runs: $vm.runsSlider, pulse: $vm.pulseSlider,
-                              harmony: $vm.harmonySlider, endings: $vm.endingsSlider, theme: $vm.themeSlider, flavor: $vm.flavorSlider, strict: $vm.strictSlider, dynamics: $vm.dynamicsSlider,
-                              phrasing: $vm.phrasing, resolve: $vm.resolveEnding, auto: $vm.autoSliders, what: "the melody")
+            VStack(alignment: .leading, spacing: 12) {
+                Divider()
+                Text("Character of the melody").font(.callout)
+                knobRow("Smooth ↔ Jumpy", $vm.shapeSlider, readout: shapeWord(vm.shapeSlider),
+                        help: "How the melody moves from note to note. Smooth: mostly small steps, like singing up and down a scale, and runs along the scale are fine. Jumpy: bigger leaps and more changes of direction, and runs are cut short; more angular and less predictable.")
+                knobRow("Steady pulse", $vm.pulseSlider,
+                        help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
+                knobRow("Dynamics: Flat ↔ Expressive", $vm.dynamicsSlider, readout: dynamicsWord(vm.dynamicsSlider),
+                        help: "How much the loudness varies: notes on the beat a little stronger, each phrase swelling and fading, the line rising towards its highest note, and the ending tapering. Zero: every note at one level. The accompaniment gets its own setting. The volume of each instrument is in the Mixer under the preview.")
+                if vm.modeHasFlavor {
+                    knobRow("Modal flavor", $vm.flavorSlider,
+                            help: "How strongly the melody uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th, Locrian's flat 5th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats.")
+                }
+                phrasingControls($vm.phrasing)
+                Toggle("Resolve ending (finish on the home note)", isOn: $vm.resolveEnding)
+                    .help("Changes only the final note, so it ends on the tonic")
+            }
             optionsRow($vm.optionCount)
+            advancedBox {
+                llmPicker
+                knobRow("Scale: Relaxed ↔ Strict", $vm.strictSlider, readout: strictWord(vm.strictSlider),
+                        help: "How closely the melody keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
+            }
 
             Button(action: vm.generateMelodies) {
                 HStack {
-                    if vm.busy && vm.orchestration == nil && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
+                    if vm.busy && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
                     Text(vm.candidates.isEmpty ? "Generate motifs" : "Regenerate motifs").frame(maxWidth: .infinity)
                 }
             }
@@ -429,6 +681,20 @@ struct ContentView: View {
     }
 
     /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
+    /// Chords to write the melody to, typed as a progression. Empty: the app picks chords that fit the key.
+    private func progressionBox(_ text: Binding<String>, modes: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Chords (optional)").font(.caption).foregroundStyle(.secondary)
+            TextField("e.g. Dm7 G7 | Cmaj7 | Am7 D7", text: text).textFieldStyle(.roundedBorder)
+                .help("Bars are separated by |; two chords in a bar change at the half bar. A short progression repeats to fill the bars. Leave it empty and the app picks chords in the key. Under the piano roll, each bar's chord can be changed afterwards.")
+            Text("Bars separated by |, two chords in a bar for a half-bar change. Orange bars have notes the mode doesn't have.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Mode by bar (optional)").font(.caption).foregroundStyle(.secondary)
+            TextField("e.g. major*3 lydian", text: modes).textFieldStyle(.roundedBorder)
+                .help("A mode of its own for some bars, one per bar: major*3 lydian is three bars in major, then one in lydian. - is the piece's own mode; bars after the list keep it. Set the piece's mode (above) to the one most bars use.")
+        }
+    }
+
     private var expandControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pick a motif or melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
@@ -437,28 +703,42 @@ struct ContentView: View {
                 Text("What should the new bars do?").font(.caption).foregroundStyle(.secondary)
                 ChipPicker(items: ViewModel.moves.map(\.label), selection: $vm.expandMoves,
                            help: Dictionary(uniqueKeysWithValues: ViewModel.moves.map { ($0.label, $0.text) }))
-                if vm.expandEngine == "hybrid", !vm.expandMoves.isDisjoint(with: ViewModel.llmOnlyMoves) {
-                    Text("“Answer the motif” and “return” are only followed in LLM only mode; Hybrid ignores them.")
-                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                if vm.expandEngine == "llm" {
+                    Text("“Answer the motif” is written by the language model (Advanced → Melody LLM); the other moves by the Anticipation model.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             describeBox("Anything else? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
-                .help("Free text for this expansion. LLM only reads it as an instruction; Hybrid turns it into how busy, how high or low and how adventurous the new bars are.")
+                .help("Free text for this expansion. The language model reads it as an instruction; the Anticipation model turns it into how busy, how high or low and how adventurous the new bars are.")
+            progressionBox($vm.expandProgression, modes: $vm.expandModes)
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
-
-            Picker("Written by", selection: $vm.expandEngine) {
-                Text("Hybrid: LLM + Anticipation").tag("hybrid")
-                Text("LLM only").tag("llm")
+            Picker("Instrument", selection: $vm.expandInstrument) {
+                ForEach(Instrument.extend) { Text($0.name).tag($0) }
             }
-            .help("Hybrid: the Anticipation model continues the melody, steered by the sliders; its rhythms are the more natural. LLM only: the language model continues it phrase by phrase and reads your direction.")
+            .help("The instrument these new bars are written for. Pick another one and the melody is passed to it from here on; with the Voice instrument the bars are written to the next lyric lines.")
+            if vm.expandInstrument.chords {
+                Text("These bars are chords in the melody's harmony, with no melody line, ready for a voice to be sung to them (step 4). The options are the same chords in different patterns; the moves and sliders below do not apply.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if vm.expandInstrument.program == lyricsVoiceProgram {
+                singerPicker($vm.expandSingers)
+                Text("These bars are written to the next lines of your lyrics (Lyrics button) and sung by this singer; the moves and sliders below do not apply.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
 
             complexityRow($vm.expandComplexity)
-            if vm.expandEngine == "llm" { llmPicker }
-            characterControls(shape: $vm.expandShape, runs: $vm.expandRuns, pulse: $vm.expandPulse,
-                              harmony: $vm.expandHarmony, endings: $vm.expandEndings, theme: $vm.expandTheme, flavor: $vm.expandFlavor, strict: $vm.expandStrict, dynamics: $vm.expandDynamics,
-                              phrasing: $vm.expandPhrasing, resolve: $vm.expandResolve, auto: $vm.expandAuto, what: "the new bars")
+            knobRow("Smooth ↔ Jumpy", $vm.expandShape, readout: shapeWord(vm.expandShape),
+                    help: "How the new bars move from note to note. Smooth: mostly small steps. Jumpy: bigger leaps and more changes of direction, and runs along the scale are cut short.")
+            knobRow("Bring the motif back", $vm.expandTheme,
+                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: the new bars are new material.")
+            knobRow("Dynamics: Flat ↔ Expressive", $vm.expandDynamics, readout: dynamicsWord(vm.expandDynamics),
+                    help: "How much the loudness varies in the new bars. Zero: every note at one level.")
+            phrasingControls($vm.expandPhrasing)
+            Toggle("Resolve ending (finish on the home note)", isOn: $vm.expandResolve)
+                .help("Changes only the final note, so it ends on the tonic")
             optionsRow($vm.expandCount)
+            advancedBox { llmPicker }
 
             HStack {
                 Button(action: vm.expandMelody) {
@@ -474,10 +754,14 @@ struct ContentView: View {
                         .help("Go back to the options from before the last expansion")
                 }
             }
+            repeatBox
             if vm.selected == nil {
                 Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
-            } else if !(vm.orchestration == nil && vm.partsAdded.isEmpty && vm.partOptions.isEmpty) {
-                Text("The accompaniment has been started, so the melody can no longer change. Generate new melodies to start over.")
+            } else if !vm.partOptions.isEmpty {
+                Text("Approve or discard the instrument options first (step 4).")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if !(vm.selected?.layers.isEmpty ?? true) {
+                Text("The accompaniment stays as it is, in the bars it was written for; the new bars start without it (step 4 adds it).")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -486,8 +770,16 @@ struct ContentView: View {
     /// Step 3: change the melody by hand (the piano roll becomes an editor) or by asking the LLM to change named bars.
     private var editControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Fix what you do not like before adding the accompaniment. Only the bars you name change; every other bar stays exactly as it is.")
+            Text("Fix what you do not like. Only the bars you name change; every other bar stays exactly as it is, and so does the accompaniment already written.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if vm.hasSung {
+                Picker("Change", selection: $vm.editPart) {
+                    Text("The melody").tag("melody")
+                    Text("The singing").tag("vocal")
+                }
+                .pickerStyle(.segmented)
+                .help("Which line the edit changes. The other one is kept exactly. Each bar of the singing keeps its number of notes, one for each syllable.")
+            }
             Button(action: vm.beginEditing) {
                 Label("Edit notes by hand", systemImage: "pencil").frame(maxWidth: .infinity)
             }
@@ -498,13 +790,13 @@ struct ContentView: View {
                         example: "e.g. I don't think measure 2 leads into measure 3 very well, so connect them better")
                 .help("Say what is wrong and name the bars (\"measure 2\", \"bars 3-4\"). The LLM is only given those bars to rewrite.")
             HStack {
-                Text("Bars").foregroundStyle(.secondary)
-                TextField("or click bars in the roll", text: $vm.editBarsText)
+                Text("Bars to change").foregroundStyle(.secondary)
+                TextField("click bars in the roll, or type 2-3, 5", text: $vm.editBarsText)
                     .textFieldStyle(.roundedBorder)
-                    .help("Optional: the bars to change, as well as any you named above. The bar numbers are shown along the top of the hand editor and in the sheet music. If neither names a bar, nothing is changed.")
+                    .help("Exactly the bars that may change; nothing else is touched, however the sentence above is worded. Click bars in the piano roll or sheet music, or type them. If this is empty, the bars named in the sentence (\"measure 2\") are used instead.")
             }
             optionsRow($vm.editCount)
-            llmPicker
+            advancedBox { llmPicker }
             HStack {
                 Button(action: vm.startLLMEdit) {
                     HStack {
@@ -600,33 +892,8 @@ struct ContentView: View {
         .help("The language model that writes the melody, and the expansions and edits if you choose LLM only. Local models download once and are kept on disk. 14B needs about 8 GB of free memory and Mistral 24B about 10 GB, which is tight on a 16 GB Mac (close other apps first). The Claude entries run through the claude tool on this Mac (your subscription, online).")
     }
 
-    /// The character sliders, phrasing and ending: identical in both steps. `what` is "the melody" or "the new bars".
-    private func characterControls(shape: Binding<Double>, runs: Binding<Double>, pulse: Binding<Double>,
-                                   harmony: Binding<Double>, endings: Binding<Double>, theme: Binding<Double>, flavor: Binding<Double>, strict: Binding<Double>, dynamics: Binding<Double>,
-                                   phrasing: Binding<Int>, resolve: Binding<Bool>, auto: Binding<Set<String>>, what: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Divider()
-            Text("Character of \(what)").font(.callout)
-            knobRow("Smooth ↔ Jumpy", shape, 0...10, auto: autoBinding(auto, "shape"), readout: shapeWord(shape.wrappedValue),
-                    help: "How \(what) moves from note to note. Smooth: mostly small steps, like singing up and down a scale. Jumpy: bigger leaps and more changes of direction, which sounds more angular and less predictable.")
-            knobRow("Avoid scale runs", runs, 0...10, auto: autoBinding(auto, "runs"),
-                    help: "How much \(what) is kept from running up or down the scale in one direction. High: runs are cut short with a leap or a turn. Zero: runs are fine. Independent of Smooth ↔ Jumpy, so a smooth tune can still avoid runs.")
-            knobRow("Steady pulse", pulse, 0...10, auto: autoBinding(auto, "pulse"),
-                    help: "How strongly notes start on the beat (and most of all on the first beat of a bar). Low: loose, off-beat, more improvised. High: square and regular, easy to tap your foot to.")
-            knobRow("Fit the harmony", harmony, 0...10, auto: autoBinding(auto, "harmony"),
-                    help: "Every bar is given a chord underneath. High: \(what) mostly uses that chord's notes, so it sounds firmly harmonised. Low: it roams freely through the key. Zero: ignore the chords (the accompaniment then follows the key alone).")
-            knobRow("Phrase endings", endings, 0...10, auto: autoBinding(auto, "endings"),
-                    help: "How strongly each phrase finishes on a note that sounds like a stopping place, the way a sentence ends with a full stop. High: clear, satisfying endings. Zero: phrases just trail off wherever they land.")
-            knobRow("Recurring theme", theme, 0...10, auto: autoBinding(auto, "theme"),
-                    help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: every phrase is new material.")
-            knobRow("Scale: Relaxed ↔ Strict", strict, 0...10, auto: autoBinding(auto, "strict"),
-                    readout: strict.wrappedValue >= 10 ? "Strict" : strict.wrappedValue <= 0 ? "Relaxed" : "\(Int(strict.wrappedValue))",
-                    help: "How closely \(what) keeps to the notes of the key or mode. The allowed notes are worked out from the mode itself (not by the LLM) and listed in the log. Strict: every note is in the scale. Relaxed: some notes outside it are kept, up to about a quarter of them at zero. The ones that stay are short notes off the beat, like chromatic passing notes. The log says how many ended up outside.")
-            knobRow("Dynamics: Flat ↔ Expressive", dynamics, 0...10, auto: autoBinding(auto, "dynamics"),
-                    readout: dynamics.wrappedValue <= 0 ? "Flat" : dynamics.wrappedValue >= 10 ? "Very expressive" : "\(Int(dynamics.wrappedValue))",
-                    help: "How much the loudness varies in \(what): notes on the beat a little stronger, each phrase swelling and fading, the line rising towards its highest note, and the ending tapering. Zero: every note at one level. The accompaniment gets its own setting. The volume of each instrument is in the Mixer under the preview.")
-            knobRow("Modal flavor", flavor, 0...10, auto: autoBinding(auto, "flavor"),
-                    help: "Only for the modes other than major and minor. How strongly \(what) uses the one note that gives the mode its sound (Lydian's raised 4th, Dorian's raised 6th, Phrygian's flat 2nd, Mixolydian's flat 7th, Locrian's flat 5th). Low: the notes are in the mode but its sound may not come through. High: that note is used often, on strong beats, and the chords stay modal. Does nothing in major or minor.")
+    private func phrasingControls(_ phrasing: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Pauses between phrases").font(.callout)
             Picker("Phrasing", selection: phrasing) {
                 Text("Flowing").tag(0)
@@ -635,36 +902,31 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented).labelsHidden()
             .help("Rests between ideas and phrases. Flowing: it never stops. Spacious: longer pauses and fewer notes, so each idea stands apart.")
-            Toggle("Resolve ending (finish on the home note)", isOn: resolve)
-                .help("Changes only the final note, so it ends on the tonic")
         }
     }
 
-    private func autoBinding(_ set: Binding<Set<String>>, _ key: String) -> Binding<Bool> {
-        Binding(get: { set.wrappedValue.contains(key) },
-                set: { on in if on { set.wrappedValue.insert(key) } else { set.wrappedValue.remove(key) } })
-    }
-
-    /// A slider with an Auto switch: on Auto the slider is greyed and the LLM is given no instruction for it.
-    private func knobRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, auto: Binding<Bool>,
-                         readout: String? = nil, help: String) -> some View {
+    /// A 0 to 10 slider with its name and current value; hovering anywhere on it explains it.
+    private func knobRow(_ title: String, _ value: Binding<Double>, readout: String? = nil, help: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(title); Spacer()
-                Text(auto.wrappedValue ? "Auto" : readout ?? (value.wrappedValue == 0 ? "off" : "\(Int(value.wrappedValue))"))
+                Text(readout ?? (value.wrappedValue == 0 ? "off" : "\(Int(value.wrappedValue))"))
                     .monospacedDigit().foregroundStyle(.secondary)
-                    .help(help)
-                Toggle("Auto", isOn: auto).toggleStyle(.checkbox).controlSize(.small)
-                    .help("Auto: don't set this. The LLM decides from your description (the engine uses its usual setting).")
             }
             .contentShape(Rectangle())
             .help(help)                  // hovering the name (or anywhere on the label row) explains the slider
-            Slider(value: value, in: range, step: 1).disabled(auto.wrappedValue).help(help)
+            Slider(value: value, in: 0...10, step: 1).help(help)
         }
     }
 
     private func shapeWord(_ v: Double) -> String {
         v < 2.5 ? "Smooth" : v < 7.5 ? "Balanced" : "Jumpy"
+    }
+    private func dynamicsWord(_ v: Double) -> String {
+        v <= 0 ? "Flat" : v >= 10 ? "Very expressive" : "\(Int(v))"
+    }
+    private func strictWord(_ v: Double) -> String {
+        v >= 10 ? "Strict" : v <= 0 ? "Relaxed" : "\(Int(v))"
     }
 
     // MARK: History
@@ -753,7 +1015,7 @@ struct ContentView: View {
                                             : "Selected — approve it, or pick another")
                     .font(.subheadline).foregroundStyle(.secondary)
                 partGrid
-            } else if !vm.candidates.isEmpty && vm.orchestration == nil {
+            } else if !vm.candidates.isEmpty {
                 Text(vm.selected == nil ? "Choose a melody" : "Selected — add the accompaniment, or pick another")
                     .font(.subheadline).foregroundStyle(.secondary)
                 optionGrid
@@ -780,7 +1042,7 @@ struct ContentView: View {
         Group {
             if vm.editing {
                 MelodyEditor(notes: $vm.editNotes, selected: $vm.editSelected, beatsPerBar: vm.beatsPerBar,
-                             chosen: vm.chosenBars, toggle: { vm.toggleBar($0) })
+                             chosen: vm.chosenBars, toggle: { vm.clickBar($0) })
             } else if vm.displayNotes.isEmpty {
                 RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.09))
                     .overlay(Text("Your melody options will appear here").foregroundStyle(.secondary))
@@ -799,11 +1061,17 @@ struct ContentView: View {
                         })
                 }
             } else {
-                PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
-                          playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
-                          secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
-                          toggle: vm.canEdit ? { vm.toggleBar($0) } : nil)
-                    .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
+                VStack(spacing: 4) {
+                    PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
+                              playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
+                              secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
+                              toggle: vm.canEdit ? { vm.clickBar($0) } : nil)
+                        .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
+                    if vm.barsShown, vm.chordsFor == vm.displayURL, !vm.chordBars.isEmpty {
+                        ChordStrip(bars: vm.chordBars, key: vm.chordKey, duration: vm.displayDuration,
+                                   secondsPerBar: vm.secondsPerBar, edit: { vm.setChord(bar: $0, text: $1) }, vm: vm)
+                    }
+                }
             }
         }
         .frame(minHeight: sheet ? 320 : (vm.editing ? 300 : 200), maxHeight: sheet ? .infinity : (vm.editing ? 300 : 200))
@@ -815,6 +1083,11 @@ struct ContentView: View {
                 if let url = vm.displayURL { vm.playingURL == url ? vm.stop() : vm.play(url) }
             }
             .disabled(vm.displayURL == nil)
+            if vm.displayURL.map({ vm.sungAudio[$0] != nil }) ?? false {
+                Toggle("Sung", isOn: $vm.playSung)
+                    .toggleStyle(.checkbox)
+                    .help("Play the sung version (the voice with the instruments under it) instead of the MIDI. It falls back to the MIDI after any change, until the melody is sung again.")
+            }
             Button("Show in Finder", action: vm.reveal).disabled(vm.displayURL == nil)
             Button(action: vm.exportPDF) {
                 HStack(spacing: 4) {

@@ -488,3 +488,107 @@ take `shape`, `form` and `knobs` (the review scripts and tests call them).
 - **Not verified**: how any of it sounds; the new Expand section on screen; a Hybrid expansion of a long melody; direction text
   for Hybrid is only turned into density, register, beat emphasis and adventurousness (not its dynamics or "answer the
   melody" parts, although the log line may say it understood them).
+
+
+## Simplifying the app (feature/simplify-ui)
+
+- **Fewer controls.** A motif is the theme, so step 1 no longer has *Recurring theme*; *Phrase endings*, *Fit the harmony*
+  and *Avoid scale runs* are gone from the app too. The first two keep their `plan.SLIDER_DEFAULTS` values; avoiding runs
+  now follows *Smooth ↔ Jumpy* (`plan.clean_sliders` sets `runs = shape`; 5 is what it always was). The per-slider *Auto*
+  switches are gone (`guidance_text` no longer has an auto case). *Modal flavor* shows only for a mode other than
+  major/minor. *Scale: Relaxed ↔ Strict*, the Melody LLM and the Music model sit under *Advanced*. The accompaniment's
+  "Playable parts" and "Keep in key" toggles are gone (always on, which was the default).
+- **Step 2** has five controls of its own (complexity, jumpy, *Bring the motif back* = the theme slider, dynamics,
+  resolve) and takes the rest from step 1. The engine is not chosen: only the "answer the motif" move needs the language
+  model, everything else is Hybrid. The "return" move chip is now the *Bring the motif back* slider.
+- **Step 3 enforcement.** The bars in the *Bars to change* box (clicked in the roll, or typed) are the bars exactly:
+  `edit.edit_melody` uses them and only reads bars out of the sentence (by regex, not by the model) when the box is empty.
+  Agreeing to the model's suggestion sends the earlier targets plus the suggested bars (`edit_suggestion.targets`).
+- **Deleted.** The Anthropic API-key route: the `anthropic` package, `claude_llm.complete/check/set_key`, the backend
+  `claude_key` command, the Keychain code and the key sheet. Claude is reached only through the `claude` command-line tool.
+- **Not verified:** none of the Swift UI has been clicked through; `make app` builds, the 151 Python tests pass.
+
+
+## An instrument and a singer for every extension (feature/segment-voices)
+
+- **One melody line, passed between instruments.** `text2music.write_melody_midi` takes a program or `[(beat, program)]`; the
+  changes are `program_change` events on the melody's one channel. `expand.read_programs`/`program_at` read them back, and
+  `expand_melody(program=...)`, `edit` and `save_edit` write the whole list again, so nothing is lost. Expanding with no
+  program keeps the last instrument. The Anticipation model handles the mid-file changes (checked with the real model: a
+  flute melody extended for violin, then a cello part added; the orchestrated file puts each melody instrument on its own track).
+- **A singer per part.** Every lyric line in `*.lyrics.json` stores its `voice`. `lyric_motifs`/`lyric_extend` take `voice`;
+  the backend `expand` takes `program` (53 = Voice) and `voice`. `sing_midi` runs SoulX once per singer on that singer's lines
+  only (the output is a full timeline, so the passes line up) and adds the parts into `<melody>.voices.wav`; one singer gives
+  `<melody>.wav` as before. Lines from before singers were stored use the request's `voice`.
+- **The backing track** (`lyrics.backing`) drops only the stretches where the Voice program is in force, so parts of the
+  melody for other instruments are mixed in with the singing, even without any accompaniment.
+- **Changed:** a Voice extension with no lyric lines left is now an error, not a silent wordless extension (those notes were
+  never sung). A non-Voice extension of a lyric melody keeps the lines (`lyrics.carry`), which it used not to.
+- **Not verified:** the new pickers on screen; singing with two different singers (the test fakes SoulX; each single-singer
+  run was verified earlier); the sheet music for a melody that changes instrument shows the first instrument's name and clef.
+
+
+## Duets and choirs (feature/choir)
+
+- Every lyric line in `*.lyrics.json` now stores `voices` (lead first, up to `MAX_SINGERS` = 4) and `harmony`, besides `voice`.
+  `lyrics.harmonize` moves the notes along the key's scale (`HARMONY_STEPS` = lead, +2, -2, +4 scale steps: a third above, a
+  third below, a fifth above), so a harmony part cannot leave the key; rhythm and words are the lead's. Unticked, every singer
+  gets the lead's notes. The backend takes `voices` and `harmony` on `melodies` and `expand` (Voice).
+- `sing_midi` runs SoulX once per distinct singer over all that singer's lines and adds the parts (as for per-segment singers),
+  so each extra singer costs the same singing time again.
+- Checked with the real model: "Twinkle twinkle little star" sung by Singer A and Singer B with Harmonize on came out as
+  C C G G A G (lead) and E E B B C B (second singer), measured with pyin on the two parts. Not listened to; the second
+  voice came out at about 45 % of the lead's RMS (the voices are not level-matched).
+- App: `Singers` (lead, extras, harmonize) replaces the single voice, in the Motif step and in each Extend step; extras are
+  chips of the other voices. Not verified on screen.
+
+
+## The singing voice as a part of the melody (feature/sung-part)
+
+- **Where it lives.** The sung line is a second track in the melody file, on `text2music.VOCAL_CHANNEL` (1) with the Voice
+  program (53); `write_melody_midi(..., vocal=notes)` writes it, `expand.read_vocal` reads it, and `expand.read_melody` /
+  `read_programs` ignore it (only when a program-53 `program_change` is on that channel, so an imported file that uses channel 1
+  for something else is untouched). Because it rides in the file, Extend (`expand_melody`), `lyric_extend` and Edit all write it
+  back unchanged, the roll and sheet music show it, and the accompaniment model sees it as one more instrument.
+- **`lyrics.sing_part`** (backend `sing_part`): the next lyric lines that fit `bars` bars, from `start_bar` (default after the
+  last sung bar), over the melody. The line prompt gets the chord of each bar (from the session plan, or `plan.infer_chords`)
+  and the piano's notes in that stretch; afterwards stressed places move up to two semitones onto chord tones in the key
+  (`_toward_chords`). Overlapping earlier singing, bars past the melody and exhausted lyrics are errors. Each stretch stores its
+  own singers and `harmony`; lines carry `"track": "vocal"` in `*.lyrics.json` (`used_lines(midi, track)`).
+- **Edit** takes `part` ("melody" | "vocal"). A vocal LLM edit is told the note count of every bar and rejects attempts that change
+  it; a hand edit that breaks one-note-per-syllable is refused (`lyrics.line_problem`). The other line is rewritten exactly.
+- **Singing** reads each line's notes from the track it belongs to; the backing drops the Voice program wherever it is in
+  force, so the piano melody is mixed under the singing (even with no other accompaniment).
+- **Locking** is as before: adding an instrument or enriching freezes melody and singing (the voice itself never locks).
+- **Checked with the real model:** a piano melody, two lyric lines sung over it (Qwen 7B, duet with harmony), the melody
+  unchanged byte for byte, a cello part added over both, and the backing keeping only piano and cello.
+- **Not verified:** the new Step 4 box, the Melody/Singing picker in step 3 and hand-editing the singing on screen; how the
+  sung line sounds against the piano by ear; whether the chord-aware prompt makes it fit better than before (no comparison).
+
+
+## Accompaniment by section (feature/sections)
+
+- **The freeze is gone.** The accompaniment is no longer a separate, round-tripped "full piece" that locks the melody. Each
+  instrument is a **layer**: a track named `acc:<program>` inside the melody's own file (`text2music.add_layers_file`,
+  `clear_layers_file`, `layers_of`, `read_acc`). Every writer of melody files (`expand_melody`, `lyric_extend`, `sing_part`,
+  `edit_melody`, `save_edit`) copies the layers back unchanged, and the readers (`read_melody`, `read_programs`) skip them,
+  so Extend, Edit and the singing work at any time and the melody, the sung line and earlier layers are never rewritten by an
+  accompaniment step (add/clear copy the file's tracks as they are).
+- **Bar ranges.** `add_part` takes `from_bar`/`to_bar` (default the whole piece). The model path generates only that window
+  (`generate(model, start, end, ...)`, conditioned on the whole piece as before); the piano-texture path clips its pattern.
+  `part_range` refuses an instrument that already plays in those bars, but allows it in others (a later layer of the same
+  instrument joins its track). `clear_bars` removes all instruments, or the programs listed, from a range (a note running into
+  it is cut), which is "leave the singer alone here".
+- **Enrich** (`orchestrate`) now also adds layers (`make_music(layered=True)`), whole piece, so it no longer freezes anything either.
+- **App.** The chosen option's file *is* the piece: approving a part, clearing bars or enriching replaces that option's file
+  (`Candidate.with(...)`, undo restores the previous one); `Orchestration` and `partsAdded` are gone. Step 4 lists each
+  instrument with its bars and a Take-out button, has a bars-from/to selector, and the clear button; events carry `layers`.
+- **Fixed on the way:** hybrid expansion read note durations without removing `DUR_OFFSET` (notes came out ~100 s long and were
+  only trimmed by the next note; the last note of a section was affected).
+- **Checked with the real models:** a cello for bars 1-4, a violin for 3-8 (overlapping, different instrument), piano
+  arpeggios for 5-8, a refused second cello in bars 2-3, a clear of bars 5-6, the melody and sung line identical afterwards,
+  and a two-instrument Enrich; hybrid expansion still fine.
+- **Not verified:** the new Step 4 controls on screen; how a section boundary sounds (notes are cut at the range edges; a
+  layer starts where the model starts, so a part asked for bars 1-4 may begin in bar 2); sheet music of pieces with layers;
+  old sessions' `pieceNN` files are not turned into layers. Parts that were generated against an earlier version of the melody
+  are not regenerated when the melody changes: take them out of those bars and add them again.

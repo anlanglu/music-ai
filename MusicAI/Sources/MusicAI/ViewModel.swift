@@ -8,7 +8,9 @@ struct Instrument: Identifiable, Hashable {
     let program: Int
     /// A rule-based piano chords / arpeggios entry rather than a model-generated part.
     var texture = false
-    var id: Int { program + (texture ? 1000 : 0) }
+    /// Extend writes chords for this instrument (for a voice to be sung to) instead of a melody line.
+    var chords = false
+    var id: Int { program + (texture ? 1000 : 0) + (chords ? 2000 : 0) }
     static let all = [
         Instrument(name: "Piano", program: 0), Instrument(name: "Electric piano", program: 4),
         Instrument(name: "Guitar (nylon)", program: 24), Instrument(name: "Violin", program: 40),
@@ -17,6 +19,9 @@ struct Instrument: Identifiable, Hashable {
         Instrument(name: "Synth lead", program: 80),
         Instrument(name: "Voice (sings your lyrics)", program: 53),
     ]
+    /// What Extend offers: the melody instruments, and chords on piano or guitar.
+    static let extend = all + [Instrument(name: "Piano chords", program: 0, chords: true),
+                               Instrument(name: "Guitar chords", program: 24, chords: true)]
 }
 
 enum ViewMode: String { case roll, sheet }
@@ -42,21 +47,19 @@ enum ModelCache {
     }
 }
 
-struct Orchestration {
-    let full: URL
-    let notes: [Note]
-    var programs: [Int] = []
+/// One approved change to the accompaniment, with the option as it was before, so that it can be undone.
+struct PartStep {
+    let before: Candidate
+    let label: String
 }
 
 /// Everything the results area shows, so that a step can be gone back to. The files themselves stay on disk.
 struct Snapshot {
     var candidates: [Candidate]
     var selectedID: UUID?
-    var orchestration: Orchestration?
     var partOptions: [PartCandidate]
     var selectedPartID: UUID?
-    var partsAdded: [String]
-    var partHistory: [Orchestration?]
+    var partHistory: [PartStep]
     var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)]
 }
 
@@ -78,9 +81,17 @@ struct EditNote: Identifiable, Equatable {
 }
 
 /// The editing model's question: "bars N would have to change as well; may I?"
+/// Who sings a part: a lead, optionally others with them (a duet or choir of up to four), the same notes or a harmony each.
+struct Singers: Equatable {
+    var lead = "en"
+    var extras: Set<String> = []
+    var harmonize = false
+}
+
 struct EditSuggestion {
     let bars: [Int]
     let reason: String
+    let targets: [Int]      // the bars this edit was already allowed to change
 }
 
 /// A key's tonic (pitch class 0-11). The mode is chosen separately, so any tonic can be combined with any mode.
@@ -113,6 +124,11 @@ extension Instrument {
     ].map { Instrument(name: $0.0, program: $0.1) }
         + [Instrument(name: "Piano chords & arpeggios", program: 0, texture: true)]
 
+    /// The name of an instrument as the parts list calls it (128 = drums).
+    static func partName(_ program: Int) -> String {
+        program == 128 ? "Drums" : (parts.first { $0.program == program && !$0.texture }?.name ?? all.first { $0.program == program }?.name ?? "Instrument \(program)")
+    }
+
     /// Left-hand patterns for the piano chords & arpeggios entry (matches texture.py).
     static let pianoStyles: [(id: String, name: String)] = [
         ("mix", "Mix of patterns"), ("arpeggio", "Arpeggios"), ("alberti", "Alberti bass"),
@@ -140,7 +156,25 @@ final class ViewModel: ObservableObject {
     }
     func surpriseMoods() { moods = Set(Self.moodChips.shuffled().prefix(2)) }
     @Published var bars = 4.0
-    @Published var instrument = Instrument.all[0]
+    /// Chords the user types for the motif / the new bars (e.g. "Dm7 G7 | Cmaj7 | Am7 D7"); empty = the app chooses.
+    @Published var motifProgression = ""
+    @Published var expandProgression = ""
+    /// The chords of each bar of the piece on show (`chordsFor`), as the chord strip shows and edits them.
+    @Published var chordBars: [[ChordCell]] = []
+    @Published var chordsFor: URL?
+    @Published var chordKey = ""
+    /// A mode of its own for some bars ("" = the piece's), what each bar is called (e.g. "C lydian"), and the modes to pick from.
+    @Published var chordModes: [String] = []
+    @Published var chordLabels: [String] = []
+    @Published var modeNames: [String] = []
+    @Published var modeEditing: Int?
+    @Published var motifModes = ""
+    @Published var expandModes = ""
+    @Published var chordEditing: Int?          // the bar whose chords are being typed in the strip
+    @Published var chordEditText = ""
+    @Published var instrument = Instrument.all[0] {
+        didSet { expandInstrument = instrument }      // step 2 carries on with the motif's instrument unless told otherwise
+    }
     @Published var sig = "4/4"
     static let timeSigs = ["4/4", "3/4", "2/4", "6/8", "5/4", "7/8", "12/8"]
     @Published var bpmText = "80"
@@ -148,94 +182,77 @@ final class ViewModel: ObservableObject {
     @Published var keyMode = "auto"        // "auto", or one of Mode.all
     @Published var resolveEnding = true
     @Published var phrasing = 1   // 0 flowing, 1 balanced, 2 spacious: rests between ideas and phrases
-    // The five character sliders, each 0...10. The backend turns them into the sampler's numbers, and tells the app
-    // where they start (plan.SLIDER_DEFAULTS), so neither the scale nor the defaults are repeated here.
+    // The character sliders, each 0...10. The backend says where they start (plan.SLIDER_DEFAULTS); the ones not listed
+    // here (fit the harmony, phrase endings) keep those defaults, and avoiding scale runs follows shape.
     @Published var shapeSlider = 5.0    // smooth (0) .. jumpy (10)
     @Published var pulseSlider = 2.0    // notes start on the beat
-    @Published var harmonySlider = 3.0  // the melody fits each bar's chord
-    @Published var endingsSlider = 3.0  // phrases end on a stopping note
-    @Published var themeSlider = 0.0    // the opening idea returns in each phrase
-    @Published var runsSlider = 5.0     // one-way runs up or down the scale are avoided
     @Published var strictSlider = 10.0  // relaxed (0) .. strict (10): how many notes may be outside the scale
     @Published var dynamicsSlider = 5.0 // flat (0) .. expressive (10): how much the loudness varies
     @Published var flavorSlider = 5.0   // how much the mode's own note (Lydian #4, Dorian ♮6...) is brought out
-    /// Sliders left on Auto are sent as "auto": the backend gives the LLM no instruction for them.
-    @Published var autoSliders: Set<String> = []
     var sliderValues: [String: Any] {
-        let v: [String: Double] = ["shape": shapeSlider, "pulse": pulseSlider, "harmony": harmonySlider,
-                                   "endings": endingsSlider, "theme": themeSlider, "runs": runsSlider,
-                                   "flavor": flavorSlider, "strict": strictSlider,
-                                   "dynamics": dynamicsSlider]
-        return v.reduce(into: [String: Any]()) { $0[$1.key] = autoSliders.contains($1.key) ? "auto" : $1.value }
+        ["shape": shapeSlider, "pulse": pulseSlider, "flavor": flavorSlider, "strict": strictSlider, "dynamics": dynamicsSlider]
     }
+    /// The mode picker's choices that have a note of their own to bring out (Modal flavor does nothing in major or minor).
+    var modeHasFlavor: Bool { !["auto", "major", "minor"].contains(keyMode) }
     private func applySliderDefaults(_ d: [String: Double]) {
         shapeSlider = d["shape"] ?? shapeSlider; pulseSlider = d["pulse"] ?? pulseSlider
-        harmonySlider = d["harmony"] ?? harmonySlider; endingsSlider = d["endings"] ?? endingsSlider
-        themeSlider = d["theme"] ?? themeSlider; runsSlider = d["runs"] ?? runsSlider
         flavorSlider = d["flavor"] ?? flavorSlider; strictSlider = d["strict"] ?? strictSlider
         dynamicsSlider = d["dynamics"] ?? dynamicsSlider; accompDynamics = dynamicsSlider
+        expandTheme = d["theme"] ?? expandTheme
         copySettingsToExpansion()
     }
     /// Step 2 starts from step 1's settings; after that each step keeps its own.
     private func copySettingsToExpansion() {
-        expandShape = shapeSlider; expandPulse = pulseSlider; expandHarmony = harmonySlider
-        expandEndings = endingsSlider; expandTheme = themeSlider; expandRuns = runsSlider; expandFlavor = flavorSlider; expandStrict = strictSlider; expandDynamics = dynamicsSlider
-        expandComplexity = complexity; expandCount = optionCount
-        expandPhrasing = phrasing; expandResolve = resolveEnding; expandAuto = autoSliders
+        expandShape = shapeSlider; expandDynamics = dynamicsSlider
+        expandComplexity = complexity; expandCount = optionCount; expandResolve = resolveEnding
     }
     @Published var complexity = 3.0
     @Published var optionCount = 4.0
-    @Published var llm = "7B" {
-        didSet { if llm.hasPrefix("claude-") && !claudeKeySaved { showClaudeSheet = true } }
-    }
-    // Claude (cloud) as an alternative melody LLM; the key itself is only in the Keychain
-    @Published var claudeKeySaved = Keychain.get() != nil
-    @Published var claudeKeyOK = false
-    @Published var claudeChecking = false
-    @Published var claudeStatus = ""
-    @Published var showClaudeSheet = false
+    @Published var llm = "7B"
 
     // Step 2: expanding the chosen melody. It has its own settings, because each expansion can want a different character.
     @Published var expandBars = 4.0                // bars added at a time
-    @Published var expandEngine = "hybrid"         // "hybrid" (Anticipation continues it) or "llm"
     @Published var expandComplexity = 3.0
     @Published var expandCount = 3.0
     @Published var expandDirection = ""            // anything else to say about the new bars (optional)
     @Published var expandMoves: Set<String> = []
-    /// What each "what should the new bars do" chip tells the engine. The first two only mean something to the LLM.
+    @Published var expandInstrument = Instrument.all[0]   // the instrument the new bars are written for
+    @Published var expandSingers = Singers()               // ... and, for the Voice instrument, who sings them
+    /// What each "what should the new bars do" chip tells the engine. The second one only means something to the LLM.
     static let moves: [(label: String, text: String)] = [
         ("continue", "Continue the melody naturally."), ("answer the motif", "Answer the opening motif, like a reply to it."),
         ("build up", "Build up: gradually busier and higher, with more energy."), ("climax", "Reach a climax: the highest and most intense point."),
-        ("calm down", "Calm down: quieter, simpler and lower."), ("return", "Bring back the opening idea."),
+        ("calm down", "Calm down: quieter, simpler and lower."),
         ("contrast", "Contrast with what came before: a different character."),
     ]
-    static let llmOnlyMoves: Set<String> = ["answer the motif", "return"]
+    static let llmOnlyMoves: Set<String> = ["answer the motif"]
     var effectiveDirection: String {
         let chosen = Self.moves.filter { expandMoves.contains($0.label) }.map(\.text)
         return (chosen + [expandDirection.trimmingCharacters(in: .whitespacesAndNewlines)]).filter { !$0.isEmpty }.joined(separator: " ")
     }
     @Published var expandShape = 5.0
-    @Published var expandPulse = 2.0
-    @Published var expandHarmony = 3.0
-    @Published var expandEndings = 3.0
-    @Published var expandTheme = 0.0
-    @Published var expandRuns = 5.0
-    @Published var expandFlavor = 5.0
-    @Published var expandStrict = 10.0
+    @Published var expandTheme = 0.0                // how strongly the opening motif comes back in the new bars
     @Published var expandDynamics = 5.0
-    @Published var expandPhrasing = 1
     @Published var expandResolve = true
+    @Published var expandPhrasing = 1               // 0 flowing, 1 balanced, 2 spacious: rests between the ideas and phrases of the new bars
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     private var lastExpandBars = 4.0
-    @Published var expandAuto: Set<String> = []
-    var expandSliderValues: [String: Any] {
-        let v: [String: Double] = ["shape": expandShape, "pulse": expandPulse, "harmony": expandHarmony,
-                                   "endings": expandEndings, "theme": expandTheme, "runs": expandRuns,
-                                   "flavor": expandFlavor, "strict": expandStrict,
-                                   "dynamics": expandDynamics]
-        return v.reduce(into: [String: Any]()) { $0[$1.key] = expandAuto.contains($1.key) ? "auto" : $1.value }
+    private var lastExpandLabel = ""
+    /// Copy bars of the melody onto its end: from (1 = the start) to (0 = the last bar), this many times.
+    @Published var repeatFrom = 1
+    @Published var repeatTo = 0
+    @Published var repeatTimes = 1
+    var repeatBars: (from: Int, to: Int) {
+        let to = repeatTo == 0 ? barCount : min(repeatTo, barCount)
+        return (min(max(repeatFrom, 1), max(to, 1)), max(to, 1))
     }
+    /// Step 2 sends step 1's sliders with its own three on top.
+    var expandSliderValues: [String: Any] {
+        sliderValues.merging(["shape": expandShape, "theme": expandTheme, "dynamics": expandDynamics]) { $1 }
+    }
+    /// Only "answer the motif" needs the language model; every other move is written by the Anticipation model.
+    var expandEngine: String { expandMoves.isDisjoint(with: Self.llmOnlyMoves) ? "hybrid" : "llm" }
     // Step 3: editing the melody, by hand or by asking the LLM to change only the bars that are named
     @Published var editing = false                 // the piano roll is the note editor
     @Published var editNotes: [EditNote] = []
@@ -246,16 +263,26 @@ final class ViewModel: ObservableObject {
     @Published var editSuggestion: EditSuggestion?
     private var editLabel: String?                 // set while an edit is running; the history entry it will get
     private var editRequest: (source: URL, instruction: String, bars: [Int])?
-    var editDirty: Bool { guard let c = selected else { return false }; return editNotes != Self.editNotes(of: c) }
+    var editDirty: Bool { guard let c = selected else { return false }; return editNotes != Self.editNotes(of: c, part: editPart) }
+    /// Which line step 3 works on: "melody", or "vocal" (the sung line added in step 4).
+    @Published var editPart = "melody"
+    static let vocalChannel = 1                    // text2music.VOCAL_CHANNEL
+    /// The chosen melody has a sung line over it.
+    var hasSung: Bool { selected.map { c in c.programs.contains(53) && c.notes.contains { $0.channel == Self.vocalChannel } } ?? false }
+    var editPartName: String { editPart == "vocal" && hasSung ? "vocal" : "melody" }
+
+    // Step 4: the singing voice, a sung line over the chosen melody
+    @Published var singSingers = Singers()
+    @Published var singStart = 0.0                 // 0: right after the bars already sung
+    @Published var singBars = 4.0
+    @Published var singCount = 3.0
     /// Editing, like expanding, changes the melody, so it is only offered before any accompaniment exists.
     var canEdit: Bool { canExpand }
     var canEditBusyHint: Bool { editLabel != nil }
     /// Expanding changes the melody, so it is only offered before any accompaniment exists.
-    var canExpand: Bool { ready && !busy && selected != nil && orchestration == nil && partsAdded.isEmpty && partOptions.isEmpty }
+    var canExpand: Bool { ready && !busy && selected != nil && partOptions.isEmpty }
     // Stage 2: accompaniment
     @Published var ensemble = 0.0
-    @Published var playable = true
-    @Published var inKey = true
     @Published var partDirection = ""
     @Published var directionNote = ""   // what the backend understood from the direction
     // One-at-a-time mode: pick an instrument, choose among its options, approve, repeat
@@ -265,12 +292,15 @@ final class ViewModel: ObservableObject {
     @Published var pianoStyle = "mix"
     @Published var partOptions: [PartCandidate] = []
     @Published var selectedPartID: UUID?
-    @Published var partHistory: [Orchestration?] = []   // the piece before each approval, for Undo
-    @Published var partsAdded: [String] = []
+    @Published var partHistory: [PartStep] = []     // the option before each change to the accompaniment, for Undo
+    private var pendingPartLabel = ""
+    /// The bars the next instrument plays in: from (1 = the start) to (0 = the end).
+    @Published var partFrom = 1
+    @Published var partTo = 0
     /// Step 5 is kept in the same history as step 4's parts, so Undo and History treat it like one more part.
     static let enrichLabel = "Enrichment"
-    private var pendingEnrich: (base: Orchestration?, rerolled: Bool)?
-    var isEnriched: Bool { partsAdded.last == Self.enrichLabel }
+    private var pendingEnrich: (before: Candidate, rerolled: Bool)?
+    var isEnriched: Bool { partHistory.last?.label == Self.enrichLabel }
     @Published var size = "small"
 
     @Published var status = "Starting backend…"
@@ -286,7 +316,6 @@ final class ViewModel: ObservableObject {
     private static let stallSeconds: TimeInterval = 240
     @Published var candidates: [Candidate] = []
     @Published var selectedID: UUID?
-    @Published var orchestration: Orchestration?
 
     /// Piano roll or engraved sheet music for the main view; the user's choice is remembered.
     @Published var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "") ?? .roll {
@@ -322,18 +351,35 @@ final class ViewModel: ObservableObject {
     /// What the big piano roll shows: the finished piece, else the picked melody, else the first option.
     var selectedPart: PartCandidate? { partOptions.first { $0.id == selectedPartID } }
     /// What the main view shows: a part option being auditioned (the whole piece with it), else the piece so far.
-    var displayNotes: [Note] { selectedPart?.notes ?? orchestration?.notes ?? (selected ?? candidates.first)?.notes ?? [] }
-    var displayURL: URL? { selectedPart?.url ?? orchestration?.full ?? (selected ?? candidates.first)?.url }
+    var displayNotes: [Note] { selectedPart?.notes ?? (selected ?? candidates.first)?.notes ?? [] }
+    var displayURL: URL? { selectedPart?.url ?? (selected ?? candidates.first)?.url }
     var highlightChannel: Int? { selectedPart.map(\.channel) }
-    /// The piece the next instrument will be added to: the approved piece so far, else the chosen melody.
-    var currentPieceURL: URL? { orchestration?.full ?? selected?.url }
-    var presentPrograms: Set<Int> { Set(orchestration?.programs ?? selected?.programs ?? []) }
-    /// The piano chords entry adds notes to a piano that is already there, so it is never "taken".
-    var partInstrumentTaken: Bool { !partInstrument.texture && presentPrograms.contains(partInstrument.program) }
+    /// The piece the next instrument will be added to: the chosen option, with whatever it has so far.
+    var currentPieceURL: URL? { selected?.url }
+    var presentPrograms: Set<Int> { Set(selected?.programs ?? []) }
+    /// How many bars the chosen option has.
+    var barCount: Int {
+        guard let c = selected else { return 0 }
+        return max(1, Int((c.duration * Double(c.tempo) / 60 / beatsPerBar - 0.01).rounded(.up)))
+    }
+    /// The bars the next instrument is written for, kept inside the piece.
+    var partBars: (from: Int, to: Int) {
+        let to = partTo == 0 ? barCount : min(partTo, barCount)
+        return (min(max(partFrom, 1), max(to, 1)), max(to, 1))
+    }
+    /// An instrument cannot play twice in the same bars (take it out of them first), but it can in others.
+    var partInstrumentTaken: Bool {
+        guard let c = selected else { return false }
+        let r = partBars
+        return c.layers.contains { $0.program == partInstrument.program && $0.from <= r.to && $0.to >= r.from }
+    }
+    /// "Cello, bars 1-4" for each instrument of the accompaniment.
+    var layerNames: [String] {
+        (selected?.layers ?? []).map { "\(Instrument.partName($0.program)), bars \($0.from)–\($0.to)" }
+    }
     var displayDuration: Double { displayNotes.map(\.end).max() ?? 0 }
     var displayTitle: String {
-        if orchestration != nil { return "Full score" }
-        if let c = selected ?? candidates.first { return "Option \(c.index)" }
+        if let c = selected ?? candidates.first { return c.layers.isEmpty ? "Option \(c.index)" : "Option \(c.index) with accompaniment" }
         return ""
     }
     /// The tempo typed in the field, kept inside what the app supports (blank or junk falls back to 80).
@@ -392,29 +438,33 @@ final class ViewModel: ObservableObject {
             applySliderDefaults(sliders)
             ready = true
             backendDown = false
-            if let key = Keychain.get() { send(["cmd": "claude_key", "key": key]) }
             send(["cmd": "session_list"])
             status = "Ready. Describe a motif and press Generate motifs."
         case .voices(let items):
             if !items.isEmpty {
                 let added = items.first { item in !voiceChoices.contains { $0.key == item.key } }
                 voiceChoices = items.map { ($0.key, Self.shortVoiceName($0.name)) }
-                if let added { voice = added.key; status = "Voice “\(added.name)” is ready." }
-                if !voiceChoices.contains(where: { $0.key == voice }) { voice = "en" }
+                if let added { singers.lead = added.key; expandSingers.lead = added.key; singSingers.lead = added.key; status = "Voice “\(added.name)” is ready." }
+                for which in [\ViewModel.singers, \ViewModel.expandSingers, \ViewModel.singSingers] {
+                    let keys = Set(voiceChoices.map(\.key))
+                    if !keys.contains(self[keyPath: which].lead) { self[keyPath: which].lead = "en" }
+                    self[keyPath: which].extras.formIntersection(keys)
+                }
             }
+        case .chords(let path, let key, let bars, let modes, let labels, let modeNames):
+            chordsFor = path
+            chordKey = key
+            chordBars = bars
+            chordModes = modes
+            chordLabels = labels
+            self.modeNames = modeNames
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
             lyricsOK = ok
             busy = false
         case .vocal(let url, let backing):
             vocalURL = url
-            if let backing { mixVocal(url, with: backing) } else { playVocal() }
-        case .claudeStatus(let ok, let text):
-            claudeChecking = false
-            claudeKeyOK = ok
-            claudeStatus = text
-            if ok { Keychain.set(pendingClaudeKey); claudeKeySaved = true }
-            pendingClaudeKey = ""
+            if let backing { mixVocal(url, with: backing) } else { if let m = singingFor { sungAudio[m] = url }; playVocal() }
         case .log(let text):
             // direction.describe() in the backend starts its one-line report with one of these
             let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -468,7 +518,7 @@ final class ViewModel: ObservableObject {
             } else if expandJustRan {
                 expandJustRan = false
                 selectedID = candidates.first?.id     // so Expand can go straight on from it; click another to switch
-                record("Expanded by \(Int(lastExpandBars)) bars", "\(candidates.count) options")
+                record(lastExpandLabel.isEmpty ? "Expanded by \(Int(lastExpandBars)) bars" : lastExpandLabel, "\(candidates.count) options")
                 status = "Option 1 is selected. Pick the one you like, then expand again or add the accompaniment."
             } else {
                 copySettingsToExpansion()
@@ -478,8 +528,8 @@ final class ViewModel: ObservableObject {
             }
         case .mix(let path, let channels):
             gotMix(path, channels)
-        case .editSuggestion(let bars, let reason, _):
-            editSuggestion = EditSuggestion(bars: bars, reason: reason)
+        case .editSuggestion(let bars, let reason, let targets):
+            editSuggestion = EditSuggestion(bars: bars, reason: reason, targets: targets)
         case .partCandidate(let c):
             partOptions.append(c)
             status = "\(partInstrument.name) option \(c.index) ready"
@@ -487,27 +537,25 @@ final class ViewModel: ObservableObject {
             busy = false
             record("\(partInstrument.name) options", "\(partOptions.count) to choose from")
             status = "Choose the \(partInstrument.name.lowercased()) part you like, then approve it — or generate new options."
-        case .partApproved(let url, let notes, let programs):
+        case .partApproved(let url, let notes, let programs, let layers):
             busy = false
-            partHistory.append(orchestration)
-            partsAdded.append(partInstrument.name)
-            orchestration = Orchestration(full: url, notes: notes, programs: programs)
+            if let i = candidates.firstIndex(where: { $0.id == selectedID }) {
+                partHistory.append(PartStep(before: candidates[i], label: pendingPartLabel))
+                candidates[i] = candidates[i].with(url: url, notes: notes, programs: programs, layers: layers)
+            }
             partOptions = []
             selectedPartID = nil
-            record("Added \(partInstrument.name.lowercased())", partsAdded.joined(separator: ", "))
-            status = "Added \(partInstrument.name.lowercased()). Pick another instrument, or you're done."
+            record(pendingPartLabel, layerNames.joined(separator: "; "))
+            status = "\(pendingPartLabel). Add another instrument, take some bars out, or change the melody or singing."
             ensureSheet()
             play(url)
-        case .done(_, let full, let notes, let programs):
+        case .done(_, let full, let notes, let programs, let layers):
             busy = false
-            if let full {
-                if let p = pendingEnrich {                    // an enrichment, not a session being reopened
-                    if p.rerolled { _ = partHistory.popLast(); _ = partsAdded.popLast() }
-                    partHistory.append(p.base)
-                    partsAdded.append(Self.enrichLabel)
-                    pendingEnrich = nil
-                }
-                orchestration = Orchestration(full: full, notes: notes, programs: programs)
+            if let full, let p = pendingEnrich, let i = candidates.firstIndex(where: { $0.id == p.before.id }) {
+                if p.rerolled { _ = partHistory.popLast() }
+                partHistory.append(PartStep(before: p.before, label: Self.enrichLabel))
+                candidates[i] = p.before.with(url: full, notes: notes, programs: programs, layers: layers)
+                pendingEnrich = nil
                 record("Enriched", "\(notes.count) notes")
                 ensureSheet()
                 status = "Done — \(notes.count) notes. Press Play, or re-roll the accompaniment."
@@ -516,15 +564,32 @@ final class ViewModel: ObservableObject {
         }
     }
 
-    private var pendingClaudeKey = ""
-
     // MARK: Lyrics (demo): a melody with one note per syllable, sung by SoulX-Singer
 
     @Published var lyrics = ""
     @Published var showLyrics = false
     @Published var vocalURL: URL?
+    /// The sung version of a melody file (the voice mixed with its backing), by the melody's path. The main Play uses it
+    /// while it is newer than the file, so an edit or a new part falls back to the MIDI until it is sung again.
+    @Published private(set) var sungAudio: [URL: URL] = [:]
+    @Published var playSung = true
+    private var singingFor: URL?
+    private var audioPlayer: AVAudioPlayer?
+    /// The sung audio that goes with this melody file, if it is there and not older than the file.
+    func sungVersion(of url: URL) -> URL? {
+        guard playSung, let wav = sungAudio[url] else { return nil }
+        let fm = FileManager.default
+        guard let a = try? fm.attributesOfItem(atPath: wav.path)[.modificationDate] as? Date,
+              let b = try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date, a >= b else { return nil }
+        return wav
+    }
+    var hasSungAudio: Bool { displayURL.map { sungVersion(of: $0) != nil } ?? false }
     @Published var vocalPlaying = false
-    @Published var voice = "en"                  // which reference singer: "en" or "zh"
+    @Published var singers = Singers()           // who sings the motif (each extension has its own: expandSingers)
+    /// What the backend is told about who sings: the lead, any others (in the order of the list), and how.
+    func singerFields(_ s: Singers) -> [String: Any] {
+        ["voice": s.lead, "voices": voiceChoices.map(\.key).filter { s.extras.contains($0) && $0 != s.lead }, "harmony": s.harmonize]
+    }
     @Published var voiceChoices: [(key: String, name: String)] = [("en", "Singer A"), ("zh", "Singer B")]
     @Published var showAddVoice = false
 
@@ -561,10 +626,11 @@ final class ViewModel: ObservableObject {
         guard ready, !busy, let c = selected else { return }
         stopVocal()
         vocalURL = nil
+        singingFor = c.url
         busy = true
         status = "Singing the chosen melody (about 15 seconds per line)…"
-        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": voice]
-        if let o = orchestration { req["backing_midi"] = o.full.path }   // sing with the accompaniment added so far
+        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": singers.lead]
+        req["backing_midi"] = c.url.path   // the accompaniment so far, and any part of the melody for another instrument
         send(req)
     }
 
@@ -580,6 +646,7 @@ final class ViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.vocalURL = out
+                    if let m = self.singingFor { self.sungAudio[m] = out }
                     self.status = "Mixed: \(out.lastPathComponent)"
                 case .failure(let e):
                     self.status = "Couldn't mix the voice with the accompaniment (\(e.localizedDescription)); playing the voice alone."
@@ -606,23 +673,6 @@ final class ViewModel: ObservableObject {
 
     func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
 
-    /// Tests the key with one tiny request, and keeps it in the Keychain only if Anthropic accepts it.
-    func saveClaudeKey(_ key: String) {
-        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        pendingClaudeKey = key
-        claudeChecking = true
-        claudeStatus = "Checking the key…"
-        send(["cmd": "claude_key", "key": key, "test": true])
-    }
-
-    func removeClaudeKey() {
-        Keychain.remove()
-        claudeKeySaved = false; claudeKeyOK = false; claudeStatus = ""
-        send(["cmd": "claude_key", "key": ""])
-        if llm.hasPrefix("claude-") { llm = "7B" }
-    }
-
     private func send(_ request: [String: Any]) {
         do { try backend.send(request) } catch {
             busy = false
@@ -641,18 +691,16 @@ final class ViewModel: ObservableObject {
             return URL(fileURLWithPath: new.path + u.path.dropFirst(o.count))
         }
         stop()
-        candidates = candidates.map {
-            Candidate(id: $0.id, index: $0.index, url: moved($0.url), tempo: $0.tempo, sig: $0.sig, score: $0.score,
-                      notes: $0.notes, programs: $0.programs)
+        func movedCandidate(_ c: Candidate) -> Candidate {
+            Candidate(id: c.id, index: c.index, url: moved(c.url), tempo: c.tempo, sig: c.sig, score: c.score,
+                      notes: c.notes, programs: c.programs, layers: c.layers)
         }
-        if let o = orchestration { orchestration = Orchestration(full: moved(o.full), notes: o.notes, programs: o.programs) }
+        candidates = candidates.map(movedCandidate)
         partOptions = partOptions.map {
             PartCandidate(id: $0.id, index: $0.index, url: moved($0.url), program: $0.program, channel: $0.channel,
                           added: $0.added, label: $0.label, notes: $0.notes, programs: $0.programs)
         }
-        partHistory = partHistory.map { prev in
-            prev.map { Orchestration(full: moved($0.full), notes: $0.notes, programs: $0.programs) }
-        }
+        partHistory = partHistory.map { PartStep(before: movedCandidate($0.before), label: $0.label) }
         sheetPages = [:]
         sheetErrors = [:]
         sheetLoading = []
@@ -661,16 +709,16 @@ final class ViewModel: ObservableObject {
 
     private func clearWork() {
         stop()
+        chordBars = []
+        chordsFor = nil
         editing = false
         editSuggestion = nil
         expansionHistory = []
         candidates = []
         selectedID = nil
-        orchestration = nil
         partOptions = []
         selectedPartID = nil
         partHistory = []
-        partsAdded = []
         sheetPages = [:]
         sheetErrors = [:]
         sheetLoading = []
@@ -727,8 +775,8 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": lyrics,
-        ])
+            "sliders": sliderValues, "lyrics": lyrics, "progression": motifProgression, "modes": motifModes,
+        ].merging(singerFields(singers)) { $1 })
     }
 
     func importMIDI() {
@@ -749,11 +797,9 @@ final class ViewModel: ObservableObject {
         if selectedID != c.id {
             editing = false
             selectedID = c.id
-            orchestration = nil  // a different melody means the old accompaniment no longer applies
             partOptions = []
             selectedPartID = nil
-            partHistory = []
-            partsAdded = []
+            partHistory = []     // Undo of a part only goes back within the option it was added to
             ensureSheet()
         }
         refreshCurrentEntry()
@@ -765,9 +811,8 @@ final class ViewModel: ObservableObject {
     @Published var currentEntryID: UUID?
 
     private func snapshot() -> Snapshot {
-        Snapshot(candidates: candidates, selectedID: selectedID, orchestration: orchestration, partOptions: partOptions,
-                 selectedPartID: selectedPartID, partsAdded: partsAdded, partHistory: partHistory,
-                 expansionHistory: expansionHistory)
+        Snapshot(candidates: candidates, selectedID: selectedID, partOptions: partOptions,
+                 selectedPartID: selectedPartID, partHistory: partHistory, expansionHistory: expansionHistory)
     }
 
     private func record(_ title: String, _ detail: String = "") {
@@ -796,10 +841,8 @@ final class ViewModel: ObservableObject {
         let s = entry.snapshot
         candidates = s.candidates
         selectedID = s.selectedID
-        orchestration = s.orchestration
         partOptions = s.partOptions
         selectedPartID = s.selectedPartID
-        partsAdded = s.partsAdded
         partHistory = s.partHistory
         expansionHistory = s.expansionHistory
         expandJustRan = false
@@ -818,14 +861,54 @@ final class ViewModel: ObservableObject {
         selectedID = nil
         expandJustRan = true
         lastExpandBars = expandBars
+        lastExpandLabel = ""
         busy = true
         status = "Expanding the melody by \(Int(expandBars)) bars…"
         send([
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
-            "lyrics": lyrics,
-        ])
+            "lyrics": lyrics, "program": expandInstrument.program, "chords": expandInstrument.chords,
+            "progression": expandProgression, "modes": expandModes,
+        ].merging(singerFields(expandSingers)) { $1 })
+    }
+
+    /// Ask for the chords of the piece on show (the chord strip); it answers with a `chords` event.
+    func loadChords() {
+        guard let url = displayURL else { chordBars = []; chordsFor = nil; return }
+        send(["cmd": "chords", "source_midi": url.path])
+    }
+
+    /// Change one bar's chords (one chord, or two separated by a space for a change at the half bar).
+    func setChord(bar: Int, text: String) {
+        guard let url = displayURL, bar < chordBars.count else { return }
+        var all = chordBars.map { $0.map(\.symbol) }
+        all[bar] = text.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+        if all[bar].isEmpty { return }
+        send(["cmd": "set_chords", "source_midi": url.path, "bars_chords": all])
+    }
+
+    /// Give one bar a mode of its own ("" = back to the piece's mode).
+    func setMode(bar: Int, mode: String) {
+        guard let url = displayURL, bar < chordBars.count else { return }
+        var all = chordModes + Array(repeating: "", count: max(0, chordBars.count - chordModes.count))
+        all[bar] = mode
+        send(["cmd": "set_modes", "source_midi": url.path, "bar_modes": all])
+    }
+
+    /// Copy bars of the melody (with its singing, lyrics and accompaniment) onto the end.
+    func repeatMelody() {
+        guard canExpand, let c = selected else { return }
+        stop()
+        let r = repeatBars
+        expansionHistory.append((candidates, selectedID))
+        candidates = []
+        selectedID = nil
+        expandJustRan = true
+        lastExpandLabel = "Repeated bars \(r.from)–\(r.to)" + (repeatTimes > 1 ? " ×\(repeatTimes)" : "")
+        busy = true
+        status = "Copying bars \(r.from)–\(r.to) onto the end…"
+        send(["cmd": "repeat", "source_midi": c.url.path, "from_bar": r.from, "to_bar": r.to, "times": repeatTimes])
     }
 
     /// Go back to the options (and the choice) from before the last expansion.
@@ -840,9 +923,9 @@ final class ViewModel: ObservableObject {
 
     // MARK: Stage 3: edit the melody
 
-    private static func editNotes(of c: Candidate) -> [EditNote] {
+    private static func editNotes(of c: Candidate, part: String) -> [EditNote] {
         let k = Double(c.tempo) / 60
-        return c.notes.filter { $0.channel != 9 }.sorted { $0.start < $1.start }.map {
+        return c.notes.filter { part == "vocal" ? $0.channel == vocalChannel : ($0.channel != 9 && $0.channel != vocalChannel) }.sorted { $0.start < $1.start }.map {
             EditNote(pitch: $0.pitch, start: (($0.start * k) * 4).rounded() / 4, dur: max((($0.end - $0.start) * k * 4).rounded() / 4, 0.25))
         }
     }
@@ -856,7 +939,7 @@ final class ViewModel: ObservableObject {
     func beginEditing() {
         guard canEdit, let c = selected else { return }
         stop()
-        editNotes = Self.editNotes(of: c)
+        editNotes = Self.editNotes(of: c, part: editPartName)
         editSelected = nil
         editSuggestion = nil
         viewMode = .roll
@@ -877,7 +960,7 @@ final class ViewModel: ObservableObject {
         startEdit(label: "Edited by hand")
         busy = true
         status = "Saving your edit…"
-        send(["cmd": "save_edit", "source_midi": c.url.path,
+        send(["cmd": "save_edit", "source_midi": c.url.path, "part": editPartName,
               "notes": editNotes.sorted { $0.start < $1.start }.map { [$0.pitch, $0.start, $0.dur] as [Any] }])
     }
 
@@ -890,9 +973,21 @@ final class ViewModel: ObservableObject {
     }
 
     /// Bar lines are drawn while a single melody is shown (not the accompanied piece or a part audition).
-    var barsShown: Bool { selected != nil && orchestration == nil && selectedPart == nil }
+    var barsShown: Bool { selected != nil && selectedPart == nil }
     var secondsPerBar: Double { beatsPerBar * 60 / Double(max(selected?.tempo ?? 120, 1)) }
-    var chosenBars: Set<Int> { Set(barsFromText(editBarsText)) }
+    var chosenBars: Set<Int> { step == 4 ? singChosen : Set(barsFromText(editBarsText)) }
+
+    /// Step 4: the bars to sing, picked in the roll (one run of neighbouring bars).
+    @Published var singChosen: Set<Int> = []
+    var singRange: (from: Int, to: Int)? { singChosen.isEmpty ? nil : (singChosen.min()!, singChosen.max()!) }
+    /// A click adds a bar next to the run, takes one off its end, or starts a new run.
+    func toggleSingBar(_ bar: Int) {
+        guard let r = singRange else { singChosen = [bar]; return }
+        if singChosen.contains(bar) { if bar == r.from || bar == r.to { singChosen.remove(bar) } else { singChosen = [bar] } }
+        else if (bar == r.from - 1 || bar == r.to + 1) && singChosen.count < 16 { singChosen.insert(bar) }   // 16 bars at a time at most
+        else { singChosen = [bar] }
+    }
+    func clickBar(_ bar: Int) { step == 4 ? toggleSingBar(bar) : toggleBar(bar) }
 
     /// Click a bar to choose it or drop it; the Bars box always shows the choice.
     func toggleBar(_ bar: Int) {
@@ -916,7 +1011,8 @@ final class ViewModel: ObservableObject {
         return out.sorted()
     }
 
-    /// Ask the LLM to change the bars named in the instruction (and in the bars box) and nothing else.
+    /// Ask the LLM to change the bars in the Bars box and nothing else. Only when the box is empty are the bars read, by
+    /// code, from the sentence ("measure 2"); the box always wins over the wording.
     func editWithLLM(extraBars: [Int] = []) {
         guard ready, canEdit, let c = selected else { return }
         let instruction = editRequest?.instruction ?? editInstruction
@@ -932,8 +1028,22 @@ final class ViewModel: ObservableObject {
         startEdit(label: "Edited with the LLM")
         busy = true
         status = "Rewriting only the bars you named…"
-        send(["cmd": "edit", "source_midi": source.path, "instruction": instruction, "bars": bars,
+        send(["cmd": "edit", "source_midi": source.path, "instruction": instruction, "bars": bars, "part": editPartName,
               "count": Int(editCount), "llm": llm, "complexity": Int(complexity)])
+    }
+
+    /// Step 4: write a sung line over the chosen melody, to the next lyric lines, in the bars asked for.
+    func generateSinging() {
+        guard canExpand, let c = selected, hasLyrics else { return }
+        startEdit(label: singRange.map { "Added singing, bars \($0.from)–\($0.to)" } ?? "Added singing")
+        singChosen = []
+        busy = true
+        status = "Writing the singing…"
+        send([
+            "cmd": "sing_part", "source_midi": c.url.path, "lyrics": lyrics,
+            "bars": singRange.map { $0.to - $0.from + 1 } ?? Int(singBars), "start_bar": singRange?.from ?? Int(singStart),
+            "count": Int(singCount), "llm": llm, "complexity": Int(complexity),
+        ].merging(singerFields(singSingers)) { $1 })
     }
 
     func startLLMEdit() {
@@ -943,13 +1053,12 @@ final class ViewModel: ObservableObject {
 
     /// The user agrees that the extra bars may change too: take back the answer that left them alone and run it again.
     func allowSuggestedBars() {
-        guard let sug = editSuggestion, let req = editRequest, !busy else { return }
+        guard let sug = editSuggestion, editRequest != nil, !busy else { return }
         if let last = expansionHistory.popLast() {
             candidates = last.candidates
             selectedID = last.selectedID
         }
-        let known = barsFromText(editBarsText)
-        editWithLLM(extraBars: Array(Set(req.bars + known + sug.bars)).sorted())
+        editWithLLM(extraBars: Array(Set(sug.targets + sug.bars)).sorted())
     }
 
     func declineSuggestedBars() {
@@ -958,21 +1067,21 @@ final class ViewModel: ObservableObject {
 
     // MARK: Stage 4: accompaniment
 
-    /// Step 5: let the music model add a whole ensemble around the piece so far (the melody and any parts approved in
-    /// step 4). Pressing it again starts from the piece as it was before the enrichment.
+    /// Step 5: let the music model add a whole ensemble around the piece so far (the melody, the singing and any parts
+    /// approved in step 4). Pressing it again starts from the piece as it was before the enrichment.
     func addAccompaniment() {
-        guard ready, !busy, let c = selected else { return }
+        guard ready, !busy, let chosen = selected else { return }
         stop()
         let rerolling = isEnriched
-        let base: Orchestration? = rerolling ? (partHistory.last ?? nil) : orchestration
-        pendingEnrich = (base, rerolling)
+        let c = rerolling ? (partHistory.last?.before ?? chosen) : chosen
+        pendingEnrich = (c, rerolling)
         partOptions = []
         selectedPartID = nil
         busy = true
         status = "Enriching the piece…"
         send([
-            "cmd": "orchestrate", "source_midi": (base?.full ?? c.url).path, "ensemble": Int(ensemble), "size": size,
-            "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
+            "cmd": "orchestrate", "source_midi": c.url.path, "ensemble": Int(ensemble), "size": size,
+            "dynamics": Int(accompDynamics),
         ])
     }
 
@@ -999,11 +1108,13 @@ final class ViewModel: ObservableObject {
         partOptions = []
         selectedPartID = nil
         directionNote = ""
-        status = "Writing \(Int(partOptionCount)) \(partInstrument.name.lowercased()) options…"
+        let bars = partBars
+        status = "Writing \(Int(partOptionCount)) \(partInstrument.name.lowercased()) options for bars \(bars.from)–\(bars.to)…"
         send([
             "cmd": "add_part", "source_midi": source.path, "program": partInstrument.program,
+            "from_bar": bars.from, "to_bar": bars.to,
             "count": Int(partOptionCount), "size": size,
-            "playable": playable, "in_key": inKey, "dynamics": Int(accompDynamics),
+            "dynamics": Int(accompDynamics),
             "texture": partInstrument.texture, "style": pianoStyle, "direction": partDirection,
         ])
     }
@@ -1019,20 +1130,36 @@ final class ViewModel: ObservableObject {
         guard ready, !busy, let c = selectedPart else { return }
         stop()
         busy = true
-        status = "Adding \(partInstrument.name.lowercased()) to the piece…"
+        let bars = partBars
+        pendingPartLabel = "Added \(partInstrument.name.lowercased()), bars \(bars.from)–\(bars.to)"
+        status = "\(pendingPartLabel)…"
         send(["cmd": "approve_part", "path": c.url.path, "label": partInstrument.name])
     }
 
-    /// Throw away the most recently approved instrument and go back to the piece before it.
-    func undoPart() {
-        guard !busy, let previous = partHistory.popLast() else { return }
+    /// Take the accompaniment out of some bars (every instrument, or one), so that the melody and the singing stand alone.
+    func clearBars(from: Int, to: Int, program: Int? = nil) {
+        guard ready, !busy, let c = selected else { return }
         stop()
-        orchestration = previous
-        let removed = partsAdded.popLast() ?? "part"
+        busy = true
+        let what = program.map { Instrument.partName($0).lowercased() } ?? "the accompaniment"
+        pendingPartLabel = "Took \(what) out of bars \(from)–\(to)"
+        status = "\(pendingPartLabel)…"
         partOptions = []
         selectedPartID = nil
-        record("Removed \(removed.lowercased())")
-        status = "Removed \(removed.lowercased())."
+        var req: [String: Any] = ["cmd": "clear_bars", "source_midi": c.url.path, "from_bar": from, "to_bar": to]
+        if let program { req["programs"] = [program] }
+        send(req)
+    }
+
+    /// Go back to the option as it was before the last change to the accompaniment.
+    func undoPart() {
+        guard !busy, let step = partHistory.popLast(), let i = candidates.firstIndex(where: { $0.id == step.before.id }) else { return }
+        stop()
+        candidates[i] = step.before
+        partOptions = []
+        selectedPartID = nil
+        record("Undid: \(step.label.lowercased())")
+        status = "Undid: \(step.label.lowercased())."
         ensureSheet()
     }
 
@@ -1137,6 +1264,23 @@ final class ViewModel: ObservableObject {
 
     func play(_ url: URL, from position: Double = 0) {
         stop()
+        if let wav = sungVersion(of: url) {
+            do {
+                let p = try AVAudioPlayer(contentsOf: wav)
+                p.currentTime = position
+                p.prepareToPlay()
+                p.play()
+                audioPlayer = p
+                playingURL = url
+                timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        guard let s = self, let ap = s.audioPlayer else { return }
+                        if ap.isPlaying { s.playhead = ap.currentTime } else { s.stop() }
+                    }
+                }
+                return
+            } catch { status = "Couldn't play the sung version (\(error.localizedDescription)); playing the MIDI." }
+        }
         do {
             let p = try AVMIDIPlayer(contentsOf: url, soundBankURL: Self.soundBank)
             p.prepareToPlay()
@@ -1157,6 +1301,8 @@ final class ViewModel: ObservableObject {
     func stop() {
         player?.stop()
         player = nil
+        audioPlayer?.stop()
+        audioPlayer = nil
         finishedPlaying()
     }
 
@@ -1171,3 +1317,5 @@ final class ViewModel: ObservableObject {
         if let url = displayURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 }
+
+enum Lyrics { static let maxSingers = 4 }      // lyrics.MAX_SINGERS

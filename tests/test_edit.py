@@ -107,6 +107,16 @@ def test_the_bars_picked_in_the_app_are_used_when_the_text_names_none(backend):
     assert [b for b in set(old) | set(new) if old.get(b) != new.get(b)] == [2]
 
 
+def test_the_bars_picked_in_the_app_override_the_bars_the_text_names(backend):
+    """Only the clicked bars change, even when the sentence mentions others: the model's wording never widens the edit."""
+    src = first(backend)
+    backend.send(cmd="edit", source_midi=src["path"], instruction="connect measure 2 into measure 3", bars=[2], count=1, seed=1)
+    ev = backend.until({"melodies_done", "error"})
+    c = [e for e in ev if e["type"] == "candidate"][0]
+    old, new = bars_of(beats(src)), bars_of(beats(c))
+    assert [b for b in set(old) | set(new) if old.get(b) != new.get(b)] == [2]
+
+
 def test_the_model_wanting_other_bars_is_a_question_not_a_change(backend):
     src = first(backend)
     backend.send(cmd="edit", source_midi=src["path"], instruction="connect measure 2 better", count=1, seed=2)

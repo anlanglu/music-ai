@@ -63,15 +63,21 @@ def _chords(tonic, mode):
 def choose_chords(notes, key, seg_beats, total_beats, plan_chords=None, bar_beats=4.0):
     """One chord per segment: melody fit + a prior for common chords + a preference for good root motion, solved
     with a small Viterbi search; the last segment is forced to the tonic and the one before leans to the dominant.
-    `plan_chords` (scale degrees, one per bar) overrides the search, so the accompaniment can follow the melody's
-    own harmony."""
+    `plan_chords` overrides the search, so the accompaniment can follow the melody's own harmony: one entry per bar, either
+    a scale degree or the bar's list of harmony.Chord (two when the chord changes at the half bar)."""
     tonic, mode = key
     if plan_chords:
         n_seg = max(1, math.ceil(total_beats / seg_beats - 1e-9))
         out = []
         for k in range(n_seg):
-            bar = int((k * seg_beats) // bar_beats) if bar_beats else 0
-            out.append(chord_triple(tonic, mode, plan_chords[min(bar, len(plan_chords) - 1)]))
+            at = k * seg_beats
+            bar = int(at // bar_beats) if bar_beats else 0
+            entry = plan_chords[min(bar, len(plan_chords) - 1)]
+            if isinstance(entry, int):
+                out.append(chord_triple(tonic, mode, entry))
+                continue
+            c = entry[min(int((at - bar * bar_beats) / bar_beats * len(entry) + 1e-9), len(entry) - 1)]
+            out.append((c.root, c.third, c.fifth, c.extras, c.bass))
         return out
     chords = _chords(tonic, mode)
     scale_pcs = {(tonic + s) % 12 for s in deg_scale(mode)}
@@ -121,10 +127,21 @@ def choose_chords(notes, key, seg_beats, total_beats, plan_chords=None, bar_beat
 
 def _voicing(chord, variant, ceiling):
     """(bass, [three chord tones, ascending]) for a chord, placed so the whole voicing sits at or below `ceiling`.
-    `variant` picks the shape: close, first inversion, open, second inversion."""
-    root, third, fifth = chord
+    `variant` picks the shape: close, first inversion, open, second inversion. A chord with a seventh or colour tones
+    (chord = root, third, fifth, extras, bass) is voiced on its third, seventh and colour tone, with the fifth left out
+    unless nothing else is left: the root is the bass's job."""
+    root, third, fifth, *more = chord
+    extras = more[0] if more else ()
+    bass_pc = more[1] if len(more) > 1 else None
     t, f = third % 12 or 12, fifth % 12 or 12
-    shape = [[0, t, f], [t, f, 12], [0, f, t + 12], [f, 12, t + 12]][variant % 4]
+    if extras:
+        top = [e if e <= 17 else e - 12 for e in extras]       # a 13th is voiced as a 6th, so it stays in reach
+        a, b = top[0], top[-1]
+        tones = sorted({t, a, b} if len({t, a, b}) == 3 else {t, f, a})
+        shape = [[tones[0], tones[1], tones[2]], [tones[1], tones[2], tones[0] + 12],
+                 [tones[2], tones[0] + 12, tones[1] + 12], [tones[0], tones[2], tones[1] + 12]][variant % 4]
+    else:
+        shape = [[0, t, f], [t, f, 12], [0, f, t + 12], [f, 12, t + 12]][variant % 4]
     pc = root % 12
     base = ceiling - max(shape)
     base -= (base - pc) % 12          # highest pitch with the root's pitch class that still fits under the ceiling
@@ -132,7 +149,7 @@ def _voicing(chord, variant, ceiling):
         base += 12
     voices = [base + x for x in shape]
     bass = voices[0] - 3
-    bass -= (bass - pc) % 12          # the root, as low as is comfortable under the chord
+    bass -= (bass - (pc if bass_pc is None else bass_pc)) % 12     # the root (or a slash chord's bass), as low as is comfortable
     while bass < 28:
         bass += 12
     return bass, voices
@@ -147,7 +164,7 @@ def melody_program(notes, exclude=None):
     return max(by, key=lambda k: sum(by[k]) / len(by[k])) if by else None
 
 
-def _double(notes, key, program, d, variant):
+def _double(notes, key, program, d, variant, scale_at=None):
     """Play the melody itself at an interval (an octave below, a sixth below, ...), kept in the key and in the
     instrument's range, one note at a time."""
     mel = melody_program(notes, exclude=program)
@@ -161,8 +178,9 @@ def _double(notes, key, program, d, variant):
     out = []
     for p, st, du, prog in sorted((n for n in notes if n[3] == mel), key=lambda n: n[1]):
         q = p + shift
-        if q % 12 not in pcs:
-            q = min((x for x in range(q - 2, q + 3) if x % 12 in pcs), key=lambda x: (abs(x - q), x))
+        here = scale_at(st) if scale_at else pcs                 # bars with a mode of their own keep to it
+        if q % 12 not in here:
+            q = min((x for x in range(q - 2, q + 3) if x % 12 in here), key=lambda x: (abs(x - q), x))
         q = fold_pitch(q, program)
         if out and st < out[-1][1] + out[-1][2]:       # monophonic: end the previous note where this one begins
             out[-1] = (out[-1][0], out[-1][1], max(0.25, st - out[-1][1]))
@@ -170,16 +188,17 @@ def _double(notes, key, program, d, variant):
     return out
 
 
-def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None):
+def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None, lead=False, scale_at=None):
     """The accompaniment as [(pitch, start_beat, dur_beats)] for one instrument.
 
     Keyboards play it as a left hand tucked under the melody; any other instrument gets a window inside its own
     playable range and never more simultaneous notes than it can sound. `d` is a parsed direction (see
     direction.py): density (step size), register (high / low part of the range), length ('short' = staccato).
-    `chords` (scale degrees, one per bar) makes the part follow the melody's own harmony."""
+    `chords` (scale degrees, one per bar) makes the part follow the melody's own harmony. `lead` makes a keyboard play in
+    its own range rather than under a melody (the chords are all there is in those bars)."""
     d = d or {}
     if style == "double":
-        return _double(notes, key, program, d, variant)
+        return _double(notes, key, program, d, variant, scale_at)
     num, den = (int(x) for x in sig.split("/"))
     bar = num * 4 / den
     compound = den == 8 and num % 3 == 0
@@ -189,7 +208,7 @@ def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=No
     unit = max(0.25, base * {-2: 4, -1: 2, 0: 1, 1: 0.5, 2: 0.5}[d.get("density", 0)])    # arpeggio / Alberti / pulse step
     cut = {-2: 0.35, -1: 0.5}.get(d.get("length", 0), 1.0)                              # staccato shortens note lengths
     lo, hi, poly = limits(program)
-    left_hand = program in LEFT_HAND
+    left_hand = program in LEFT_HAND and not lead
     width = 19                                                                          # widest voicing we use
     frac = min(1.0, max(0.0, 0.35 + 0.22 * d.get("register", 0)))
     wlo = int(lo + max(0, hi - lo - width) * frac)
@@ -264,7 +283,7 @@ def style_order(sig):
     return ["arpeggio", "alberti", "block", "oompah", "sustained"]
 
 
-def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None):
+def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None, scale_at=None):
     """Option number k (1-based). style='mix' cycles through the styles; otherwise the same style gets a different
     voicing for each option. Returns (label, [(pitch, start_beat, dur_beats)])."""
     if style == "mix":
@@ -278,6 +297,6 @@ def option(notes, tempo, sig, key, style, k, program=0, d=None, chords=None):
                  -4: "a third below", -8: "a sixth below", -9: "a sixth below", 7: "a fifth above", 5: "a fourth above"}
         iv = ([ivs[0]] + [x for x in (-12, 12, -24) if x != ivs[0]])[variant % 4]
         label = "Doubling " + names.get(iv, f"{iv:+d} semitones")
-        return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords)
+        return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords, scale_at=scale_at)
     label = STYLE_LABELS[chosen] + (f" (voicing {variant + 1})" if variant else "")
-    return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords)
+    return label, build(notes, tempo, sig, key, chosen, variant, program, d, chords, scale_at=scale_at)
