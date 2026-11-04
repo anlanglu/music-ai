@@ -59,6 +59,75 @@ struct PianoRoll: View {
     }
 }
 
+/// The chord of each bar, under the piano roll and lined up with its bars. A bar with a change at the half bar shows two
+/// chords. A chord with notes the melody's mode doesn't have turns its bar orange. Click a bar to type other chords.
+struct ChordStrip: View {
+    let bars: [[ChordCell]]
+    let key: String
+    let duration: Double
+    let secondsPerBar: Double
+    let edit: (Int, String) -> Void
+    @ObservedObject var vm: ViewModel       // holds which bar is being edited, and its text
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = duration > 0 ? secondsPerBar / duration * geo.size.width : 0
+            ZStack(alignment: .topLeading) {
+                ForEach(bars.indices, id: \.self) { i in
+                    cell(i)
+                        .frame(width: max(w - 2, 4), height: geo.size.height)
+                        .offset(x: Double(i) * w + 1)
+                }
+            }
+        }
+        .frame(height: 30)
+    }
+
+    private func mismatch(_ bar: [ChordCell]) -> [ChordCell] { bar.filter { !$0.outside.isEmpty } }
+
+    private func help(_ bar: [ChordCell]) -> String {
+        var lines = bar.map { "\($0.symbol): \($0.notes)" }
+        for c in bar where !c.outside.isEmpty {
+            lines.append("\(c.symbol) has \(c.outside.joined(separator: ", ")), which \(key) doesn't have.")
+        }
+        lines += bar.map(\.remark).filter { !$0.isEmpty }
+        return lines.joined(separator: "\n") + "\nClick to change."
+    }
+
+    private func cell(_ i: Int) -> some View {
+        let bar = bars[i]
+        let off = !mismatch(bar).isEmpty
+        return HStack(spacing: 2) {
+            ForEach(bar) { c in
+                Text(c.symbol).font(.caption2.bold()).lineLimit(1).minimumScaleFactor(0.5)
+                    .foregroundStyle(c.outside.isEmpty ? Color.primary : Color.orange)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 2)
+        .background((off ? Color.orange.opacity(0.28) : Color(white: 0.16)), in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(off ? Color.orange : Color.clear, lineWidth: 1))
+        .contentShape(Rectangle())
+        .help(help(bar))
+        .onTapGesture { vm.chordEditText = bar.map(\.symbol).joined(separator: " "); vm.chordEditing = i }
+        .popover(isPresented: Binding(get: { vm.chordEditing == i }, set: { if !$0 { vm.chordEditing = nil } })) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Bar \(i + 1) chords in \(key)").font(.headline)
+                TextField("Dm7  or  Dm7 G7", text: $vm.chordEditText).textFieldStyle(.roundedBorder).frame(width: 220)
+                    .onSubmit { edit(i, vm.chordEditText); vm.chordEditing = nil }
+                Text("One chord, or two (a space apart) for a change at the half bar. Try Cmaj9, G7#9, Bbm7b5, C/E, Csus4.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).frame(width: 220)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { vm.chordEditing = nil }
+                    Button("Set") { edit(i, vm.chordEditText); vm.chordEditing = nil }.keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(12)
+        }
+    }
+}
+
 /// Shows an engraved score (a local HTML file with inline SVG).
 struct SheetView: NSViewRepresentable {
     let html: URL
@@ -100,8 +169,8 @@ struct ContentView: View {
         .onAppear { vm.start() }
         .sheet(isPresented: $vm.showLyrics) { LyricsSheet(vm: vm) }
         .sheet(isPresented: $vm.showAddVoice) { AddVoiceSheet(vm: vm) }
-        .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
-        .onChange(of: vm.ready) { _, _ in vm.loadMix() }
+        .onChange(of: vm.displayURL) { _, _ in vm.loadMix(); vm.loadChords() }
+        .onChange(of: vm.ready) { _, _ in vm.loadMix(); vm.loadChords() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
     }
 
@@ -505,6 +574,7 @@ struct ContentView: View {
             }
             describeBox("Anything else? (optional)", text: $vm.prompt, height: 54,
                         example: "e.g. like a music box, rising slowly then settling")
+            progressionBox($vm.motifProgression)
             barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
@@ -578,6 +648,17 @@ struct ContentView: View {
     }
 
     /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
+    /// Chords to write the melody to, typed as a progression. Empty: the app picks chords that fit the key.
+    private func progressionBox(_ text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Chords (optional)").font(.caption).foregroundStyle(.secondary)
+            TextField("e.g. Dm7 G7 | Cmaj7 | Am7 D7", text: text).textFieldStyle(.roundedBorder)
+                .help("Bars are separated by |; two chords in a bar change at the half bar. A short progression repeats to fill the bars. Leave it empty and the app picks chords in the key. Under the piano roll, each bar's chord can be changed afterwards.")
+            Text("Bars separated by |, two chords in a bar for a half-bar change. Orange bars have notes the mode doesn't have.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var expandControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pick a motif or melody above, then grow it. The new options replace the list with the first one selected, so you can press Expand again to keep going, or pick another option first. Undo steps back.")
@@ -594,6 +675,7 @@ struct ContentView: View {
             describeBox("Anything else? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
                 .help("Free text for this expansion. The language model reads it as an instruction; the Anticipation model turns it into how busy, how high or low and how adventurous the new bars are.")
+            progressionBox($vm.expandProgression)
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
             Picker("Instrument", selection: $vm.expandInstrument) {
                 ForEach(Instrument.extend) { Text($0.name).tag($0) }
@@ -943,11 +1025,17 @@ struct ContentView: View {
                         })
                 }
             } else {
-                PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
-                          playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
-                          secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
-                          toggle: vm.canEdit ? { vm.clickBar($0) } : nil)
-                    .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
+                VStack(spacing: 4) {
+                    PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
+                              playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
+                              secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
+                              toggle: vm.canEdit ? { vm.clickBar($0) } : nil)
+                        .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
+                    if vm.barsShown, vm.chordsFor == vm.displayURL, !vm.chordBars.isEmpty {
+                        ChordStrip(bars: vm.chordBars, key: vm.chordKey, duration: vm.displayDuration,
+                                   secondsPerBar: vm.secondsPerBar, edit: { vm.setChord(bar: $0, text: $1) }, vm: vm)
+                    }
+                }
             }
         }
         .frame(minHeight: sheet ? 320 : (vm.editing ? 300 : 200), maxHeight: sheet ? .infinity : (vm.editing ? 300 : 200))

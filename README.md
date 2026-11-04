@@ -15,7 +15,7 @@ Melody LLM menu (see below).
    ideas) and a few sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
-2. **Extend the melody.** (**Piano chords** and **Guitar chords** in the Instrument list write the new bars as chords in the melody's harmony instead of a melody line, in a few patterns, to be sung to in step 4.) (Under the Expand button, **Or repeat part of the melody** copies bars — one or several times — onto the end, with their sung line, lyrics, singers and accompaniment: a verse sung again by the same duet or choir. Nothing is generated.) Pick an option and add bars (2–16) at a time, each time for an **Instrument** of your choice (the melody is passed
+2. **Extend the melody.** (**Chords (optional)** in the Motif and Extend steps take a progression to write to, such as `Dm7 G7 | Cmaj7 | Am7 D7`: bars are separated by `|`, and two chords in a bar change at the half bar. Chords can be as rich as `Cmaj9`, `G7#9`, `Bbm7b5`, `C/E` or `Csus4` (`harmony.py` reads the names). A strip of chords sits under the piano roll, lined up with the bars; click a bar to change its chords, which later steps (Extend, chord instruments, the singing) then follow. A bar turns orange when its chord has notes the melody's mode doesn't have. The Motif's language model only sees the chord names, so the first bars follow them loosely; the Extend sampler follows them more closely, including notes outside the key that a chord brings.) (**Piano chords** and **Guitar chords** in the Instrument list write the new bars as chords in the melody's harmony instead of a melody line, in a few patterns, to be sung to in step 4.) (Under the Expand button, **Or repeat part of the melody** copies bars — one or several times — onto the end, with their sung line, lyrics, singers and accompaniment: a verse sung again by the same duet or choir. Nothing is generated.) Pick an option and add bars (2–16) at a time, each time for an **Instrument** of your choice (the melody is passed
    on to it from there; with the Voice instrument the bars are sung to the next lyric lines, by a singer picked for that step), as new options to choose from, as often
    as you like (with Undo). Each expansion has its own settings: length, complexity, how jumpy, how strongly the
    motif comes back, dynamics and a free-text direction ("build to a climax, then calm down"). It is written by the
@@ -116,6 +116,7 @@ Try it without the app (uses the language model; it downloads on first use):
 | `backend.py` | JSON-lines server the app talks to |
 | `text2music.py` | the pipeline: sessions, the LLM melody, key logic, accompaniment, CLI |
 | `plan.py` | the musical plan: phrases, the chord of every bar, the cadences, the motif |
+| `harmony.py` | chord names → notes (`Dm7`, `G7#9`, `C/E`...), and progressions written as text |
 | `expand.py` | step 2: grow a melody by 2–16 bars (LLM or Anticipation) |
 | `lyrics.py`, `soulx/` | lyrics to a melody (one note per syllable) and the singing voice (vendored SoulX-Singer, Apache 2.0) |
 | `edit.py` | step 3: change only the named bars (LLM) or save a hand edit |

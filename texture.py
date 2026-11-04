@@ -63,15 +63,21 @@ def _chords(tonic, mode):
 def choose_chords(notes, key, seg_beats, total_beats, plan_chords=None, bar_beats=4.0):
     """One chord per segment: melody fit + a prior for common chords + a preference for good root motion, solved
     with a small Viterbi search; the last segment is forced to the tonic and the one before leans to the dominant.
-    `plan_chords` (scale degrees, one per bar) overrides the search, so the accompaniment can follow the melody's
-    own harmony."""
+    `plan_chords` overrides the search, so the accompaniment can follow the melody's own harmony: one entry per bar, either
+    a scale degree or the bar's list of harmony.Chord (two when the chord changes at the half bar)."""
     tonic, mode = key
     if plan_chords:
         n_seg = max(1, math.ceil(total_beats / seg_beats - 1e-9))
         out = []
         for k in range(n_seg):
-            bar = int((k * seg_beats) // bar_beats) if bar_beats else 0
-            out.append(chord_triple(tonic, mode, plan_chords[min(bar, len(plan_chords) - 1)]))
+            at = k * seg_beats
+            bar = int(at // bar_beats) if bar_beats else 0
+            entry = plan_chords[min(bar, len(plan_chords) - 1)]
+            if isinstance(entry, int):
+                out.append(chord_triple(tonic, mode, entry))
+                continue
+            c = entry[min(int((at - bar * bar_beats) / bar_beats * len(entry) + 1e-9), len(entry) - 1)]
+            out.append((c.root, c.third, c.fifth, c.extras, c.bass))
         return out
     chords = _chords(tonic, mode)
     scale_pcs = {(tonic + s) % 12 for s in deg_scale(mode)}
@@ -121,10 +127,21 @@ def choose_chords(notes, key, seg_beats, total_beats, plan_chords=None, bar_beat
 
 def _voicing(chord, variant, ceiling):
     """(bass, [three chord tones, ascending]) for a chord, placed so the whole voicing sits at or below `ceiling`.
-    `variant` picks the shape: close, first inversion, open, second inversion."""
-    root, third, fifth = chord
+    `variant` picks the shape: close, first inversion, open, second inversion. A chord with a seventh or colour tones
+    (chord = root, third, fifth, extras, bass) is voiced on its third, seventh and colour tone, with the fifth left out
+    unless nothing else is left: the root is the bass's job."""
+    root, third, fifth, *more = chord
+    extras = more[0] if more else ()
+    bass_pc = more[1] if len(more) > 1 else None
     t, f = third % 12 or 12, fifth % 12 or 12
-    shape = [[0, t, f], [t, f, 12], [0, f, t + 12], [f, 12, t + 12]][variant % 4]
+    if extras:
+        top = [e if e <= 17 else e - 12 for e in extras]       # a 13th is voiced as a 6th, so it stays in reach
+        a, b = top[0], top[-1]
+        tones = sorted({t, a, b} if len({t, a, b}) == 3 else {t, f, a})
+        shape = [[tones[0], tones[1], tones[2]], [tones[1], tones[2], tones[0] + 12],
+                 [tones[2], tones[0] + 12, tones[1] + 12], [tones[0], tones[2], tones[1] + 12]][variant % 4]
+    else:
+        shape = [[0, t, f], [t, f, 12], [0, f, t + 12], [f, 12, t + 12]][variant % 4]
     pc = root % 12
     base = ceiling - max(shape)
     base -= (base - pc) % 12          # highest pitch with the root's pitch class that still fits under the ceiling
@@ -132,7 +149,7 @@ def _voicing(chord, variant, ceiling):
         base += 12
     voices = [base + x for x in shape]
     bass = voices[0] - 3
-    bass -= (bass - pc) % 12          # the root, as low as is comfortable under the chord
+    bass -= (bass - (pc if bass_pc is None else bass_pc)) % 12     # the root (or a slash chord's bass), as low as is comfortable
     while bass < 28:
         bass += 12
     return bass, voices

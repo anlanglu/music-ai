@@ -15,12 +15,18 @@ A plan looks like this::
                   "start_beat": 0.0, "end_beat": 16.0, "chords": [0, 3, 1, 4],
                   "cadence": [4, 1]}, ...],
      "cadences": [{"beat": 16.0, "role": "ante", "targets": [4, 1]}, ...],
-     "boundaries": [(8.0, "idea"), (16.0, "phrase"), ...]}
+     "boundaries": [(8.0, "idea"), (16.0, "phrase"), ...],
+     "harmony": [["Dm7", "G7"], ["Cmaj7"], ...]}             # optional: chord names, one or two per bar (harmony.py)
+
+Chords written by the user ("harmony") take the place of the scale degrees for everything that plays or follows the
+chords; "chords" is kept alongside, as the nearest scale degree of each bar's first chord, for the phrase logic.
 
 Scale degrees are 0..6 (0 = tonic, 4 = dominant). A phrase's role says what it is for: "ante" asks a question and
 ends on the dominant, "cons" answers it and comes home, "cont" goes somewhere else, "final" closes.
 """
 import random
+
+import harmony
 
 # The two scales, in one place. The seven-degree scales are used for chord arithmetic (which degree is the third
 # of which chord); the key scales are the pitch classes a note is allowed to be in (minor adds the raised 7th).
@@ -242,21 +248,100 @@ def build_plan(bars, sig, key, rng=None, level=3):
     }
 
 
-def plan_chord_pcs(plan):
-    """The pitch classes of each bar's chord, as a list parallel to plan['chords']."""
+def degree_symbol(tonic, mode, degree):
+    """The name of the triad on a scale degree: 'Dm', 'Bb', 'Bdim'."""
+    root, third, fifth = chord_triple(tonic, mode, degree)
+    return _NOTE_NAMES[root] + ("dim" if fifth == 6 else "m" if third == 3 else "")
+
+
+def bar_chords(plan):
+    """The chords of each bar, as [[Chord, ...], ...] (one chord, or two for a change at the half bar). Chords the
+    user wrote ("harmony") come first; bars without one have the triad of the plan's scale degree."""
     tonic, mode = plan["key"]
-    return [chord_pcs(tonic, mode, deg) for deg in plan["chords"]]
+    named = plan.get("harmony") or []
+    out = []
+    for i, deg in enumerate(plan["chords"]):
+        bar = None
+        if i < len(named) and named[i]:
+            try:
+                bar = [harmony.parse(x) for x in named[i]]
+            except ValueError:
+                bar = None
+        out.append(bar or [harmony.parse(degree_symbol(tonic, mode, deg))])
+    return out
+
+
+def plan_chord_pcs(plan):
+    """The pitch classes of each bar's chord, as a list parallel to plan['chords'] (a bar with two chords has both
+    chords' notes)."""
+    return [set(pc for c in bar for pc in c.pcs) for bar in bar_chords(plan)]
+
+
+def plan_harmony_pcs(plan):
+    """The pitch classes of the chords the user wrote, or None when the plan has only its own triads. A melody keeps to its
+    key, but a note of a written chord that the key lacks (the E of an A major chord in D minor) is allowed."""
+    if not plan.get("harmony"):
+        return None
+    return set(pc for bar in bar_chords(plan) for c in bar for pc in c.pcs)
+
+
+def chord_pcs_at(plan):
+    """A function from a beat to the pitch classes of the chord sounding there, for a plan with chords the user wrote;
+    None for any other plan (or none), where the key alone decides which notes belong."""
+    if not plan or not plan.get("harmony"):
+        return None
+    bb = plan["bb"]
+    bars = bar_chords(plan)
+
+    def at(beat):
+        bar = min(max(int(beat // bb), 0), len(bars) - 1)
+        chords = bars[bar]
+        return chords[min(int((beat - bar * bb) / bb * len(chords) + 1e-9), len(chords) - 1)].pcs
+    return at
+
+
+def nearest_degree(tonic, mode, chord):
+    """The scale degree whose root is nearest the chord's root (the chord's own, if its root is a scale note)."""
+    scale = deg_scale(mode)
+    rel = (chord.root - tonic) % 12
+    return min(range(7), key=lambda d: (min((scale[d] - rel) % 12, (rel - scale[d]) % 12), d))
+
+
+def set_harmony(plan, progression):
+    """Write chords into a plan: `progression` is [[symbol, ...], ...], one list per bar. It is cut or repeated from the
+    start to fill the plan's bars. Returns the plan."""
+    tonic, mode = plan["key"]
+    if not progression:
+        raise ValueError("there are no chords to write")
+    bars = len(plan["chords"])
+    named = [list(progression[i % len(progression)]) for i in range(bars)]
+    plan["harmony"] = named
+    plan["chords"] = [nearest_degree(tonic, mode, harmony.parse(b[0])) for b in named]
+    phrases = plan.get("phrases") or []
+    for ph in phrases:
+        ph["chords"] = plan["chords"][ph["start_bar"]: ph["start_bar"] + ph["bars"]]
+    return plan
+
+
+def chord_fit(plan):
+    """For each bar, for each of its chords: the names of the notes the plan's mode doesn't have (empty: the chord belongs).
+    A written chord that doesn't belong is how the app shows that the chords and the mode disagree."""
+    tonic, mode = plan["key"]
+    scale = key_pcs(tonic, mode)
+    return [[harmony.fit(c, scale) for c in bar] for bar in bar_chords(plan)]
 
 
 def plan_regions(plan, tempo, start_tick=0):
-    """The plan as time-varying pitch-class regions for the sampler: [(start_tick, end_tick, pitch classes), ...].
-    The sampler's clock runs at 100 ticks a second, so a beat is 60/tempo seconds."""
+    """The plan as time-varying pitch-class regions for the sampler: [(start_tick, end_tick, pitch classes), ...], one
+    for each chord (two in a bar that changes at the half bar). The sampler's clock runs at 100 ticks a second, so a
+    beat is 60/tempo seconds."""
     per_beat = 60.0 / tempo * 100.0
     regions = []
-    for i, pcs in enumerate(plan_chord_pcs(plan)):
-        start = start_tick + round(i * plan["bb"] * per_beat)
-        end = start_tick + round((i + 1) * plan["bb"] * per_beat)
-        regions.append((start, end, pcs))
+    for i, bar in enumerate(bar_chords(plan)):
+        for k, c in enumerate(bar):
+            start = start_tick + round((i + k / len(bar)) * plan["bb"] * per_beat)
+            end = start_tick + round((i + (k + 1) / len(bar)) * plan["bb"] * per_beat)
+            regions.append((start, end, set(c.pcs)))
     return regions
 
 
@@ -522,12 +607,15 @@ def _beats_per_bar(sig):
     return num * 4 / den
 
 
-def extend(base, key, sig, old_bars, new_bars, old_notes=None, rng=None, level=3):
+def extend(base, key, sig, old_bars, new_bars, old_notes=None, rng=None, level=3, progression=None):
     """Grow a plan by `new_bars` bars. Returns (whole, section): the plan for the old and new bars together, and the
     plan of the new bars on their own (starting at bar 0, which is how the melody generators want it).
     `base` is the plan the melody had (it is cut back to `old_bars` first, in case it was written for a longer piece);
-    with no plan, the old bars get the chords their notes suggest."""
+    with no plan, the old bars get the chords their notes suggest. `progression` ([[chord name, ...] per bar], see
+    harmony.py) is the chords for the new bars, instead of the plan's own."""
     section = build_plan(new_bars, sig, key, rng, level)
+    if progression:
+        set_harmony(section, progression)
     bb = _beats_per_bar(sig)
     if base:
         keep = [dict(p) for p in base["phrases"] if p["start_bar"] + p["bars"] <= old_bars]
@@ -560,6 +648,12 @@ def extend(base, key, sig, old_bars, new_bars, old_notes=None, rng=None, level=3
     whole = {"key": tuple(key), "bars": old_bars_used + new_bars, "sig": sig, "bb": bb, "level": level,
              "chords": chords[:old_bars_used] + section["chords"], "phrases": phrases, "cadences": cadences,
              "boundaries": boundaries}
+    if (base and base.get("harmony")) or section.get("harmony"):
+        tonic, mode = key
+        old_h = list((base or {}).get("harmony") or [])[:old_bars_used]
+        old_h += [[degree_symbol(tonic, mode, d)] for d in chords[len(old_h):old_bars_used]]
+        new_h = section.get("harmony") or [[degree_symbol(tonic, mode, d)] for d in section["chords"]]
+        whole["harmony"] = old_h + new_h
     return whole, section
 
 

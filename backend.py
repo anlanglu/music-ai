@@ -4,6 +4,9 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,flavor,strict,dynamics: each 0..10; missing ones take plan.SLIDER_DEFAULTS}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
   {"cmd":"expand", ..., "chords": true, "program"}   (the new bars are chords for that instrument, in the plan's harmony, one pattern per option; the melody line is silent in them, ready to be sung to)
+  {"cmd":"melodies"|"expand", ..., "progression": "Dm7 G7 | Cmaj7 | Am7 D7"}   (the chords the new bars follow: bars split by |, up to two chords in a bar, see harmony.py)
+  {"cmd":"chords", "source_midi"}  ->  chords{path,key,written,bars:[[{symbol,notes,outside,remark}]]}   (the chords of each bar; "outside" = notes the mode lacks)
+  {"cmd":"set_chords", "source_midi", "progression" | "bars_chords": [[symbol,...] per bar]}  ->  chords{...}   (written into the session's plan; later steps follow them)
   {"cmd":"repeat", "source_midi", "from_bar", "to_bar", "times"?: 1..4}  (bars copied onto the end: melody, instruments, sung line and its lyrics, accompaniment)
   {"cmd":"sing_part", "source_midi", "lyrics", "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
@@ -46,6 +49,7 @@ from text2music import (  # noqa: E402
     layers_of, list_sessions, make_melodies, make_music, midi_info, new_session, open_session, piece_bars, rename_session,
     reset_session, seed_everything, session_info,
 )
+import harmony  # noqa: E402
 import mixer  # noqa: E402
 import plan  # noqa: E402
 from expand import expand_melody  # noqa: E402
@@ -140,6 +144,54 @@ def restore(path):
         send(type="done", melody=str(latest), full=str(latest), notes=notes_of(latest), programs=list(programs_of(latest)))
 
 
+def progression_of(r):
+    """The chords the request asks for, as [[chord name, ...] per bar], or None. A ValueError names what can't be read."""
+    if r.get("bars_chords"):
+        return [[str(c) for c in bar] for bar in r["bars_chords"]]
+    text = (r.get("progression") or "").strip()
+    return harmony.parse_progression(text) if text else None
+
+
+def chords_event(path):
+    """The chords of a melody's bars for the app's chord strip: each chord's notes, and the notes that the key's mode doesn't
+    have (the strip shows those bars in another colour). The plan's chords, else the ones the melody's notes suggest."""
+    import math
+    import text2music as t
+    from expand import read_melody
+    src = Path(path)
+    notes, _tempo, sig, _first, total = read_melody(src)
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    bars = max(1, math.ceil(total / t.bar_beats(sig) - 0.01))
+    base = t.plan_for_file(src) or {}
+    chords = list(base.get("chords", []))[:bars]
+    if len(chords) < bars:
+        chords += plan.infer_chords(notes, key, sig, bars)[len(chords):]
+    view = {"key": key, "chords": chords, "harmony": list(base.get("harmony") or [])[:bars] or None}
+    out = []
+    for bar, miss in zip(plan.bar_chords(view), plan.chord_fit(view)):
+        out.append([{"symbol": c.symbol, "notes": c.notes(), "outside": m, "remark": c.remark} for c, m in zip(bar, miss)])
+    send(type="chords", path=str(src), key=t.key_label(key), written=bool(base.get("harmony")), bars=out)
+
+
+def write_chords(path, progression):
+    """Keep chords the user wrote in the session's plan: they are what later steps (Extend, accompaniment, singing) follow."""
+    import math
+    import text2music as t
+    from expand import read_melody
+    src = Path(path)
+    notes, _tempo, sig, _first, total = read_melody(src)
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    bars = max(1, math.ceil(total / t.bar_beats(sig) - 0.01))
+    folder = t.ensure_session()
+    base = t.plan_for_file(src)
+    meta = json.loads((folder / "session.json").read_text()) if (folder / "session.json").exists() else {}
+    form = int((meta.get("plan") or {}).get("form", t.DEFAULT_FORM) or t.DEFAULT_FORM)
+    theplan = base if base and len(base["chords"]) >= bars else plan.build_plan(bars, sig, key)
+    theplan["key"] = tuple(key)
+    plan.set_harmony(theplan, progression)
+    t._write_meta(folder, key=list(key), plan=t.plan_json(theplan, form), form=form)
+
+
 def chosen_mode(r):
     """The mode asked for ("auto" or none: leave it to the prompt)."""
     m = str(r.get("mode") or "auto").lower()
@@ -199,9 +251,17 @@ def handle(r):
             log=log, on_candidate=candidate_event,
             key=chosen_key(r), mode=chosen_mode(r),
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
-            sliders=r.get("sliders"),
+            sliders=r.get("sliders"), progression=progression_of(r),
         )
         send(type="melodies_done")
+    elif cmd == "chords":  # the chords of the bars of a melody, for the chord strip
+        chords_event(r["source_midi"])
+    elif cmd == "set_chords":  # write chords into the session's plan ("progression" text or "bars_chords"), then show them
+        prog = progression_of(r)
+        if not prog:
+            raise RuntimeError("There are no chords to write.")
+        write_chords(r["source_midi"], prog)
+        chords_event(r["source_midi"])
     elif cmd == "expand":  # step 2: add bars to the chosen melody, as several options
         begin()
         import lyrics as ly
@@ -225,14 +285,14 @@ def handle(r):
         if r.get("chords"):             # chords for the new bars, to be sung to
             from expand import expand_chords
             expand_chords(r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), program, int(r.get("count", 3)),
-                          int(r.get("complexity", 3)), log=log, on_candidate=candidate_event)
+                          int(r.get("complexity", 3)), log=log, on_candidate=candidate_event, progression=progression_of(r))
             send(type="melodies_done")
             return
         expand_melody(
             r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), r.get("engine", "hybrid"), int(r.get("count", 3)),
             r.get("size", "small"), r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("sliders"),
             r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
-            on_candidate=candidate_event, program=program,
+            on_candidate=candidate_event, program=program, progression=progression_of(r),
         )
         send(type="melodies_done")
     elif cmd == "repeat":  # step 2: copy bars of the melody (with its singing, lyrics and accompaniment) onto the end

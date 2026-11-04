@@ -140,10 +140,11 @@ def _direction_for_sampler(d, grid, q, top_p, lo, hi):
 
 
 def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small", llm="7B", complexity=3, sliders=None,
-                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None, program=None):
+                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None, program=None, progression=None):
     """Write `count` options, each the source melody plus `add_bars` more bars, to the session folder. Returns the list of
     {index, path, tempo, sig, score}; on_candidate(info) is called as each one is ready. `program` is the instrument the
-    new bars are written for (default: the one the melody ends on); if it differs, the melody is passed to it."""
+    new bars are written for (default: the one the melody ends on); if it differs, the melody is passed to it. `progression`
+    ([[chord name, ...] per bar], see harmony.py) is the chords the new bars follow, instead of ones the plan picks."""
     src = Path(source_midi)
     notes, tempo, sig, _first, total = read_melody(src)
     programs = read_programs(src)
@@ -169,7 +170,10 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
     if key is None:
         key = t.estimate_key(notes)
         log(f"  ▸ The melody has no stored key; continuing in {t.key_label(key)}, the best fit for its notes.")
-    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity)
+    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity,
+                                 progression=progression)
+    if progression:
+        log(f"  ▸ Chords for the new bars: {' | '.join(' '.join(b) for b in section['harmony'])}")
     form = max(mine["form"], int((meta.get("plan") or {}).get("form", 0) or 0))
 
     d = None
@@ -289,7 +293,7 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
         lo, hi = plo, phi
     pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}}
     if plan.clean_sliders(sl)["strict"] >= 6:       # a relaxed scale lets the sampler wander; finish_melody then limits it
-        pool["pitch_classes"] = t.scale_pcs(key)
+        pool["pitch_classes"] = t.scale_pcs(key) | (plan.plan_harmony_pcs(section) or set())    # a written chord's own notes too
     weights = plan.form_weights(form, kn)
     bias = plan.shape_weights(plan.from_sliders(sl)["shape"], kn)
     # A busy line with a strong pull to the motif has few pitches to choose from and repeats one; penalise that more.
@@ -302,7 +306,7 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
         pool["melodic"] = dict(bias, instrument=program)
     if weights.get("chord"):
         pool["regions"] = plan.plan_regions(section, tempo, start_tick)
-        pool["chord_weight"] = weights["chord"] * (0.6 if busy else 1.0)     # a busy line needs more than the chord's three notes
+        pool["chord_weight"] = weights["chord"] * (0.6 if busy else 1.0) * (1.5 if section.get("harmony") else 1.0)   # chords the user wrote count for more     # a busy line needs more than the chord's three notes
     targets = []
     if weights.get("motif"):
         for i in range(len(section["phrases"])):
@@ -378,9 +382,12 @@ def repeat_bars(source_midi, from_bar, to_bar, times=1, log=print, on_candidate=
     key = t.key_for_file(src) or t.estimate_key(notes)
     whole, _ = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes)
     chords = whole["chords"]
+    named = whole.get("harmony")
     for i in range(add_bars):
         if lo_bar - 1 + i % (hi_bar - lo_bar + 1) < len(chords):
             chords[old_bars + i] = chords[lo_bar - 1 + i % (hi_bar - lo_bar + 1)]
+            if named is not None and lo_bar - 1 + i % (hi_bar - lo_bar + 1) < len(named):
+                named[old_bars + i] = list(named[lo_bar - 1 + i % (hi_bar - lo_bar + 1)])
     t._write_meta(folder, key=list(key), plan=t.plan_json(whole, int((meta.get("plan") or {}).get("form", 0) or 0)),
                   form=int((meta.get("plan") or {}).get("form", 0) or 0))
     log(f"  ▸ Bars {lo_bar}-{hi_bar} copied onto the end{' ' + str(times) + ' times' if times > 1 else ''}: "
@@ -391,10 +398,15 @@ def repeat_bars(source_midi, from_bar, to_bar, times=1, log=print, on_candidate=
     return [info]
 
 
+def _chord_line(section):
+    """The chords of a plan as text: 'Dm7 G7 | Cmaj7 | ...' (the triads of its scale degrees, when none were written)."""
+    return " | ".join(" ".join(c.symbol for c in bar) for bar in plan.bar_chords(section))
+
+
 CHORD_STYLES = ["block", "arpeggio", "oompah", "sustained", "alberti"]
 
 
-def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=print, on_candidate=None):
+def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=print, on_candidate=None, progression=None):
     """Add `add_bars` bars of chords for one instrument (piano, guitar...) on the end of a melody, to be sung to later. The
     chords are the plan's for those bars and every option is the same progression in a different pattern (block, arpeggio,
     bass and chords...). The new bars are a chord layer in the file; the melody line has no notes in them."""
@@ -414,16 +426,17 @@ def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=pri
     except (OSError, ValueError):
         meta = {}
     key = t.key_for_file(src) or t.estimate_key(notes)
-    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity)
+    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity,
+                                 progression=progression)
     form = int((meta.get("plan") or {}).get("form", 0) or 0)
     t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
     name = time.strftime("%H%M%S") + "-chords"
     span = [(60, 0.0, add_bars * bb, program)]        # tells the pattern how long the section is
     out = []
-    log(f"  \u25b8 {add_bars} bars of {t.instrument_name(program).lower()} chords in {t.key_label(key)}: {' '.join(str(c + 1) for c in section['chords'])} (scale degrees).")
+    log(f"  \u25b8 {add_bars} bars of {t.instrument_name(program).lower()} chords in {t.key_label(key)}: {_chord_line(section)}.")
     for k in range(1, count + 1):
         style, variant = CHORD_STYLES[(k - 1) % len(CHORD_STYLES)], (k - 1) // len(CHORD_STYLES)
-        part = tx.build(span, tempo, sig, key, style, variant, program, None, section["chords"], lead=True)
+        part = tx.build(span, tempo, sig, key, style, variant, program, None, plan.bar_chords(section), lead=True)
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, notes, programs, sig, old_beats + add_bars * bb, vocal=vocal or None, acc=acc)
         t.add_layers_file(path, path, {program: [(p, s + old_beats, d) for p, s, d in part]}, old_beats)

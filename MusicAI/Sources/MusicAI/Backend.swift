@@ -83,7 +83,18 @@ enum BackendEvent {
     case vocal(URL, backing: URL?)
     case voices([(key: String, name: String)])
     case lyricsInfo(text: String, ok: Bool)
+    /// The chords of each bar of a melody (one, or two for a change at the half bar), with the notes the mode lacks.
+    case chords(path: URL, key: String, bars: [[ChordCell]])
     case error(String)
+}
+
+/// One chord of a bar, as the chord strip shows it. `outside` lists the notes the melody's mode doesn't have.
+struct ChordCell: Identifiable {
+    let id = UUID()
+    let symbol: String
+    let notes: String
+    let outside: [String]
+    let remark: String
 }
 
 /// Owns the long-lived Python process (so the models stay loaded between generations)
@@ -223,6 +234,12 @@ final class Backend {
         case "vocal":
             let back = obj["backing"] as? String ?? ""
             return .vocal(URL(fileURLWithPath: obj["path"] as? String ?? ""), backing: back.isEmpty ? nil : URL(fileURLWithPath: back))
+        case "chords":
+            let bars = (obj["bars"] as? [[[String: Any]]] ?? []).map { bar in
+                bar.map { ChordCell(symbol: $0["symbol"] as? String ?? "", notes: $0["notes"] as? String ?? "",
+                                    outside: $0["outside"] as? [String] ?? [], remark: $0["remark"] as? String ?? "") }
+            }
+            return .chords(path: URL(fileURLWithPath: obj["path"] as? String ?? ""), key: obj["key"] as? String ?? "", bars: bars)
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone

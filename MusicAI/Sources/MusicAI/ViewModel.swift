@@ -156,6 +156,15 @@ final class ViewModel: ObservableObject {
     }
     func surpriseMoods() { moods = Set(Self.moodChips.shuffled().prefix(2)) }
     @Published var bars = 4.0
+    /// Chords the user types for the motif / the new bars (e.g. "Dm7 G7 | Cmaj7 | Am7 D7"); empty = the app chooses.
+    @Published var motifProgression = ""
+    @Published var expandProgression = ""
+    /// The chords of each bar of the piece on show (`chordsFor`), as the chord strip shows and edits them.
+    @Published var chordBars: [[ChordCell]] = []
+    @Published var chordsFor: URL?
+    @Published var chordKey = ""
+    @Published var chordEditing: Int?          // the bar whose chords are being typed in the strip
+    @Published var chordEditText = ""
     @Published var instrument = Instrument.all[0] {
         didSet { expandInstrument = instrument }      // step 2 carries on with the motif's instrument unless told otherwise
     }
@@ -435,6 +444,10 @@ final class ViewModel: ObservableObject {
                     self[keyPath: which].extras.formIntersection(keys)
                 }
             }
+        case .chords(let path, let key, let bars):
+            chordsFor = path
+            chordKey = key
+            chordBars = bars
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
             lyricsOK = ok
@@ -686,6 +699,8 @@ final class ViewModel: ObservableObject {
 
     private func clearWork() {
         stop()
+        chordBars = []
+        chordsFor = nil
         editing = false
         editSuggestion = nil
         expansionHistory = []
@@ -750,7 +765,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": lyrics,
+            "sliders": sliderValues, "lyrics": lyrics, "progression": motifProgression,
         ].merging(singerFields(singers)) { $1 })
     }
 
@@ -844,7 +859,23 @@ final class ViewModel: ObservableObject {
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
             "lyrics": lyrics, "program": expandInstrument.program, "chords": expandInstrument.chords,
+            "progression": expandProgression,
         ].merging(singerFields(expandSingers)) { $1 })
+    }
+
+    /// Ask for the chords of the piece on show (the chord strip); it answers with a `chords` event.
+    func loadChords() {
+        guard let url = displayURL else { chordBars = []; chordsFor = nil; return }
+        send(["cmd": "chords", "source_midi": url.path])
+    }
+
+    /// Change one bar's chords (one chord, or two separated by a space for a change at the half bar).
+    func setChord(bar: Int, text: String) {
+        guard let url = displayURL, bar < chordBars.count else { return }
+        var all = chordBars.map { $0.map(\.symbol) }
+        all[bar] = text.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+        if all[bar].isEmpty { return }
+        send(["cmd": "set_chords", "source_midi": url.path, "bars_chords": all])
     }
 
     /// Copy bars of the melody (with its singing, lyrics and accompaniment) onto the end.
