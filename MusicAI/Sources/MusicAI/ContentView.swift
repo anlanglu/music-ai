@@ -306,7 +306,7 @@ struct ContentView: View {
                 Stepper("", value: $vm.singStart, in: 0...64).labelsHidden()
             }
             .help("Which bar the singing starts on. Auto starts right after the bars already sung, or at bar 1.")
-            barsRow("Bars to sing", $vm.singBars, range: 1...8, help: "How many bars of singing to write. The next lyric lines that fit are used; the melody is not changed.")
+            barsRow("Bars to sing", $vm.singBars, range: 1...16, help: "How many bars of singing to write in one go. The next lyric lines that fit are used; the melody is not changed. Press \"Add more singing\" again to carry on from where the singing stopped.")
             optionsRow($vm.singCount)
             HStack {
                 Button { vm.generateSinging() } label: {
