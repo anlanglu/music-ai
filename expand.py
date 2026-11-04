@@ -289,11 +289,16 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
         pool["pitch_classes"] = t.scale_pcs(key)
     weights = plan.form_weights(form, kn)
     bias = plan.shape_weights(plan.from_sliders(sl)["shape"], kn)
+    # A busy line with a strong pull to the motif has few pitches to choose from and repeats one; penalise that more.
+    busy = max(0, d["density"]) if d is not None and not d["empty"] else 0
+    extra = 0.4 * busy + 0.08 * weights.get("motif", 0) + 0.2 * weights.get("chord", 0)   # the chord pull leaves 3 pitch classes
+    if extra:
+        bias = dict(bias or {}, repeat=(bias or {}).get("repeat", 0.0) + extra)
     if bias:
         pool["melodic"] = dict(bias, instrument=program)
     if weights.get("chord"):
         pool["regions"] = plan.plan_regions(section, tempo, start_tick)
-        pool["chord_weight"] = weights["chord"]
+        pool["chord_weight"] = weights["chord"] * (0.6 if busy else 1.0)     # a busy line needs more than the chord's three notes
     targets = []
     if weights.get("motif"):
         for i in range(len(section["phrases"])):
@@ -303,8 +308,8 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
         targets += plan.cadence_targets(section, near, tempo, start_tick)
     if targets:
         pool.setdefault("melodic", {"instrument": program}).update({
-            "targets": targets, "target_weight": max(weights.get("motif", 0), weights.get("cadence", 0)),
-            "target_tol": q * kn["tol"], "target_sigma": kn["sigma"],
+            "targets": targets, "target_weight": min(max(weights.get("motif", 0), weights.get("cadence", 0)), 3.5),
+            "target_tol": q * kn["tol"], "target_sigma": max(kn["sigma"], 2.5),
         })
     ev = generate(model, seed_sec, length, inputs=seed_events, top_p=top_p, grid=grid, instruments=pool)
     raw = [((n - NOTE_OFFSET) % 128, tt / 100 * tempo / 60, (dd - DUR_OFFSET) / 100 * tempo / 60)

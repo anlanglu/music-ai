@@ -445,7 +445,12 @@ def motif_targets(motif, plan, tempo, phrase_index, start_tick=0):
     pcs = chord_pcs(tonic, mode, ph["chords"][0])
     shifted = fit_motif_to_chord(motif, tonic, mode, pcs, prefer=ph["chords"][0])
     per_beat = 60.0 / tempo * 100.0
-    return [(start_tick + round((ph["start_beat"] + s) * per_beat), p) for p, s, _ in shifted]
+    out, last = [], None
+    for p, s, _ in shifted:
+        if p != last:                 # a repeated pitch in the motif is not a target: it would pull the new bars into repeating too
+            out.append((start_tick + round((ph["start_beat"] + s) * per_beat), p))
+        last = p
+    return out
 
 
 def cadence_targets(plan, near_pitch, tempo, start_tick=0):

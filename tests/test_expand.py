@@ -145,3 +145,11 @@ def test_expanding_gives_up_after_a_few_unusable_attempts_in_a_row(out_dir, monk
     with pytest.raises(RuntimeError, match="No usable expansion"):
         expand.expand_melody(path, 2, "llm", 4, log=lambda s: None)
     assert len(calls) == t.MAX_FAILED_ATTEMPTS        # not 3 x the number of options
+
+
+def test_a_repeated_pitch_in_the_motif_is_one_target_not_two():
+    key = (2, "minor")
+    sec = plan.extend(plan.build_plan(4, "4/4", key, random.Random(1)), key, "4/4", 4, 4, rng=random.Random(2))[1]
+    motif = [(62, 0, 1), (62, 1, 1), (69, 2, 1), (74, 3, 1)]
+    pitches = [p for _, p in plan.motif_targets(motif, sec, 90, 0)]
+    assert all(a != b for a, b in zip(pitches, pitches[1:]))
