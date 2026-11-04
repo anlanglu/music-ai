@@ -216,6 +216,15 @@ final class ViewModel: ObservableObject {
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     private var lastExpandBars = 4.0
+    private var lastExpandLabel = ""
+    /// Copy bars of the melody onto its end: from (1 = the start) to (0 = the last bar), this many times.
+    @Published var repeatFrom = 1
+    @Published var repeatTo = 0
+    @Published var repeatTimes = 1
+    var repeatBars: (from: Int, to: Int) {
+        let to = repeatTo == 0 ? barCount : min(repeatTo, barCount)
+        return (min(max(repeatFrom, 1), max(to, 1)), max(to, 1))
+    }
     /// Step 2 sends step 1's sliders with its own three on top.
     var expandSliderValues: [String: Any] {
         sliderValues.merging(["shape": expandShape, "theme": expandTheme, "dynamics": expandDynamics]) { $1 }
@@ -480,7 +489,7 @@ final class ViewModel: ObservableObject {
             } else if expandJustRan {
                 expandJustRan = false
                 selectedID = candidates.first?.id     // so Expand can go straight on from it; click another to switch
-                record("Expanded by \(Int(lastExpandBars)) bars", "\(candidates.count) options")
+                record(lastExpandLabel.isEmpty ? "Expanded by \(Int(lastExpandBars)) bars" : lastExpandLabel, "\(candidates.count) options")
                 status = "Option 1 is selected. Pick the one you like, then expand again or add the accompaniment."
             } else {
                 copySettingsToExpansion()
@@ -804,6 +813,7 @@ final class ViewModel: ObservableObject {
         selectedID = nil
         expandJustRan = true
         lastExpandBars = expandBars
+        lastExpandLabel = ""
         busy = true
         status = "Expanding the melody by \(Int(expandBars)) bars…"
         send([
@@ -812,6 +822,21 @@ final class ViewModel: ObservableObject {
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": phrasing,
             "lyrics": lyrics, "program": expandInstrument.program,
         ].merging(singerFields(expandSingers)) { $1 })
+    }
+
+    /// Copy bars of the melody (with its singing, lyrics and accompaniment) onto the end.
+    func repeatMelody() {
+        guard canExpand, let c = selected else { return }
+        stop()
+        let r = repeatBars
+        expansionHistory.append((candidates, selectedID))
+        candidates = []
+        selectedID = nil
+        expandJustRan = true
+        lastExpandLabel = "Repeated bars \(r.from)–\(r.to)" + (repeatTimes > 1 ? " ×\(repeatTimes)" : "")
+        busy = true
+        status = "Copying bars \(r.from)–\(r.to) onto the end…"
+        send(["cmd": "repeat", "source_midi": c.url.path, "from_bar": r.from, "to_bar": r.to, "times": repeatTimes])
     }
 
     /// Go back to the options (and the choice) from before the last expansion.

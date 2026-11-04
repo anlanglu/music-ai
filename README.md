@@ -15,7 +15,7 @@ Melody LLM menu (see below).
    ideas) and a few sliders for the line's character (see below). The language model writes every bar. You get N options
    to audition (piano roll or sheet music) and can regenerate or import your own MIDI instead. The ending can be forced
    to resolve on the tonic.
-2. **Extend the melody.** Pick an option and add bars (2–16) at a time, each time for an **Instrument** of your choice (the melody is passed
+2. **Extend the melody.** (Under the Expand button, **Or repeat part of the melody** copies bars — one or several times — onto the end, with their sung line, lyrics, singers and accompaniment: a verse sung again by the same duet or choir. Nothing is generated.) Pick an option and add bars (2–16) at a time, each time for an **Instrument** of your choice (the melody is passed
    on to it from there; with the Voice instrument the bars are sung to the next lyric lines, by a singer picked for that step), as new options to choose from, as often
    as you like (with Undo). Each expansion has its own settings: length, complexity, how jumpy, how strongly the
    motif comes back, dynamics and a free-text direction ("build to a climax, then calm down"). It is written by the

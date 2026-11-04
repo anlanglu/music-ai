@@ -3,6 +3,7 @@
 Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,flavor,strict,dynamics: each 0..10; missing ones take plan.SLIDER_DEFAULTS}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
+  {"cmd":"repeat", "source_midi", "from_bar", "to_bar", "times"?: 1..4}  (bars copied onto the end: melody, instruments, sung line and its lyrics, accompaniment)
   {"cmd":"sing_part", "source_midi", "lyrics", "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
   {"cmd":"save_edit", "source_midi":..., "notes":[[pitch, start_beat, duration_beats],...]}   (the melody as edited by hand)
@@ -226,6 +227,12 @@ def handle(r):
             r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
             on_candidate=candidate_event, program=program,
         )
+        send(type="melodies_done")
+    elif cmd == "repeat":  # step 2: copy bars of the melody (with its singing, lyrics and accompaniment) onto the end
+        begin()
+        from expand import repeat_bars
+        repeat_bars(r["source_midi"], r.get("from_bar"), r.get("to_bar"), int(r.get("times", 1)), log=log,
+                    on_candidate=candidate_event)
         send(type="melodies_done")
     elif cmd == "sing_part":  # step 4: a sung line over the chosen melody, the next lyric lines in the bars asked for
         begin()

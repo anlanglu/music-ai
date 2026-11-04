@@ -264,6 +264,23 @@ struct ContentView: View {
         }
     }
 
+    /// Step 2: copy bars of the melody onto the end, with whatever is sung or played in them.
+    private var repeatBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Or repeat part of the melody").font(.subheadline.weight(.medium))
+            HStack {
+                Text("Bars"); Spacer()
+                Stepper("from \(vm.repeatBars.from)", value: $vm.repeatFrom, in: 1...max(vm.barCount, 1))
+                Stepper(vm.repeatTo == 0 ? "to the end" : "to \(vm.repeatBars.to)", value: $vm.repeatTo, in: 0...max(vm.barCount, 1))
+            }
+            Stepper(vm.repeatTimes == 1 ? "once" : "\(vm.repeatTimes) times", value: $vm.repeatTimes, in: 1...4)
+            Button("Repeat bars \(vm.repeatBars.from)–\(vm.repeatBars.to)", action: vm.repeatMelody)
+                .controlSize(.large).frame(maxWidth: .infinity).disabled(!vm.canExpand)
+                .help("Nothing is generated: those bars are copied onto the end, with the singing, its lyrics and singers, and the accompaniment in them. A verse comes back sung by the same duet or choir.")
+        }
+    }
+
     /// Step 4 (optional): add instruments one at a time, choosing among several options for each.
     private var accompControls: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -604,6 +621,7 @@ struct ContentView: View {
                         .help("Go back to the options from before the last expansion")
                 }
             }
+            repeatBox
             if vm.selected == nil {
                 Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
             } else if !vm.partOptions.isEmpty {

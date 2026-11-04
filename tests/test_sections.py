@@ -95,3 +95,43 @@ def test_extending_and_editing_the_melody_keep_the_accompaniment(backend):
     backend.send(cmd="clear_bars", source_midi=edited["path"], from_bar=2, to_bar=3)
     last = backend.until({"part_approved", "error"})[-1]
     assert last["type"] == "part_approved" and last["layers"][0]["notes"] < before[0]["notes"]
+
+
+def test_repeating_bars_copies_melody_singing_lyrics_and_accompaniment_onto_the_end(tmp_path, monkeypatch):
+    import json
+    import lyrics
+    monkeypatch.setattr(t, "OUT", tmp_path / "out", raising=False)
+    src = piece(tmp_path)
+    layered = tmp_path / "l.mid"
+    t.add_layers_file(src, layered, {42: cello(0, 32)}, 0.0, 16.0)                 # a cello in bars 1-4
+    lyrics.sidecar(layered).write_text(json.dumps({"lines": [{"text": "la la", "start_beat": 0.0, "bars": 1, "voice": "en",
+                                                              "track": "vocal"}]}))
+    made = expand.repeat_bars(layered, 1, 2, times=2, log=lambda s: None)
+    out = made[0]["path"]
+    notes = expand.read_melody(out)[0]
+    old = expand.read_melody(layered)[0]
+    assert t.piece_bars(out)[2] == 8 + 4, "two copies of two bars"
+    assert notes[:len(old)] == old, "what was there stays"
+    first = [(p, round(s, 3), round(d, 3)) for p, s, d in old if s < 8]
+    again = [(p, round(s - 32, 3), round(d, 3)) for p, s, d in notes if 32 <= s < 40]
+    assert again == first, "bars 1-2 come back at bar 9"
+    assert [(p, round(s - 32, 3)) for p, s, _ in expand.read_vocal(out) if s >= 32][:2] == [(67, 0.0), (69, 1.0)]
+    starts = [ln["start_beat"] for ln in lyrics.used_lines(out)]
+    assert starts == [0.0, 32.0, 40.0], "the line is sung again each time"
+    cel = [x for x in t.layers_of(out) if x["program"] == 42][0]
+    assert cel["notes"] == 16 + 2 * 8, "the cello's bars 1-2 are copied too"
+    try:
+        expand.repeat_bars(layered, 30, 31, log=lambda s: None)
+    except RuntimeError as e:
+        assert "not in the melody" in str(e)
+    else:
+        raise AssertionError("bars outside the melody are refused")
+
+
+def test_the_repeat_command_answers_with_one_candidate(backend, tmp_path):
+    src = piece(tmp_path)
+    backend.send(cmd="repeat", source_midi=str(src), from_bar=1, to_bar=2, times=1)
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "melodies_done", ev[-1]
+    cands = [e for e in ev if e["type"] == "candidate"]
+    assert len(cands) == 1 and max(n[3] for n in cands[0]["notes"]) > 10 * 4 * 60 / 90 - 0.5

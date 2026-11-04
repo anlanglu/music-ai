@@ -316,3 +316,73 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     raw = [((n - NOTE_OFFSET) % 128, tt / 100 * tempo / 60, (dd - DUR_OFFSET) / 100 * tempo / 60)
            for tt, dd, n in zip(ev[0::3], ev[1::3], ev[2::3])]
     return [(p, s - ctx_beats, dd) for p, s, dd in raw if s >= ctx_beats - 1e-6]
+
+
+def repeat_bars(source_midi, from_bar, to_bar, times=1, log=print, on_candidate=None):
+    """Copy bars `from_bar`..`to_bar` (1-based, inclusive) of a melody onto its end, `times` times over: the melody, the
+    instruments in force, the sung line with its lyric lines (so the same words are sung again, by the same singers), and
+    the accompaniment in those bars. Nothing is generated, so there is one result. Returns [{index, path, tempo, sig, score}]."""
+    import lyrics
+
+    src = Path(source_midi)
+    notes, tempo, sig, _first, total = read_melody(src)
+    if not notes:
+        raise RuntimeError("There is no melody in that file to repeat")
+    programs, vocal, acc = read_programs(src), read_vocal(src), t.read_acc(src)
+    bb = t.bar_beats(sig)
+    old_bars = max(1, math.ceil(max(total, max((s + d for _, s, d in vocal), default=0)) / bb - 0.01))
+    lo_bar, hi_bar = max(1, int(from_bar or 1)), min(old_bars, int(to_bar or old_bars))
+    if lo_bar > hi_bar:
+        raise RuntimeError(f"Bars {lo_bar}-{hi_bar} are not in the melody (it has {old_bars} bars)")
+    times = max(1, min(4, int(times or 1)))
+    lo, hi = (lo_bar - 1) * bb, hi_bar * bb
+    span = hi - lo
+    add_bars = (hi_bar - lo_bar + 1) * times
+
+    def part(items):
+        return [(p, s, min(d, hi - s)) for p, s, d in items if lo - 1e-6 <= s < hi - 1e-6]
+
+    def copies(items):
+        return [(p, s + old_bars * bb + k * span - lo, d) for k in range(times) for p, s, d in part(items)]
+
+    new_programs = list(programs)
+    for k in range(times):
+        here = program_at(programs, lo)
+        for b, prog in [(lo, here)] + [x for x in programs if lo < x[0] < hi]:
+            if prog != new_programs[-1][1]:
+                new_programs.append((old_bars * bb + k * span + b - lo, prog))
+    combined = list(notes) + copies(notes)
+    sung = vocal + copies(vocal) if vocal else None
+    tpb, lo_t, hi_t = 480, round(lo * 480), round(hi * 480)
+    layers = []
+    for trk in acc:
+        have = t._track_notes(trk)
+        more = [[s - lo_t + round(old_bars * bb * 480) + k * (hi_t - lo_t), min(d, hi_t - s), p, v, ch]
+                for k in range(times) for s, d, p, v, ch in have if lo_t <= s < hi_t]
+        layers.append(t._rebuild_track(trk, have + more))
+    folder = t.ensure_session()
+    path = folder / f"{time.strftime('%H%M%S')}-rep-b{lo_bar}-{hi_bar}.mid"
+    t.write_melody_midi(path, tempo, combined, new_programs, sig, (old_bars + add_bars) * bb, vocal=sung, acc=layers)
+    lines = lyrics.used_lines(src)
+    if lines:
+        extra = [dict(ln, start_beat=ln["start_beat"] + old_bars * bb + k * span - lo)
+                 for k in range(times) for ln in lines if lo - 1e-6 <= ln["start_beat"] < hi - 1e-6]
+        lyrics.sidecar(path).write_text(json.dumps({"lines": lines + extra}))
+    try:
+        meta = json.loads((folder / "session.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    whole, _ = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes)
+    chords = whole["chords"]
+    for i in range(add_bars):
+        if lo_bar - 1 + i % (hi_bar - lo_bar + 1) < len(chords):
+            chords[old_bars + i] = chords[lo_bar - 1 + i % (hi_bar - lo_bar + 1)]
+    t._write_meta(folder, key=list(key), plan=t.plan_json(whole, int((meta.get("plan") or {}).get("form", 0) or 0)),
+                  form=int((meta.get("plan") or {}).get("form", 0) or 0))
+    log(f"  ▸ Bars {lo_bar}-{hi_bar} copied onto the end{' ' + str(times) + ' times' if times > 1 else ''}: "
+        f"{old_bars} bars become {old_bars + add_bars}.")
+    info = {"index": 1, "path": path, "tempo": tempo, "sig": sig, "score": t.melody_score(combined, (old_bars + add_bars) * bb, 2)[0]}
+    if on_candidate:
+        on_candidate(info)
+    return [info]
