@@ -3,6 +3,7 @@
 Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies", prompt, sliders {shape,pulse,harmony,endings,theme,flavor,strict,dynamics: each 0..10; missing ones take plan.SLIDER_DEFAULTS}, bars, program, sig, bpm, resolve, key:[tonic, mode|"auto"], mode:"auto"|"major"|"minor"|"dorian"|"phrygian"|"lydian"|"mixolydian"|"locrian", complexity, llm, count}
   {"cmd":"expand", "source_midi":..., bars (2..16), engine ("hybrid"|"llm"), count, size, llm, complexity, sliders, direction, resolve, phrasing}
+  {"cmd":"expand", ..., "chords": true, "program"}   (the new bars are chords for that instrument, in the plan's harmony, one pattern per option; the melody line is silent in them, ready to be sung to)
   {"cmd":"repeat", "source_midi", "from_bar", "to_bar", "times"?: 1..4}  (bars copied onto the end: melody, instruments, sung line and its lyrics, accompaniment)
   {"cmd":"sing_part", "source_midi", "lyrics", "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
@@ -219,6 +220,12 @@ def handle(r):
             if made is None:
                 raise RuntimeError("This melody has already used all the lyrics. Add more lines in the Lyrics box, "
                                    "or write the new bars for another instrument.")
+            send(type="melodies_done")
+            return
+        if r.get("chords"):             # chords for the new bars, to be sung to
+            from expand import expand_chords
+            expand_chords(r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), program, int(r.get("count", 3)),
+                          int(r.get("complexity", 3)), log=log, on_candidate=candidate_event)
             send(type="melodies_done")
             return
         expand_melody(

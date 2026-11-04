@@ -135,3 +135,21 @@ def test_the_repeat_command_answers_with_one_candidate(backend, tmp_path):
     assert ev[-1]["type"] == "melodies_done", ev[-1]
     cands = [e for e in ev if e["type"] == "candidate"]
     assert len(cands) == 1 and max(n[3] for n in cands[0]["notes"]) > 10 * 4 * 60 / 90 - 0.5
+
+
+@pytest.mark.parametrize("program", [0, 24])
+def test_extending_with_chords_adds_a_chord_layer_and_no_melody_notes(backend, program):
+    backend.send(**{**MELODY, "bars": 4, "count": 1})
+    chosen = [e for e in backend.until({"melodies_done", "error"}) if e["type"] == "candidate"][0]
+    backend.send(cmd="expand", source_midi=chosen["path"], bars=4, chords=True, program=program, count=3, seed=2)
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "melodies_done", ev[-1]
+    cands = [e for e in ev if e["type"] == "candidate"]
+    assert len(cands) == 3
+    old = expand.read_melody(chosen["path"])[0]
+    for c in cands:
+        assert expand.read_melody(c["path"])[0] == old, "no melody notes in the chord bars"
+        assert t.piece_bars(c["path"])[2] == 8
+        layer = [x for x in c["layers"] if x["program"] == program]
+        assert layer and layer[0]["from_bar"] == 5 and layer[0]["to_bar"] == 8, c["layers"]
+    assert len({tuple(sorted(map(tuple, [n[1:3] for n in c["notes"]]))) for c in cands}) > 1, "each option has its own pattern"

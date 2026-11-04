@@ -170,13 +170,14 @@ def _double(notes, key, program, d, variant):
     return out
 
 
-def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None):
+def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=None, lead=False):
     """The accompaniment as [(pitch, start_beat, dur_beats)] for one instrument.
 
     Keyboards play it as a left hand tucked under the melody; any other instrument gets a window inside its own
     playable range and never more simultaneous notes than it can sound. `d` is a parsed direction (see
     direction.py): density (step size), register (high / low part of the range), length ('short' = staccato).
-    `chords` (scale degrees, one per bar) makes the part follow the melody's own harmony."""
+    `chords` (scale degrees, one per bar) makes the part follow the melody's own harmony. `lead` makes a keyboard play in
+    its own range rather than under a melody (the chords are all there is in those bars)."""
     d = d or {}
     if style == "double":
         return _double(notes, key, program, d, variant)
@@ -189,7 +190,7 @@ def build(notes, tempo, sig, key, style, variant=0, program=0, d=None, chords=No
     unit = max(0.25, base * {-2: 4, -1: 2, 0: 1, 1: 0.5, 2: 0.5}[d.get("density", 0)])    # arpeggio / Alberti / pulse step
     cut = {-2: 0.35, -1: 0.5}.get(d.get("length", 0), 1.0)                              # staccato shortens note lengths
     lo, hi, poly = limits(program)
-    left_hand = program in LEFT_HAND
+    left_hand = program in LEFT_HAND and not lead
     width = 19                                                                          # widest voicing we use
     frac = min(1.0, max(0.0, 0.35 + 0.22 * d.get("register", 0)))
     wlo = int(lo + max(0, hi - lo - width) * frac)

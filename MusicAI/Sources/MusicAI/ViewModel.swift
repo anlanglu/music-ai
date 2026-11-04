@@ -8,7 +8,9 @@ struct Instrument: Identifiable, Hashable {
     let program: Int
     /// A rule-based piano chords / arpeggios entry rather than a model-generated part.
     var texture = false
-    var id: Int { program + (texture ? 1000 : 0) }
+    /// Extend writes chords for this instrument (for a voice to be sung to) instead of a melody line.
+    var chords = false
+    var id: Int { program + (texture ? 1000 : 0) + (chords ? 2000 : 0) }
     static let all = [
         Instrument(name: "Piano", program: 0), Instrument(name: "Electric piano", program: 4),
         Instrument(name: "Guitar (nylon)", program: 24), Instrument(name: "Violin", program: 40),
@@ -17,6 +19,9 @@ struct Instrument: Identifiable, Hashable {
         Instrument(name: "Synth lead", program: 80),
         Instrument(name: "Voice (sings your lyrics)", program: 53),
     ]
+    /// What Extend offers: the melody instruments, and chords on piano or guitar.
+    static let extend = all + [Instrument(name: "Piano chords", program: 0, chords: true),
+                               Instrument(name: "Guitar chords", program: 24, chords: true)]
 }
 
 enum ViewMode: String { case roll, sheet }
@@ -838,7 +843,7 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
-            "lyrics": lyrics, "program": expandInstrument.program,
+            "lyrics": lyrics, "program": expandInstrument.program, "chords": expandInstrument.chords,
         ].merging(singerFields(expandSingers)) { $1 })
     }
 

@@ -182,6 +182,9 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
             d = t.interpret_direction(direction, "melody", "", log)
             if not d["empty"]:
                 log("  ▸ " + _hybrid_reading(d))
+    if engine != "llm" and not any(s >= old_beats - min(old_bars, CONTEXT_BARS) * bb - 1e-6 for _, s, _ in notes):
+        raise RuntimeError("The last bars of this melody are chords only, so the Anticipation model has no melody to "
+                           "continue. Choose LLM only, or extend from a melody that ends in notes.")
     log(f"  ▸ Allowed notes in {t.key_label(key)}: {t.scale_names(key)}"
         + ("." if sl["strict"] >= 10 else f" (relaxed: up to {round((10 - sl['strict']) * 2.5)}% of the new notes may be outside)."))
     log(f"  ▸ Expanding {old_bars} bars by {add_bars} bars to {old_bars + add_bars}, in {t.key_label(key)} "
@@ -386,3 +389,50 @@ def repeat_bars(source_midi, from_bar, to_bar, times=1, log=print, on_candidate=
     if on_candidate:
         on_candidate(info)
     return [info]
+
+
+CHORD_STYLES = ["block", "arpeggio", "oompah", "sustained", "alberti"]
+
+
+def expand_chords(source_midi, add_bars, program, count=3, complexity=3, log=print, on_candidate=None):
+    """Add `add_bars` bars of chords for one instrument (piano, guitar...) on the end of a melody, to be sung to later. The
+    chords are the plan's for those bars and every option is the same progression in a different pattern (block, arpeggio,
+    bass and chords...). The new bars are a chord layer in the file; the melody line has no notes in them."""
+    import texture as tx
+
+    src = Path(source_midi)
+    notes, tempo, sig, _first, total = read_melody(src)
+    programs, vocal, acc = read_programs(src), read_vocal(src), t.read_acc(src)
+    if not notes:
+        raise RuntimeError("There is no melody in that file to extend")
+    bb = t.bar_beats(sig)
+    old_bars = max(1, math.ceil(max(total, max((s + d for _, s, d in vocal), default=0)) / bb - 0.01))
+    old_beats = old_bars * bb
+    folder = t.ensure_session()
+    try:
+        meta = json.loads((folder / "session.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    key = t.key_for_file(src) or t.estimate_key(notes)
+    whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity)
+    form = int((meta.get("plan") or {}).get("form", 0) or 0)
+    t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
+    name = time.strftime("%H%M%S") + "-chords"
+    span = [(60, 0.0, add_bars * bb, program)]        # tells the pattern how long the section is
+    out = []
+    log(f"  \u25b8 {add_bars} bars of {t.instrument_name(program).lower()} chords in {t.key_label(key)}: {' '.join(str(c + 1) for c in section['chords'])} (scale degrees).")
+    for k in range(1, count + 1):
+        style, variant = CHORD_STYLES[(k - 1) % len(CHORD_STYLES)], (k - 1) // len(CHORD_STYLES)
+        part = tx.build(span, tempo, sig, key, style, variant, program, None, section["chords"], lead=True)
+        path = folder / f"{name}-opt{k}.mid"
+        t.write_melody_midi(path, tempo, notes, programs, sig, old_beats + add_bars * bb, vocal=vocal or None, acc=acc)
+        t.add_layers_file(path, path, {program: [(p, s + old_beats, d) for p, s, d in part]}, old_beats)
+        t.dynamics_mod.finish(path, src, sig, 5.0)
+        import lyrics
+        lyrics.carry(src, path)
+        info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}
+        out.append(info)
+        log(f"      option {k}: {tx.STYLE_LABELS[style].lower()}, {len(part)} notes")
+        if on_candidate:
+            on_candidate(info)
+    return out

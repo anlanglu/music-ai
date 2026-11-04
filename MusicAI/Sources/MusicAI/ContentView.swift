@@ -596,9 +596,13 @@ struct ContentView: View {
                 .help("Free text for this expansion. The language model reads it as an instruction; the Anticipation model turns it into how busy, how high or low and how adventurous the new bars are.")
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
             Picker("Instrument", selection: $vm.expandInstrument) {
-                ForEach(Instrument.all) { Text($0.name).tag($0) }
+                ForEach(Instrument.extend) { Text($0.name).tag($0) }
             }
             .help("The instrument these new bars are written for. Pick another one and the melody is passed to it from here on; with the Voice instrument the bars are written to the next lyric lines.")
+            if vm.expandInstrument.chords {
+                Text("These bars are chords in the melody's harmony, with no melody line, ready for a voice to be sung to them (step 4). The options are the same chords in different patterns; the moves and sliders below do not apply.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if vm.expandInstrument.program == lyricsVoiceProgram {
                 singerPicker($vm.expandSingers)
                 Text("These bars are written to the next lines of your lyrics (Lyrics button) and sung by this singer; the moves and sliders below do not apply.")
