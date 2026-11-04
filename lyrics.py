@@ -560,7 +560,7 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, old + [(p, s + old_beats, d) for p, s, d in new],
-                            [(old_beats if b is None else b, pr) for b, pr in programs], sig, old_beats + length, vocal=vocal)
+                            [(old_beats if b is None else b, pr) for b, pr in programs], sig, old_beats + length, vocal=vocal, acc=t.read_acc(src))
         sidecar(path).write_text(json.dumps({"lines": everything + [dict(m, start_beat=m["start_beat"] + old_beats, voice=singers[0], voices=singers, harmony=harmony) for m in meta]}))
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}
         out.append(info)
@@ -624,7 +624,7 @@ def sing_part(source_midi, text, start_bar=None, bars=4, llm="7B", level=3, mood
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, notes, programs, sig, n_bars * bb,
-                            vocal=vocal + [(p, s + lo, d) for p, s, d in new])
+                            vocal=vocal + [(p, s + lo, d) for p, s, d in new], acc=t.read_acc(src))
         sidecar(path).write_text(json.dumps({"lines": everything + [
             dict(m, start_beat=m["start_beat"] + lo, voice=singers[0], voices=singers, harmony=harmony, track="vocal") for m in meta]}))
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}

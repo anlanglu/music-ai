@@ -564,3 +564,31 @@ take `shape`, `form` and `knobs` (the review scripts and tests call them).
   unchanged byte for byte, a cello part added over both, and the backing keeping only piano and cello.
 - **Not verified:** the new Step 4 box, the Melody/Singing picker in step 3 and hand-editing the singing on screen; how the
   sung line sounds against the piano by ear; whether the chord-aware prompt makes it fit better than before (no comparison).
+
+
+## Accompaniment by section (feature/sections)
+
+- **The freeze is gone.** The accompaniment is no longer a separate, round-tripped "full piece" that locks the melody. Each
+  instrument is a **layer**: a track named `acc:<program>` inside the melody's own file (`text2music.add_layers_file`,
+  `clear_layers_file`, `layers_of`, `read_acc`). Every writer of melody files (`expand_melody`, `lyric_extend`, `sing_part`,
+  `edit_melody`, `save_edit`) copies the layers back unchanged, and the readers (`read_melody`, `read_programs`) skip them,
+  so Extend, Edit and the singing work at any time and the melody, the sung line and earlier layers are never rewritten by an
+  accompaniment step (add/clear copy the file's tracks as they are).
+- **Bar ranges.** `add_part` takes `from_bar`/`to_bar` (default the whole piece). The model path generates only that window
+  (`generate(model, start, end, ...)`, conditioned on the whole piece as before); the piano-texture path clips its pattern.
+  `part_range` refuses an instrument that already plays in those bars, but allows it in others (a later layer of the same
+  instrument joins its track). `clear_bars` removes all instruments, or the programs listed, from a range (a note running into
+  it is cut), which is "leave the singer alone here".
+- **Enrich** (`orchestrate`) now also adds layers (`make_music(layered=True)`), whole piece, so it no longer freezes anything either.
+- **App.** The chosen option's file *is* the piece: approving a part, clearing bars or enriching replaces that option's file
+  (`Candidate.with(...)`, undo restores the previous one); `Orchestration` and `partsAdded` are gone. Step 4 lists each
+  instrument with its bars and a Take-out button, has a bars-from/to selector, and the clear button; events carry `layers`.
+- **Fixed on the way:** hybrid expansion read note durations without removing `DUR_OFFSET` (notes came out ~100 s long and were
+  only trimmed by the next note; the last note of a section was affected).
+- **Checked with the real models:** a cello for bars 1-4, a violin for 3-8 (overlapping, different instrument), piano
+  arpeggios for 5-8, a refused second cello in bars 2-3, a clear of bars 5-6, the melody and sung line identical afterwards,
+  and a two-instrument Enrich; hybrid expansion still fine.
+- **Not verified:** the new Step 4 controls on screen; how a section boundary sounds (notes are cut at the range edges; a
+  layer starts where the model starts, so a part asked for bars 1-4 may begin in bar 2); sheet music of pieces with layers;
+  old sessions' `pieceNN` files are not turned into layers. Parts that were generated against an earlier version of the melody
+  are not regenerated when the melody changes: take them out of those bars and add them again.

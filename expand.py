@@ -32,6 +32,8 @@ def read_melody(path):
     skip = (9, t.vocal_channel(mid))
     found, program = [], 0
     for trk in mid.tracks:
+        if t.is_acc_track(trk):
+            continue
         tick, on, local, prog = 0, {}, [], None
         for m in trk:
             tick += m.time
@@ -81,7 +83,7 @@ def read_programs(path):
     tpb = mid.ticks_per_beat
     skip = (9, t.vocal_channel(mid))
     for trk in mid.tracks:
-        if not any(m.type == "note_on" and m.velocity > 0 and m.channel not in skip for m in trk):
+        if t.is_acc_track(trk) or not any(m.type == "note_on" and m.velocity > 0 and m.channel not in skip for m in trk):
             continue
         tick, out = 0, []
         for m in trk:
@@ -146,6 +148,7 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
     notes, tempo, sig, _first, total = read_melody(src)
     programs = read_programs(src)
     vocal = read_vocal(src)                      # the sung line stays exactly as it was
+    acc = t.read_acc(src)                        # ... and so does the accompaniment
     if program is None:
         program = programs[-1][1]
     if not notes:
@@ -228,7 +231,7 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, combined, programs + ([(old_beats, program)] if program != programs[-1][1] else []),
-                            sig, total_beats, depth=sl["dynamics"] / 5, vocal=vocal)
+                            sig, total_beats, depth=sl["dynamics"] / 5, vocal=vocal, acc=acc)
         import lyrics
         lyrics.carry(src, path)
         if not out:    # the accompaniment follows the plan of the whole, longer melody
@@ -250,7 +253,7 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     from anticipation.convert import midi_to_events
     from anticipation.sample import generate
     from anticipation.tokenize import extract_instruments
-    from anticipation.vocab import NOTE_OFFSET
+    from anticipation.vocab import DUR_OFFSET, NOTE_OFFSET
     from playable import limits
 
     bb = t.bar_beats(sig)
@@ -304,6 +307,6 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
             "target_tol": q * kn["tol"], "target_sigma": kn["sigma"],
         })
     ev = generate(model, seed_sec, length, inputs=seed_events, top_p=top_p, grid=grid, instruments=pool)
-    raw = [((n - NOTE_OFFSET) % 128, tt / 100 * tempo / 60, dd / 100 * tempo / 60)
+    raw = [((n - NOTE_OFFSET) % 128, tt / 100 * tempo / 60, (dd - DUR_OFFSET) / 100 * tempo / 60)
            for tt, dd, n in zip(ev[0::3], ev[1::3], ev[2::3])]
     return [(p, s - ctx_beats, dd) for p, s, dd in raw if s >= ctx_beats - 1e-6]

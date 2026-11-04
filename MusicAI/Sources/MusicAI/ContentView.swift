@@ -359,23 +359,53 @@ struct ContentView: View {
         }
     }
 
+    /// What accompanies the chosen option and in which bars, with the means to take it out again.
+    private var accompanimentList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Accompaniment").font(.callout)
+                Spacer()
+                Button("Undo last") { vm.undoPart() }
+                    .controlSize(.small).disabled(vm.partHistory.isEmpty || vm.busy)
+            }
+            let layers = vm.selected?.layers ?? []
+            if layers.isEmpty {
+                Text("None yet: the melody and the singing stand alone.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Array(layers.enumerated()), id: \.offset) { _, l in
+                HStack {
+                    Text("\(Instrument.partName(l.program)) · bars \(l.from)–\(l.to)").font(.callout)
+                    Spacer()
+                    Button("Take out") { vm.clearBars(from: l.from, to: l.to, program: l.program) }
+                        .controlSize(.small).disabled(vm.busy)
+                        .help("Remove this instrument from the piece (everywhere it plays)")
+                }
+            }
+            HStack {
+                Text("Bars"); Spacer()
+                Stepper("from \(vm.partBars.from)", value: $vm.partFrom, in: 1...max(vm.barCount, 1))
+                Stepper(vm.partTo == 0 ? "to the end" : "to \(vm.partBars.to)", value: $vm.partTo, in: 0...max(vm.barCount, 1))
+            }
+            .help("The bars the next instrument plays in. Section by section: put a full band in some bars and leave others to the voice.")
+            if !layers.isEmpty {
+                Button("Take the accompaniment out of these bars") { vm.clearBars(from: vm.partBars.from, to: vm.partBars.to) }
+                    .controlSize(.small).disabled(vm.busy)
+                    .help("Every instrument stops in these bars, so the melody and the singing stand alone")
+            }
+        }
+    }
+
     /// Add instruments one at a time: choose an instrument, hear several options, approve one, repeat.
     private var oneByOneControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             if vm.currentPieceURL == nil {
                 Text("Pick a melody first.").font(.caption).foregroundStyle(.secondary)
             } else {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(vm.partsAdded.isEmpty ? "Piece: melody only" : "Piece: melody + " + vm.partsAdded.joined(separator: ", "))
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button("Undo last") { vm.undoPart() }
-                        .controlSize(.small).disabled(vm.partHistory.isEmpty || vm.busy)
-                }
+                accompanimentList
             }
             Picker("Instrument", selection: $vm.partInstrument) {
                 ForEach(Instrument.parts) { inst in
-                    Text(vm.presentPrograms.contains(inst.program) ? "\(inst.name) (in piece)" : inst.name).tag(inst)
+                    Text(vm.presentPrograms.contains(inst.program) ? "\(inst.name) (plays somewhere)" : inst.name).tag(inst)
                 }
             }
             if vm.partInstrument.texture {
@@ -414,7 +444,7 @@ struct ContentView: View {
             .tint(vm.partOptions.isEmpty ? .accentColor : .gray)
             .disabled(!vm.ready || vm.busy || vm.currentPieceURL == nil || vm.partInstrumentTaken)
             if vm.partInstrumentTaken {
-                Text("\(vm.partInstrument.name) is already in the piece.").font(.caption).foregroundStyle(.secondary)
+                Text("\(vm.partInstrument.name) already plays in these bars. Take it out of them first, or choose other bars.").font(.caption).foregroundStyle(.secondary)
             }
             if !vm.partOptions.isEmpty {
                 Button(action: vm.approvePart) {
@@ -506,7 +536,7 @@ struct ContentView: View {
 
             Button(action: vm.generateMelodies) {
                 HStack {
-                    if vm.busy && vm.orchestration == nil && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
+                    if vm.busy && vm.selected == nil && vm.expansionHistory.isEmpty { ProgressView().controlSize(.small) }
                     Text(vm.candidates.isEmpty ? "Generate motifs" : "Regenerate motifs").frame(maxWidth: .infinity)
                 }
             }
@@ -576,8 +606,11 @@ struct ContentView: View {
             }
             if vm.selected == nil {
                 Text("Pick one of the options first.").font(.caption).foregroundStyle(.secondary)
-            } else if !(vm.orchestration == nil && vm.partsAdded.isEmpty && vm.partOptions.isEmpty) {
-                Text("The accompaniment has been started, so the melody can no longer change. Generate new melodies to start over.")
+            } else if !vm.partOptions.isEmpty {
+                Text("Approve or discard the instrument options first (step 4).")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if !(vm.selected?.layers.isEmpty ?? true) {
+                Text("The accompaniment stays as it is, in the bars it was written for; the new bars start without it (step 4 adds it).")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -586,7 +619,7 @@ struct ContentView: View {
     /// Step 3: change the melody by hand (the piano roll becomes an editor) or by asking the LLM to change named bars.
     private var editControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Fix what you do not like before adding the accompaniment. Only the bars you name change; every other bar stays exactly as it is.")
+            Text("Fix what you do not like. Only the bars you name change; every other bar stays exactly as it is, and so does the accompaniment already written.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if vm.hasSung {
                 Picker("Change", selection: $vm.editPart) {
@@ -831,7 +864,7 @@ struct ContentView: View {
                                             : "Selected — approve it, or pick another")
                     .font(.subheadline).foregroundStyle(.secondary)
                 partGrid
-            } else if !vm.candidates.isEmpty && vm.orchestration == nil {
+            } else if !vm.candidates.isEmpty {
                 Text(vm.selected == nil ? "Choose a melody" : "Selected — add the accompaniment, or pick another")
                     .font(.subheadline).foregroundStyle(.secondary)
                 optionGrid

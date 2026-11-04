@@ -22,7 +22,7 @@ Melody LLM menu (see below).
    Anticipation model, steered by the chords, cadences and opening idea, or by the language model for the "answer the
    motif" move. What was written is kept;
    the chords carry on, so the accompaniment follows the whole.
-3. **Edit the melody** (or, once there is one, the singing). Fix what you do not like before adding instruments. By hand: the piano roll becomes a note editor (add,
+3. **Edit the melody** (or, once there is one, the singing). Fix what you do not like, at any point (the accompaniment already written stays as it is). By hand: the piano roll becomes a note editor (add,
    move, resize, delete), and saving redraws the sheet music. Or in words ("I don't think measure 2 leads into measure 3
    very well, so connect them better"): the LLM is given only the bars you name, its answer is spliced in by code and
    checked, so every other bar stays exactly as it was. If it thinks other bars would need to change as well, it asks
@@ -31,12 +31,15 @@ Melody LLM menu (see below).
    a few bars at a time, with one singer or a duet or choir (the same notes, or **Harmonize**). It is a second line in the
    melody's own file, so the melody is not changed, and you can then change its notes in step 3 (choose *The singing*; every
    bar keeps one note per syllable) or lengthen the melody in step 2 and sing the new bars. **Hear it sung** makes the audio, with the melody
-   under it. Then, as before, instruments one at a time, written by the Anticipation model: type a free-text
-   direction ("answer the melody in the gaps, high and cheeky"), audition options, approve or undo, repeat. Parts
-   respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get chords,
-   arpeggios, Alberti bass and more under an unchanged melody.
+   under it. Then instruments, one at a time, written by the Anticipation model **for the bars you choose**
+   (*Bars from … to …*): type a free-text direction ("answer the melody in the gaps, high and cheeky"), audition options, approve
+   or undo, repeat. Parts respect each instrument's real range and polyphony, and follow the melody's own chords. Piano can get
+   chords, arpeggios, Alberti bass and more. So a piece is built section by section: a full band for bars 1-4, then
+   **Take the accompaniment out of these bars** to leave the singer alone in bars 5-8, then a different set of instruments for
+   bars 9-12. Each instrument is listed with its bars and can be taken out. The melody and the singing stay editable (step 3) and
+   extendable (step 2) throughout; new bars start without accompaniment.
 5. **Enrich (optional).** The Anticipation model adds a whole ensemble (up to 16 instruments) around the piece so far,
-   including the parts approved in step 4, which stay exactly as they are. Press again to re-roll it, or undo it.
+   including the parts approved in step 4, which stay exactly as they are. It always covers the whole piece. Press again to re-roll it, or undo it.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
 7. **Lyrics (demo).** The **Lyrics** button keeps your words apart from the melody (put in as many lines as you like; it checks
    that every word can be pronounced). Choose the **Voice** instrument in the Motif step and the melody is written with

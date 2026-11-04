@@ -170,9 +170,9 @@ def llm_rewrite(notes, targets, instruction, sig, key, tempo, llm, level, temp_b
 
 # ------------------------------------------------------------------------------------------------------------- commands
 
-def _write(folder, name, k, notes, tempo, program, sig, total_beats, vocal=None):
+def _write(folder, name, k, notes, tempo, program, sig, total_beats, vocal=None, acc=None):
     path = folder / f"{name}-opt{k}.mid"
-    t.write_melody_midi(path, tempo, notes, program, sig, total_beats, vocal=vocal)
+    t.write_melody_midi(path, tempo, notes, program, sig, total_beats, vocal=vocal, acc=acc)
     return path
 
 
@@ -262,7 +262,7 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
             continue
         k = len(out) + 1
         path = _write(folder, name, k, other if part == "vocal" else new, tempo, programs, sig, total_beats,
-                      vocal=new if part == "vocal" else other)
+                      vocal=new if part == "vocal" else other, acc=t.read_acc(src))
         lyrics.carry(src, path)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,
                 "score": t.melody_score(new, total_beats, t.COMPLEXITY[complexity][1])[0]}
@@ -308,7 +308,7 @@ def save_edit(source_midi, notes, log=print, on_candidate=None, part="melody"):
         if problem:
             raise RuntimeError(problem)
     path = _write(folder, time.strftime("%H%M%S") + "-hand", 1, other if part == "vocal" else clean, tempo, programs, sig,
-                  total_beats, vocal=clean if part == "vocal" else other)
+                  total_beats, vocal=clean if part == "vocal" else other, acc=t.read_acc(src))
     lyrics.carry(src, path)
     changed = [b for b in range(1, bar_count(total_beats, bb) + 1)
                if [n for n in old if bar_of(n[1], bb) == b] != [n for n in clean if bar_of(n[1], bb) == b]]

@@ -16,7 +16,20 @@ struct Candidate: Identifiable {
     let score: Double?
     let notes: [Note]
     var programs: [Int] = []   // General MIDI program of each instrument in the file (128 = drums)
+    var layers: [Layer] = []   // the accompaniment instruments added in step 4 or 5, and the bars each plays in
     var duration: Double { notes.map(\.end).max() ?? 0 }
+
+    /// The same option with another file behind it (parts added, or taken out): it keeps its place in the list.
+    func with(url: URL, notes: [Note], programs: [Int], layers: [Layer]) -> Candidate {
+        Candidate(id: id, index: index, url: url, tempo: tempo, sig: sig, score: score, notes: notes, programs: programs, layers: layers)
+    }
+}
+
+/// One accompaniment instrument of a piece, and the bars it plays in (first to last; it may rest in between).
+struct Layer: Equatable {
+    let program: Int
+    let from: Int
+    let to: Int
 }
 
 /// One option for the instrument being added in "one at a time" mode: the whole piece with that part included.
@@ -55,12 +68,12 @@ enum BackendEvent {
     case log(String)
     case candidate(Candidate)
     case melodiesDone
-    case done(melody: URL, full: URL?, notes: [Note], programs: [Int])
+    case done(melody: URL, full: URL?, notes: [Note], programs: [Int], layers: [Layer])
     case partCandidate(PartCandidate)
     case partsDone
     /// The editing model says these other bars would have to change too; nothing was changed in them.
     case editSuggestion(bars: [Int], reason: String, targets: [Int])
-    case partApproved(url: URL, notes: [Note], programs: [Int])
+    case partApproved(url: URL, notes: [Note], programs: [Int], layers: [Layer])
     case mix(path: URL, channels: [MixChannel])
     case notation(midi: URL, html: URL, paged: Bool)
     case notationError(midi: URL, text: String)
@@ -183,6 +196,12 @@ final class Backend {
         DispatchQueue.main.async { self.onEvent?(ev) }
     }
 
+    private static func layers(_ raw: Any?) -> [Layer] {
+        (raw as? [[String: Any]] ?? []).map {
+            Layer(program: $0["program"] as? Int ?? 0, from: $0["from_bar"] as? Int ?? 1, to: $0["to_bar"] as? Int ?? 1)
+        }
+    }
+
     private static func notes(_ raw: Any?) -> [Note] {
         (raw as? [[Double]] ?? []).filter { $0.count == 4 }.map {
             Note(channel: Int($0[0]), pitch: Int($0[1]), start: $0[2], end: $0[3])
@@ -223,7 +242,8 @@ final class Backend {
                 programs: obj["programs"] as? [Int] ?? []))
         case "part_approved":
             return .partApproved(url: URL(fileURLWithPath: obj["path"] as? String ?? ""),
-                                 notes: Backend.notes(obj["notes"]), programs: obj["programs"] as? [Int] ?? [])
+                                 notes: Backend.notes(obj["notes"]), programs: obj["programs"] as? [Int] ?? [],
+                                 layers: Backend.layers(obj["layers"]))
         case "session":
             let path = obj["path"] as? String ?? "", old = obj["old_path"] as? String ?? ""
             return .session(name: obj["name"] as? String ?? "",
@@ -256,12 +276,13 @@ final class Backend {
                 sig: obj["sig"] as? String ?? "4/4",
                 score: obj["score"] as? Double,
                 notes: Backend.notes(obj["notes"]),
-                programs: obj["programs"] as? [Int] ?? []))
+                programs: obj["programs"] as? [Int] ?? [],
+                layers: Backend.layers(obj["layers"])))
         case "done":
             let melody = URL(fileURLWithPath: obj["melody"] as? String ?? "")
             let full = (obj["full"] as? String).map { URL(fileURLWithPath: $0) }
             return .done(melody: melody, full: full, notes: Backend.notes(obj["notes"]),
-                         programs: obj["programs"] as? [Int] ?? [])
+                         programs: obj["programs"] as? [Int] ?? [], layers: Backend.layers(obj["layers"]))
         default: return nil
         }
     }

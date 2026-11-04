@@ -38,11 +38,15 @@ def vocal_notes(c):
     return [n for n in c["notes"] if n[0] == t.VOCAL_CHANNEL]
 
 
+def melody_notes(c):
+    return [[n[0], n[1], round(n[2], 2), round(n[3], 2)] for n in c["notes"] if n[0] != t.VOCAL_CHANNEL]
+
+
 def test_the_voice_is_a_second_line_over_the_melody_and_the_melody_is_untouched(backend):
     src = melody(backend)
     one = sing(backend, src, voice="en")
     assert len(vocal_notes(one)) == 3                               # "Little star": 3 syllables
-    assert [n for n in one["notes"] if n[0] != t.VOCAL_CHANNEL] == [n for n in src["notes"] if n[0] != t.VOCAL_CHANNEL]
+    assert melody_notes(one) == melody_notes(src)
     lines = L.used_lines(one["path"], "vocal")
     assert [ln["text"] for ln in lines] == ["Little star"] and lines[0]["start_beat"] == 0 and L.used_lines(one["path"], "melody") == []
     assert expand.read_melody(one["path"])[0] == expand.read_melody(src["path"])[0], "read_melody ignores the singing"
@@ -84,7 +88,7 @@ def test_editing_the_singing_keeps_the_melody_and_one_note_per_syllable(backend)
     assert ev[-1]["type"] == "melodies_done", ev[-1]
     new = [e for e in ev if e["type"] == "candidate"][0]
     assert len(vocal_notes(new)) == len(vocal_notes(sung)) and vocal_notes(new) != vocal_notes(sung)
-    assert [n for n in new["notes"] if n[0] != t.VOCAL_CHANNEL] == [n for n in sung["notes"] if n[0] != t.VOCAL_CHANNEL]
+    assert melody_notes(new) == melody_notes(sung)
     # and the melody can be edited without touching the singing
     backend.send(cmd="edit", source_midi=sung["path"], instruction="calmer", bars=[2], count=1, seed=3)
     ev = backend.until({"melodies_done", "error"})

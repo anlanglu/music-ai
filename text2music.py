@@ -654,6 +654,137 @@ def vocal_channel(mid):
     return None
 
 
+ACC_PREFIX = "acc:"     # the name of a track that holds one instrument of the accompaniment ("layer") in a melody file
+DRUM_PROGRAM = 128
+
+
+def is_acc_track(trk):
+    return any(m.type == "track_name" and m.name.startswith(ACC_PREFIX) for m in trk)
+
+
+def read_acc(path):
+    """The accompaniment tracks of a melody file (copies), to be written back unchanged when the file is rewritten."""
+    return [trk.copy() for trk in mido.MidiFile(str(path)).tracks if is_acc_track(trk)]
+
+
+def _acc_program(trk):
+    name = next(m.name for m in trk if m.type == "track_name")
+    return int(name[len(ACC_PREFIX):])
+
+
+def _track_notes(trk):
+    """[[start_tick, dur_tick, pitch, velocity, channel]] of a track's notes."""
+    tick, on, out = 0, {}, []
+    for m in trk:
+        tick += m.time
+        if m.type == "note_on" and m.velocity > 0:
+            on[(m.channel, m.note)] = (tick, m.velocity)
+        elif m.type in ("note_off", "note_on") and (m.channel, m.note) in on:
+            start, vel = on.pop((m.channel, m.note))
+            out.append([start, max(tick - start, 1), m.note, vel, m.channel])
+    return sorted(out)
+
+
+def _rebuild_track(trk, notes):
+    """The track with its other messages (name, program, volume) and these notes."""
+    header = [m.copy(time=0) for m in trk if m.type in ("track_name", "program_change", "control_change")]
+    events = []
+    for start, dur, pitch, vel, ch in notes:
+        events.append((start, 1, pitch, vel, ch))
+        events.append((start + dur, 0, pitch, 0, ch))
+    events.sort()
+    new, last = mido.MidiTrack(header), 0
+    for tick, on, pitch, vel, ch in events:
+        new.append(mido.Message("note_on" if on else "note_off", note=pitch, velocity=vel, channel=ch, time=tick - last))
+        last = tick
+    return new
+
+
+def layers_of(path):
+    """[{program, channel, from_bar, to_bar, notes}] of the accompaniment layers of a melody file (one per instrument)."""
+    mid = mido.MidiFile(str(path))
+    _tempo, sig, _len = midi_info(path)
+    bb = bar_beats(sig)
+    out = []
+    for trk in mid.tracks:
+        if not is_acc_track(trk):
+            continue
+        notes = _track_notes(trk)
+        if notes:
+            out.append({"program": _acc_program(trk), "channel": notes[0][4], "notes": len(notes),
+                        "from_bar": int(notes[0][0] / mid.ticks_per_beat // bb) + 1,
+                        "to_bar": int((max(n[0] + n[1] for n in notes) - 1) / mid.ticks_per_beat // bb) + 1})
+    return out
+
+
+def _free_channel(mid, program):
+    used = {m.channel for trk in mid.tracks for m in trk if m.type == "note_on"}
+    if program == DRUM_PROGRAM:
+        return 9
+    for c in range(2, 16):
+        if c != 9 and c not in used:
+            return c
+    raise RuntimeError("The piece already has as many instruments as MIDI allows.")
+
+
+def add_layers_file(src, dest, layers, lo_beat=0.0, hi_beat=None):
+    """Copy a melody file and add accompaniment: `layers` is {program: [(pitch, start_beat, duration_beats)]} (velocity is
+    shaped afterwards by dynamics.finish). Notes are cut to [lo_beat, hi_beat). A layer of an instrument that is already
+    there joins that layer. The melody, the sung line and every other layer are copied exactly."""
+    mid = mido.MidiFile(str(src))
+    tpb = mid.ticks_per_beat
+    for program, notes in layers.items():
+        fresh = []
+        for p, s, d in notes:
+            if s < lo_beat - 1e-6 or (hi_beat is not None and s >= hi_beat - 1e-6):
+                continue
+            end = min(s + d, hi_beat) if hi_beat is not None else s + d
+            fresh.append([round(s * tpb), max(round((end - s) * tpb), 1), p, 80, None])
+        if not fresh:
+            continue
+        mine = next((i for i, trk in enumerate(mid.tracks) if is_acc_track(trk) and _acc_program(trk) == program), None)
+        if mine is None:
+            ch = _free_channel(mid, program)
+            head = [mido.MetaMessage("track_name", name=f"{ACC_PREFIX}{program}", time=0)]
+            if program != DRUM_PROGRAM:
+                head.append(mido.Message("program_change", program=program, channel=ch, time=0))
+            trk = mido.MidiTrack(head)
+            mid.tracks.append(trk)
+            mine = len(mid.tracks) - 1
+        else:
+            ch = next(n[4] for n in _track_notes(mid.tracks[mine])) if _track_notes(mid.tracks[mine]) else \
+                next((m.channel for m in mid.tracks[mine] if m.type == "program_change"), 9 if program == DRUM_PROGRAM else 2)
+        have = _track_notes(mid.tracks[mine])
+        mid.tracks[mine] = _rebuild_track(mid.tracks[mine], have + [[a, b, c, d, ch] for a, b, c, d, _ in fresh])
+    mid.save(str(dest))
+    return dest
+
+
+def clear_layers_file(src, dest, lo_beat, hi_beat, programs=None):
+    """Copy a melody file with the accompaniment taken out of [lo_beat, hi_beat): of every instrument, or of the
+    `programs` listed. A note that starts before the range and runs into it is cut at its start. Returns how many
+    notes were removed or cut."""
+    mid = mido.MidiFile(str(src))
+    lo, hi = round(lo_beat * mid.ticks_per_beat), round(hi_beat * mid.ticks_per_beat)
+    changed = 0
+    for i, trk in enumerate(mid.tracks):
+        if not is_acc_track(trk) or (programs and _acc_program(trk) not in programs):
+            continue
+        kept = []
+        for start, dur, pitch, vel, ch in _track_notes(trk):
+            if start >= hi or start + dur <= lo:
+                kept.append([start, dur, pitch, vel, ch])
+            elif start < lo:
+                kept.append([start, lo - start, pitch, vel, ch])
+                changed += 1
+            else:
+                changed += 1
+        mid.tracks[i] = _rebuild_track(trk, kept)
+    mid.tracks = [trk for trk in mid.tracks if not is_acc_track(trk) or _track_notes(trk)]
+    mid.save(str(dest))
+    return changed
+
+
 def _line_track(mid, notes, channel, changes, sig, total_beats, dynamics, depth):
     """Add one monophonic line to a MIDI file as its own track. `changes` is [(beat, program)]."""
     tpb = mid.ticks_per_beat
@@ -677,16 +808,18 @@ def _line_track(mid, notes, channel, changes, sig, total_beats, dynamics, depth)
         track.append(mido.MetaMessage("end_of_track", time=max(round(total_beats * tpb) - last, 0)))
 
 
-def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True, depth=1.0, vocal=None):
+def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True, depth=1.0, vocal=None, acc=None):
     """`program` is a General MIDI program, or [(beat, program), ...] when the instrument changes along the melody (the
     melody stays on one channel; the changes are program_change events). `vocal` is the optional sung line over it, as
-    [(pitch, start_beat, duration_beats)], written as a second track on VOCAL_CHANNEL."""
+    [(pitch, start_beat, duration_beats)], written as a second track on VOCAL_CHANNEL. `acc` is the accompaniment of the
+    file this one replaces (read_acc), written back unchanged."""
     mid = mido.MidiFile(type=1, ticks_per_beat=480)
     mid.tracks.append(conductor_track(tempo, sig))
     changes = [(0.0, program)] if isinstance(program, int) else sorted(program)
     _line_track(mid, notes, 0, changes, sig, total_beats, dynamics, depth)
     if vocal:
         _line_track(mid, vocal, VOCAL_CHANNEL, [(0.0, VOCAL_PROGRAM)], sig, total_beats, dynamics, depth)
+    mid.tracks.extend(acc or [])
     mid.save(str(path))
     return mid.length  # seconds
 
@@ -1101,15 +1234,49 @@ def make_playable(events):
     return tokens, (int(folded), trimmed, dropped)
 
 
+def _melody_program_of(path):
+    """The program the melody of a melody file plays (its first instrument)."""
+    import expand
+    return expand.read_programs(path)[0][1]
+
+
 def instrument_name(program):
     return "Drums" if program == DRUMS else GM_NAMES[program]
 
 
+def piece_bars(path):
+    """(tempo, sig, bars) of a melody file."""
+    tempo, sig, length = midi_info(path)
+    return tempo, sig, max(1, math.ceil(length * tempo / 60 / bar_beats(sig) - 0.01))
+
+
+def part_range(path, program, from_bar, to_bar):
+    """(lo_beat, hi_beat, from_bar, to_bar) of the bars a new part is for (default: all), after checking that the
+    instrument is not already playing there."""
+    tempo, sig, bars = piece_bars(path)
+    bb = bar_beats(sig)
+    lo, hi = max(1, int(from_bar or 1)), min(bars, int(to_bar or bars))
+    if lo > hi:
+        raise RuntimeError(f"The piece has {bars} bars, so there are no bars {from_bar}-{to_bar} to play in.")
+    for layer in layers_of(path):
+        if layer["program"] == program and layer["from_bar"] <= hi and layer["to_bar"] >= lo:
+            mid = mido.MidiFile(str(path))
+            for trk in mid.tracks:
+                if is_acc_track(trk) and _acc_program(trk) == program and any(
+                        n[0] < hi * bb * mid.ticks_per_beat and n[0] + n[1] > (lo - 1) * bb * mid.ticks_per_beat
+                        for n in _track_notes(trk)):
+                    raise RuntimeError(f"{instrument_name(program)} already plays in bars {lo}-{hi}. Take it out of those bars "
+                                       "first, or choose other bars.")
+    return (lo - 1) * bb, hi * bb, lo, hi
+
+
 def add_part_options(source_midi, program, count=3, size="small", playable=True, name=None, log=print,
-                     on_candidate=None, texture_style=None, in_key=True, direction="", dynamics=5.0):
+                     on_candidate=None, texture_style=None, in_key=True, direction="", dynamics=5.0,
+                     from_bar=None, to_bar=None):
     """Write `count` alternative parts for ONE instrument, each as a complete piece: the existing piece (held fixed)
-    plus a freshly generated part for `program`. Files go to <session>/parts/. on_candidate(info) fires as each is
-    ready. Approving an option just means using its file as the piece for the next round."""
+    plus a freshly generated part for `program`, in bars `from_bar` to `to_bar` only (default: the whole piece). Files go
+    to <session>/parts/. on_candidate(info) fires as each is ready. Approving an option just means using its file as the
+    piece for the next round."""
     import direction as dr
     import texture as tx
 
@@ -1129,12 +1296,13 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
         log("      " + dr.describe(d))
     style = d["style"] or texture_style   # a pattern named in the direction overrides the pattern picker
     if style:  # rule-based chords / arpeggios / bass lines instead of a model-generated part
-        return texture_options(source_midi, style, count, name, log, on_candidate, program, d, dynamics)
+        return texture_options(source_midi, style, count, name, log, on_candidate, program, d, dynamics, from_bar, to_bar)
 
     from anticipation import ops
-    from anticipation.convert import events_to_midi, midi_to_events
+    from anticipation.convert import midi_to_events
     from anticipation.sample import generate
     from anticipation.tokenize import extract_instruments
+    from anticipation.vocab import DUR_OFFSET, NOTE_OFFSET, TIME_OFFSET
 
     folder = ensure_session(Path(source_midi).stem)
     parts_dir = folder / "parts"
@@ -1144,15 +1312,20 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
 
     tempo, sig, length = midi_info(source_midi)
     length = min(length, 100.0)  # Anticipation's clock tops out at 100 s
+    lo_beat, hi_beat, lo_bar, hi_bar = part_range(source_midi, program, from_bar, to_bar)
+    start_sec, end_sec = lo_beat * 60 / tempo, min(hi_beat * 60 / tempo, length)
+    if start_sec >= end_sec:
+        raise RuntimeError("Anticipation can only play along with the first 100 seconds of a piece.")
     events = midi_to_events(str(source_midi))
     present = set(ops.get_instruments(events))
-    if program in present:
-        raise RuntimeError(f"{label} is already in the piece. Pick a different instrument.")
-    if len(present) >= 16:
+    if program in present and program == _melody_program_of(source_midi):
+        raise RuntimeError(f"{label} is the melody's own instrument. Pick a different instrument.")
+    if len(present - {program}) >= 16:
         raise RuntimeError("The piece already has 16 instruments, the most Anticipation can handle.")
     _, controls = extract_instruments(events, list(present))  # the whole existing piece is held fixed
     if length >= 100:
         controls = ops.clip(controls, 0, length, clip_duration=True)
+    span_sec = end_sec - start_sec
 
     q = 6000.0 / tempo
     num, den = (int(x) for x in sig.split("/"))
@@ -1200,8 +1373,8 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
             pool["regions"] = plan.plan_regions(theplan, tempo)   # ... and on the melody's own chords
             pool["chord_weight"] = w["chord"]
             log("      the part follows the melody's chords")
-    min_notes = {-2: max(3, int(0.08 * length)), -1: max(4, int(0.15 * length)), 0: max(6, int(0.5 * length)),
-                 1: max(10, int(1.0 * length)), 2: max(14, int(1.5 * length))}[dens]
+    min_notes = {-2: max(3, int(0.08 * span_sec)), -1: max(4, int(0.15 * span_sec)), 0: max(3, int(0.5 * span_sec)),
+                 1: max(5, int(1.0 * span_sec)), 2: max(7, int(1.5 * span_sec))}[dens]
     model = _get_ant(size)
 
     log(f"Writing {count} options for {label}...")
@@ -1209,7 +1382,7 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
     for k in range(1, count + 1):
         best = []
         for attempt in range(1, ATTEMPTS + 1):
-            part = generate(model, 0, length, inputs=[], controls=controls, top_p=top_p, grid=grid, instruments=pool)
+            part = generate(model, start_sec, end_sec, inputs=[], controls=controls, top_p=top_p, grid=grid, instruments=pool)
             n = len(part) // 3
             if n > len(best) // 3:
                 best = part
@@ -1220,13 +1393,14 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
             continue
         if playable:
             best, _ = make_playable(best)
-        path = parts_dir / f"{name}-{slugify(label)}-{k}.mid"
-        events_to_midi(ops.combine(best, controls)).save(str(path))
-        retime(path, tempo, sig)
+        path = parts_dir / f"{name}-{slugify(label)}-b{lo_bar}-{hi_bar}-{k}.mid"
+        notes = [((n - NOTE_OFFSET) % 128, (tt - TIME_OFFSET) / 100 * tempo / 60, (dd - DUR_OFFSET) / 100 * tempo / 60)
+                 for tt, dd, n in zip(best[0::3], best[1::3], best[2::3])]
+        add_layers_file(source_midi, path, {program: notes}, lo_beat, hi_beat)
         dynamics_mod.finish(path, source_midi, sig, dynamics)    # the model writes every note at one velocity
         if velocity_for(d):
             apply_velocity(path, program, velocity_for(d))
-        info = {"index": len(out) + 1, "path": path, "program": program, "added": len(best) // 3}
+        info = {"index": len(out) + 1, "path": path, "program": program, "added": len(notes)}
         out.append(info)
         log(f"      option {info['index']}: {info['added']} {label} notes")
         if on_candidate:
@@ -1262,16 +1436,14 @@ def apply_velocity(path, program, velocity):
 
 
 def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_candidate=None, program=0, d=None,
-                    dynamics=5.0):
+                    dynamics=5.0, from_bar=None, to_bar=None):
     """Chords / arpeggios / bass lines for one instrument under the existing piece, by music theory (see texture.py).
     The piece is left exactly as it is; each option is the whole piece plus a different pattern, written to
     <session>/parts/. If the instrument is already there and is a keyboard (e.g. the melody is on piano), the new
     notes join that same instrument, like a left hand."""
     import texture as tx
     from anticipation import ops
-    from anticipation.convert import events_to_midi, midi_to_events
-    from anticipation.tokenize import extract_instruments
-    from anticipation.vocab import DUR_OFFSET, NOTE_OFFSET, TIME_OFFSET
+    from anticipation.convert import midi_to_events
 
     d = d or {}
     folder = ensure_session(Path(source_midi).stem)
@@ -1285,10 +1457,9 @@ def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_
     key = key_for_file(source_midi) or estimate_key([(p, s_, d_) for p, s_, d_, _ in notes])
     events = midi_to_events(str(source_midi))
     present = list(ops.get_instruments(events))
-    already = program in present
-    if already and program not in tx.LEFT_HAND:
-        raise RuntimeError(f"{instrument_name(program)} is already in the piece. Pick a different instrument.")
-    _, controls = extract_instruments(events, present)
+    lo_beat, hi_beat, lo_bar, hi_bar = part_range(source_midi, program, from_bar, to_bar)
+    if program in present and program == _melody_program_of(source_midi) and program not in tx.LEFT_HAND:
+        raise RuntimeError(f"{instrument_name(program)} is the melody's own instrument. Pick a different instrument.")
     label0 = instrument_name(program)
     log(f"Writing {count} {label0.lower()} options ({key_label(key)})...")
     out = []
@@ -1298,17 +1469,13 @@ def texture_options(source_midi, style="mix", count=3, name=None, log=print, on_
         plan_chords = theplan["chords"]
     for k in range(1, count + 1):
         label, part = tx.option(notes, tempo, sig, key, style, k, program, d, plan_chords)
-        ticks = lambda beats: round(beats * 60.0 / tempo * 100)
-        tokens = []
-        for pitch, start, dur in sorted(part, key=lambda n: (n[1], n[0])):
-            tokens += [TIME_OFFSET + ticks(start), DUR_OFFSET + max(1, ticks(dur)), NOTE_OFFSET + program * 128 + pitch]
-        path = parts_dir / f"{name}-{slugify(label0)}-{slugify(label)}-{k}.mid"
-        events_to_midi(ops.combine(tokens, controls)).save(str(path))
-        retime(path, tempo, sig)
+        path = parts_dir / f"{name}-{slugify(label0)}-{slugify(label)}-b{lo_bar}-{hi_bar}-{k}.mid"
+        add_layers_file(source_midi, path, {program: sorted(part, key=lambda n: (n[1], n[0]))}, lo_beat, hi_beat)
         dynamics_mod.finish(path, source_midi, sig, dynamics)
-        if velocity_for(d) and not already:
+        if velocity_for(d):
             apply_velocity(path, program, velocity_for(d))
-        info = {"index": k, "path": path, "program": program, "added": len(part), "label": label}
+        info = {"index": k, "path": path, "program": program,
+                "added": sum(1 for _p, st, _d in part if lo_beat - 1e-6 <= st < hi_beat - 1e-6), "label": label}
         out.append(info)
         log(f"      option {k}: {label}, {len(part)} notes")
         if on_candidate:
@@ -1375,8 +1542,11 @@ def make_music(
     phrasing=1,
     sliders=None,
     dynamics=5.0,
+    layered=False,
 ):
-    """Run the whole pipeline. Returns (melody_path, full_path or None).
+    """Run the whole pipeline. Returns (melody_path, full_path or None). With `layered` (and source_midi) the full piece is
+    the source file plus the new instruments as accompaniment layers, as the app's step 4 keeps them, instead of a file
+    the model has written again.
 
     With source_midi, the melody step is skipped: the imported file's notes are kept exactly as they are
     and Anticipation orchestrates around them (adding instruments the file doesn't already have)."""
@@ -1487,8 +1657,18 @@ def make_music(
         log(f"      playability pass: {folded} notes folded into range, {trimmed} overlaps trimmed, {dropped} dropped")
     used = sorted(ops.get_instruments(best))
     log(f"      accompaniment instruments used: {len(used)}")
-    full = ops.combine(best, melody)
     out = folder / f"{name}-full.mid"
+    if layered and source_midi:
+        from anticipation.vocab import DUR_OFFSET, NOTE_OFFSET, TIME_OFFSET
+        layers = {}
+        for tt, dd, n in zip(best[0::3], best[1::3], best[2::3]):
+            layers.setdefault((n - NOTE_OFFSET) // 128, []).append(
+                ((n - NOTE_OFFSET) % 128, (tt - TIME_OFFSET) / 100 * tempo / 60, (dd - DUR_OFFSET) / 100 * tempo / 60))
+        add_layers_file(melody_path, out, layers)
+        dynamics_mod.finish(out, melody_path, sig, dynamics)
+        log(f"Done: {out}")
+        return melody_path, out
+    full = ops.combine(best, melody)
     events_to_midi(full).save(str(out))
     retime(out, tempo, sig)
     dynamics_mod.finish(out, melody_path, sig, dynamics)           # the melody's own dynamics come back; the parts follow it

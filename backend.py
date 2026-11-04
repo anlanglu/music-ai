@@ -7,7 +7,9 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
   {"cmd":"save_edit", "source_midi":..., "notes":[[pitch, start_beat, duration_beats],...]}   (the melody as edited by hand)
   {"cmd":"import", "path":...}
-  {"cmd":"add_part", "source_midi":..., "program", "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
+  {"cmd":"add_part", "source_midi":..., "program", "from_bar"?, "to_bar"?, "count", "texture", "style", "direction", ...} | {"cmd":"approve_part", "path", "label"}
+  {"cmd":"clear_bars", "source_midi", "from_bar"?, "to_bar"?, "programs"?: [..]}  ->  part_approved{path,notes,programs,layers}  (the accompaniment taken out of those bars)
+  A part is an accompaniment layer kept in the melody's own file, for the bars asked for (default: all); candidate, part_candidate, part_approved and done events carry layers:[{program,channel,from_bar,to_bar,notes}]
   {"cmd":"notation", "path":..., "title":..., "paged":false}
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
@@ -38,9 +40,9 @@ import time
 from pathlib import Path
 
 from text2music import (  # noqa: E402
-    add_part_options, approve_part, current_session, ensure_session, instrument_name, list_sessions,
-    make_melodies, make_music, midi_info, new_session, open_session, rename_session, reset_session, seed_everything,
-    session_info,
+    add_part_options, approve_part, bar_beats, clear_layers_file, current_session, ensure_session, instrument_name,
+    layers_of, list_sessions, make_melodies, make_music, midi_info, new_session, open_session, piece_bars, rename_session,
+    reset_session, seed_everything, session_info,
 )
 import mixer  # noqa: E402
 import plan  # noqa: E402
@@ -81,12 +83,14 @@ def part_event(info):
     progs = programs_of(info["path"])
     send(type="part_candidate", index=info["index"], path=str(info["path"]), program=info["program"],
          label=info.get("label", ""),
-         channel=progs.get(info["program"], -1), added=info["added"], programs=list(progs), notes=notes_of(info["path"]))
+         channel=progs.get(info["program"], -1), added=info["added"], programs=list(progs), notes=notes_of(info["path"]),
+         layers=layers_of(info["path"]))
 
 
 def candidate_event(info):
     send(type="candidate", index=info["index"], path=str(info["path"]), tempo=info["tempo"], sig=info["sig"],
-         score=info.get("score"), notes=notes_of(info["path"]), programs=list(programs_of(info["path"])))
+         score=info.get("score"), notes=notes_of(info["path"]), programs=list(programs_of(info["path"])),
+         layers=layers_of(info["path"]))
 
 
 def announce(old=None):
@@ -275,11 +279,27 @@ def handle(r):
             in_key=bool(r.get("in_key", True)), direction=r.get("direction", ""),
             dynamics=float(r.get("dynamics", 5)),
             texture_style=(r.get("style") or "mix") if r.get("texture") else None,
+            from_bar=r.get("from_bar"), to_bar=r.get("to_bar"),
         )
         send(type="parts_done")
+    elif cmd == "clear_bars":  # take the accompaniment out of some bars (all instruments, or the programs listed)
+        begin()
+        src = Path(r["source_midi"])
+        tempo, sig, bars = piece_bars(src)
+        lo, hi = max(1, int(r.get("from_bar") or 1)), min(bars, int(r.get("to_bar") or bars))
+        if lo > hi:
+            raise RuntimeError(f"The piece has {bars} bars.")
+        bb = bar_beats(sig)
+        dest = ensure_session() / "parts" / f"{time.strftime('%H%M%S')}-clear-b{lo}-{hi}.mid"
+        dest.parent.mkdir(exist_ok=True)
+        n = clear_layers_file(src, dest, (lo - 1) * bb, hi * bb, [int(p) for p in r.get("programs") or []])
+        if not n:
+            raise RuntimeError(f"There is no accompaniment in bars {lo}-{hi}.")
+        log(f"  ▸ Took the accompaniment out of bars {lo}-{hi} ({n} notes).")
+        send(type="part_approved", path=str(dest), notes=notes_of(dest), programs=list(programs_of(dest)), layers=layers_of(dest))
     elif cmd == "approve_part":
         dest = approve_part(r["path"], r.get("label", "part"))
-        send(type="part_approved", path=str(dest), notes=notes_of(dest), programs=list(programs_of(dest)))
+        send(type="part_approved", path=str(dest), notes=notes_of(dest), programs=list(programs_of(dest)), layers=layers_of(dest))
         send(type="sessions", items=list_sessions())
     elif cmd == "mix_info":  # the volume of each instrument in a file
         send(type="mix", path=r["path"], channels=mixer.read_mix(r["path"]))
@@ -314,9 +334,9 @@ def handle(r):
             "", size=r.get("size", "small"), log=log,
             ensemble=int(r.get("ensemble", 0)), source_midi=r["source_midi"],
             playable=bool(r.get("playable", True)), in_key=bool(r.get("in_key", True)),
-            dynamics=float(r.get("dynamics", 5)),
+            dynamics=float(r.get("dynamics", 5)), layered=True,
         )
-        send(type="done", melody=str(melody), full=str(full), notes=notes_of(full), programs=list(programs_of(full)))
+        send(type="done", melody=str(melody), full=str(full), notes=notes_of(full), programs=list(programs_of(full)), layers=layers_of(full))
         send(type="sessions", items=list_sessions())
 
 
