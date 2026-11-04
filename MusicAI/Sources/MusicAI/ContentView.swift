@@ -602,6 +602,7 @@ struct ContentView: View {
                     help: "How strongly the opening idea comes back at the start of each new phrase, shifted to fit that phrase's chord. High: an obvious, memorable theme. Zero: the new bars are new material.")
             knobRow("Dynamics: Flat ↔ Expressive", $vm.expandDynamics, readout: dynamicsWord(vm.expandDynamics),
                     help: "How much the loudness varies in the new bars. Zero: every note at one level.")
+            phrasingControls($vm.expandPhrasing)
             Toggle("Resolve ending (finish on the home note)", isOn: $vm.expandResolve)
                 .help("Changes only the final note, so it ends on the tonic")
             optionsRow($vm.expandCount)

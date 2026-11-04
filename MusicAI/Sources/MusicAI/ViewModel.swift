@@ -213,6 +213,7 @@ final class ViewModel: ObservableObject {
     @Published var expandTheme = 0.0                // how strongly the opening motif comes back in the new bars
     @Published var expandDynamics = 5.0
     @Published var expandResolve = true
+    @Published var expandPhrasing = 1               // 0 flowing, 1 balanced, 2 spacious: rests between the ideas and phrases of the new bars
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
     private var expandJustRan = false
     private var lastExpandBars = 4.0
@@ -819,7 +820,7 @@ final class ViewModel: ObservableObject {
         send([
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
-            "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": phrasing,
+            "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
             "lyrics": lyrics, "program": expandInstrument.program,
         ].merging(singerFields(expandSingers)) { $1 })
     }
