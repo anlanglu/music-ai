@@ -334,6 +334,14 @@ def melodic_bias(logits, tokens, pool, onset=None):
         if max(far) - min(far) < 9:
             outside = (np.arange(MAX_PITCH) > max(far)) | (np.arange(MAX_PITCH) < min(far))
             bias += w.get('variety', 0) * 0.8 * (outside & (mag <= 7))
+    if w.get('loop', 0) and len(hist) >= 6:   # a figure that has come before: make what followed it last time less likely
+        n = 3
+        tail = [b - a for a, b in zip(hist[-n - 1:], hist[-n:])]
+        for i in range(len(hist) - n - 1):
+            if [b - a for a, b in zip(hist[i:i + n], hist[i + 1:i + n + 1])] == tail:
+                nxt = last + hist[i + n + 1] - hist[i + n] if i + n + 1 < len(hist) else None
+                if nxt is not None and 0 <= nxt < MAX_PITCH:
+                    bias[nxt] -= w['loop']
     bias += _target_bias(w.get('targets') or [], onset, w.get('target_weight', 0.0),
                          w.get('target_tol', 25), w.get('target_sigma', 1.6))
     seg += torch.from_numpy(bias).to(seg.device)

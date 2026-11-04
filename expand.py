@@ -127,10 +127,10 @@ def _direction_for_sampler(d, grid, q, top_p, lo, hi):
     """What a free-text direction can change in the Anticipation sampler: how busy the line is, how much it leans on the beat,
     where in the range it sits and how adventurous the sampling is. Returns the (top_p, lo, hi) to use."""
     dens, reg = d["density"], d["register"]
-    grid["max_gap"] = q * {-2: 6, -1: 4, 0: 2, 1: 1, 2: 0.5}[dens]
+    grid["max_gap"] = q * {-2: 6, -1: 4, 0: 2, 1: 1, 2: 0.75}[dens]
     if dens < 0:
         grid["min_gap"] = int(q * {-2: 3, -1: 2}[dens])
-    boost = {-2: -2.5, -1: -1.5, 1: 2.0, 2: 3.5}.get(d["rhythm"])
+    boost = {-2: -2.5, -1: -1.5, 1: 2.0, 2: 2.5}.get(d["rhythm"])
     if boost is not None:
         grid["beat_boost"], grid["bar_boost"] = boost, boost * 2
     if reg:
@@ -294,6 +294,7 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     extra = 0.4 * busy + 0.08 * weights.get("motif", 0) + 0.2 * weights.get("chord", 0)   # the chord pull leaves 3 pitch classes
     if extra:
         bias = dict(bias or {}, repeat=(bias or {}).get("repeat", 0.0) + extra)
+    bias = dict(bias or {}, loop=2.0 + busy)     # a figure that has just been played is not played again
     if bias:
         pool["melodic"] = dict(bias, instrument=program)
     if weights.get("chord"):
