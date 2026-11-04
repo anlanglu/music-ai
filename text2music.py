@@ -641,23 +641,27 @@ def melody_velocities(notes, sig="4/4", depth=1.0):
 
 
 def write_melody_midi(path, tempo, notes, program, sig="4/4", total_beats=None, dynamics=True, depth=1.0):
+    """`program` is a General MIDI program, or [(beat, program), ...] when the instrument changes along the melody (the
+    melody stays on one channel; the changes are program_change events)."""
     tpb = 480
     mid = mido.MidiFile(type=1, ticks_per_beat=tpb)
     mid.tracks.append(conductor_track(tempo, sig))
     track = mido.MidiTrack()
     mid.tracks.append(track)
-    track.append(mido.Message("program_change", program=program, channel=0, time=0))
-    events = []
+    changes = [(0.0, program)] if isinstance(program, int) else sorted(program)
+    events = [(round(b * tpb), 0.5, prog, 0) for b, prog in changes]   # a change comes after note-offs, before note-ons
     vels = melody_velocities(notes, sig, depth) if dynamics else [90] * len(notes)
     for (p, s, d), v in zip(notes, vels):
         events.append((round(s * tpb), 1, p, v))
         events.append((round((s + d) * tpb), 0, p, 0))  # note-off sorts before note-on at same tick
     events.sort()
     last = 0
-    for tick, on, p, v in events:
-        track.append(
-            mido.Message("note_on" if on else "note_off", note=p, velocity=v if on else 0, channel=0, time=tick - last)
-        )
+    for tick, kind, p, v in events:
+        if kind == 0.5:
+            track.append(mido.Message("program_change", program=p, channel=0, time=tick - last))
+        else:
+            track.append(mido.Message("note_on" if kind else "note_off", note=p, velocity=v if kind else 0, channel=0,
+                                      time=tick - last))
         last = tick
     if total_beats is not None:  # pad the file out to the final barline so its length is exactly N bars
         track.append(mido.MetaMessage("end_of_track", time=max(round(total_beats * tpb) - last, 0)))

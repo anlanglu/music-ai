@@ -54,6 +54,34 @@ def read_melody(path):
     return notes, tempo, sig, program, total
 
 
+def read_programs(path):
+    """[(beat, program)] of the melody track of a file: the instrument at the start, and each later change of instrument.
+    A melody passed between instruments (or between a voice and an instrument) has more than one."""
+    mid = mido.MidiFile(str(path))
+    tpb = mid.ticks_per_beat
+    for trk in mid.tracks:
+        if not any(m.type == "note_on" and m.velocity > 0 and m.channel != 9 for m in trk):
+            continue
+        tick, out = 0, []
+        for m in trk:
+            tick += m.time
+            if m.type == "program_change" and m.channel != 9 and (not out or out[-1][1] != m.program):
+                out.append((tick / tpb, m.program))
+        if out and out[0][0] > 1e-6:
+            out.insert(0, (0.0, out[0][1]))
+        return out or [(0.0, 0)]
+    return [(0.0, 0)]
+
+
+def program_at(programs, beat):
+    """The program in force at `beat` of a [(beat, program)] list."""
+    now = programs[0][1]
+    for b, prog in programs:
+        if b <= beat + 1e-6:
+            now = prog
+    return now
+
+
 def _hybrid_reading(d):
     """What Hybrid will do with a direction, and what it cannot: it steers only how busy, how high or low, how much on the
     beat and how adventurous the new bars are."""
@@ -89,11 +117,15 @@ def _direction_for_sampler(d, grid, q, top_p, lo, hi):
 
 
 def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small", llm="7B", complexity=3, sliders=None,
-                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None):
+                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None, program=None):
     """Write `count` options, each the source melody plus `add_bars` more bars, to the session folder. Returns the list of
-    {index, path, tempo, sig, score}; on_candidate(info) is called as each one is ready."""
+    {index, path, tempo, sig, score}; on_candidate(info) is called as each one is ready. `program` is the instrument the
+    new bars are written for (default: the one the melody ends on); if it differs, the melody is passed to it."""
     src = Path(source_midi)
-    notes, tempo, sig, program, total = read_melody(src)
+    notes, tempo, sig, _first, total = read_melody(src)
+    programs = read_programs(src)
+    if program is None:
+        program = programs[-1][1]
     if not notes:
         raise RuntimeError("There is no melody in that file to expand")
     bb = t.bar_beats(sig)
@@ -173,7 +205,10 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         combined = old + [(p, s_ + old_beats, dd) for p, s_, dd in new]
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
-        t.write_melody_midi(path, tempo, combined, program, sig, total_beats, depth=sl["dynamics"] / 5)
+        t.write_melody_midi(path, tempo, combined, programs + ([(old_beats, program)] if program != programs[-1][1] else []),
+                            sig, total_beats, depth=sl["dynamics"] / 5)
+        import lyrics
+        lyrics.carry(src, path)
         if not out:    # the accompaniment follows the plan of the whole, longer melody
             t._write_meta(folder, key=list(key), plan=t.plan_json(whole, form), form=form)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,

@@ -113,18 +113,8 @@ struct LyricsSheet: View {
                 .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
                 .lineLimit(3)
             Divider()
-            Text("Singing (demo): a local voice model (SoulX-Singer, a stock reference voice) sings the lyric lines of the melody chosen on the right, if it was written with the Voice instrument. If you have added accompaniment (steps 4–5), the voice and the accompaniment are mixed into one audio file. About 15 seconds a line.")
+            Text("Singing (demo): a local voice model (SoulX-Singer) sings the lyric lines of the melody chosen on the right, each in the singer chosen for it in the Motif or Extend step. Parts of the melody for other instruments, and any accompaniment you added (steps 4–5), are mixed in. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Picker("Voice", selection: $vm.voice) {
-                    ForEach(vm.voiceChoices, id: \.key) { Text($0.name).tag($0.key) }
-                }
-                .fixedSize()
-                .help("Singers A and B are the two reference voices that come with SoulX-Singer (both sing in a similar range). The model copies a voice from a short recording; add your own below.")
-                Button("Add voice…") { vm.showAddVoice = true }
-                    .disabled(vm.busy || !vm.ready)
-                    .help("Make a new singer from a recording of a voice singing alone")
-            }
             HStack {
                 Button("Check lyrics") { vm.checkLyrics() }
                     .disabled(vm.busy || !vm.ready || !vm.hasLyrics)
@@ -143,7 +133,6 @@ struct LyricsSheet: View {
         }
         .padding(20)
         .frame(width: 540)
-        .sheet(isPresented: $vm.showAddVoice) { AddVoiceSheet(vm: vm) }
     }
 }
 

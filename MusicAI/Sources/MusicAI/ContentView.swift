@@ -83,6 +83,7 @@ struct ContentView: View {
     @StateObject private var vm = ViewModel()
     @AppStorage("showHistory") private var showHistory = true
     @AppStorage("showAdvanced") private var showAdvanced = false
+    private let lyricsVoiceProgram = 53          // lyrics.VOICE_PROGRAM
 
     var body: some View {
         VStack(spacing: 0) {
@@ -98,6 +99,7 @@ struct ContentView: View {
         .frame(minWidth: showHistory ? 1120 : 900, minHeight: 640)
         .onAppear { vm.start() }
         .sheet(isPresented: $vm.showLyrics) { LyricsSheet(vm: vm) }
+        .sheet(isPresented: $vm.showAddVoice) { AddVoiceSheet(vm: vm) }
         .onChange(of: vm.displayURL) { _, _ in vm.loadMix() }
         .onChange(of: vm.ready) { _, _ in vm.loadMix() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in vm.shutdown() }
@@ -224,6 +226,19 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .help("The Anticipation model that writes the accompaniment parts, and that continues the melody when you expand it. Small is quick; large is slower and usually better.")
             }
+        }
+    }
+
+    /// Who sings: the built-in singers and the voices added from recordings.
+    private func singerPicker(_ selection: Binding<String>) -> some View {
+        HStack {
+            Picker("Singer", selection: selection) {
+                ForEach(vm.voiceChoices, id: \.key) { Text($0.name).tag($0.key) }
+            }
+            .help("Who sings these bars. Singers A and B are the two reference voices that come with SoulX-Singer. Each Extend step can have its own singer.")
+            Button("Add voice…") { vm.showAddVoice = true }
+                .disabled(vm.busy || !vm.ready)
+                .help("Make a new singer from a recording of a voice singing alone")
         }
     }
 
@@ -385,6 +400,7 @@ struct ContentView: View {
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
             }
+            if vm.instrument.program == lyricsVoiceProgram { singerPicker($vm.voice) }
             Picker("Time signature", selection: $vm.sig) {
                 ForEach(ViewModel.timeSigs, id: \.self) { Text($0).tag($0) }
             }
@@ -469,6 +485,15 @@ struct ContentView: View {
                         example: "e.g. build to a climax, then calm down")
                 .help("Free text for this expansion. The language model reads it as an instruction; the Anticipation model turns it into how busy, how high or low and how adventurous the new bars are.")
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
+            Picker("Instrument", selection: $vm.expandInstrument) {
+                ForEach(Instrument.all) { Text($0.name).tag($0) }
+            }
+            .help("The instrument these new bars are written for. Pick another one and the melody is passed to it from here on; with the Voice instrument the bars are written to the next lyric lines.")
+            if vm.expandInstrument.program == lyricsVoiceProgram {
+                singerPicker($vm.expandVoice)
+                Text("These bars are written to the next lines of your lyrics (Lyrics button) and sung by this singer; the moves and sliders below do not apply.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
 
             complexityRow($vm.expandComplexity)
             knobRow("Smooth ↔ Jumpy", $vm.expandShape, readout: shapeWord(vm.expandShape),

@@ -116,8 +116,6 @@ def test_the_backing_drops_the_voice_melody_and_keeps_the_rest(tmp_path):
 def test_each_voice_has_its_reference_recording_and_notes():
     for key, base in L.VOICE_FILES.items():
         assert base.with_suffix(".wav").exists() and base.with_suffix(".json").exists(), key
-    with pytest.raises(RuntimeError, match="Unknown voice"):
-        L.sing_midi("nothing.mid", voice="nope")
 
 
 def test_chinese_lines_give_one_syllable_and_one_soulx_token_per_character():
@@ -149,3 +147,66 @@ def test_making_a_voice_says_what_is_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(L, "PREP_PY", tmp_path / "nope" / "python")
     with pytest.raises(RuntimeError, match="venv-prep"):
         L.add_voice("whatever.wav", "x")
+
+
+# ---- each extension has its own instrument and singer
+
+def test_the_melody_can_change_instrument_along_the_way(tmp_path):
+    import expand
+    import text2music as t
+    path = tmp_path / "m.mid"
+    t.write_melody_midi(path, 90, [(60, 0, 1), (62, 4, 1), (64, 8, 1)], [(0.0, 0), (4.0, 53), (8.0, 73)], "4/4", 12)
+    assert expand.read_programs(path) == [(0.0, 0), (4.0, 53), (8.0, 73)]
+    assert expand.program_at(expand.read_programs(path), 5.0) == 53
+    assert [n[0] for n in expand.read_melody(path)[0]] == [60, 62, 64], "the notes are one line whatever plays them"
+    t.write_melody_midi(path, 90, [(60, 0, 1)], 40, "4/4", 4)
+    assert expand.read_programs(path) == [(0.0, 40)]
+
+
+def test_each_extension_stores_its_own_singer_and_the_voice_follows_an_instrument(fake_lines):
+    import expand
+    first = L.lyric_motifs(TEXT, 1, 53, "4/4", 90, (0, "major"), "7B", 3, "", 1, voice="en")[0]["path"]
+    second = L.lyric_extend(first, TEXT, 4, "7B", 3, "", 1, voice="zh")[0]["path"]
+    lines = L.used_lines(second)
+    assert lines[0]["voice"] == "en" and {ln["voice"] for ln in lines[1:]} == {"zh"}
+    assert expand.read_programs(second) == [(0.0, 53)], "the voice carried on: no change of instrument"
+
+
+def test_a_voice_part_after_another_instrument_and_back_again(fake_lines, monkeypatch):
+    import expand
+    import text2music as t
+    path = fake_lines / "flute.mid"
+    t.write_melody_midi(path, 90, [(72, 0, 1), (74, 1, 1), (76, 2, 2)], 73, "4/4", 4)
+    sung = L.lyric_extend(path, TEXT, 4, "7B", 3, "", 1, voice="zh")[0]["path"]
+    assert expand.read_programs(sung) == [(0.0, 73), (4.0, 53)]
+    assert L.used_lines(sung)[0]["start_beat"] == 4.0 and L.used_lines(sung)[0]["voice"] == "zh"
+    back = L.backing(sung)           # the flute stays, the voice goes
+    kept = [(m.type, m.note) for tr in __import__("mido").MidiFile(str(back)).tracks for m in tr if m.type == "note_on"]
+    assert kept == [("note_on", 72), ("note_on", 74), ("note_on", 76)]
+
+
+def test_singing_runs_once_per_singer_and_joins_them(fake_lines, monkeypatch):
+    import wave
+
+    import numpy as np
+    first = L.lyric_motifs(TEXT, 1, 53, "4/4", 90, (0, "major"), "7B", 3, "", 1, voice="en")[0]["path"]
+    second = L.lyric_extend(first, TEXT, 4, "7B", 3, "", 1, voice="zh")[0]["path"]
+    calls = []
+
+    def fake_sing(segments, out_wav, log=print, n_steps=32, voice="en"):
+        calls.append((voice, [s["text"] for s in segments]))
+        with wave.open(str(out_wav), "wb") as f:
+            f.setnchannels(1); f.setsampwidth(2); f.setframerate(8000)
+            f.writeframes((np.ones(8000, dtype=np.int16) * (1000 if voice == "en" else 2000)).tobytes())
+        return out_wav
+    monkeypatch.setattr(L, "sing", fake_sing)
+    wav = L.sing_midi(second, log=lambda *_: None)
+    assert [c[0] for c in calls] == ["en", "zh"] and calls[0][1][0].startswith("<SP> Little")
+    assert wav.name.endswith(".voices.wav") and wav.exists()
+    assert not list(wav.parent.glob("*.part.wav")), "the per-singer files are removed"
+    with wave.open(str(wav)) as f:
+        got = np.frombuffer(f.readframes(f.getnframes()), dtype=np.int16)
+    assert abs(int(got[0]) - 3000) <= 1, "the two singers are added"
+    calls.clear()
+    L.sing_midi(first, log=lambda *_: None)
+    assert [c[0] for c in calls] == ["en"], "one singer: one pass, as before"

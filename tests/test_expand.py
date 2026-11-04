@@ -96,6 +96,24 @@ def test_expanding_twice_in_a_row(backend):
     assert max(n[3] for n in two["notes"]) > max(n[3] for n in one["notes"]) + 3
 
 
+def test_the_new_bars_can_be_for_another_instrument_and_the_voice_needs_lyrics(backend):
+    chosen = first_melody(backend)[0]                                  # 4 bars for one instrument
+    p0 = expand.read_programs(chosen["path"])[0][1]
+    new = 40 if p0 != 40 else 0
+    backend.send(cmd="expand", source_midi=chosen["path"], bars=4, engine="llm", count=1, program=new, seed=3)
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "melodies_done", ev[-1]
+    one = [e for e in ev if e["type"] == "candidate"][0]
+    assert expand.read_programs(one["path"]) == [(0.0, p0), (16.0, new)], "one instrument, then the other from bar 5"
+    backend.send(cmd="expand", source_midi=one["path"], bars=4, engine="llm", count=1, seed=3)       # no program: the last instrument goes on
+    ev = backend.until({"melodies_done", "error"})
+    two = [e for e in ev if e["type"] == "candidate"][0]
+    assert expand.read_programs(two["path"]) == [(0.0, p0), (16.0, new)]
+    backend.send(cmd="expand", source_midi=one["path"], bars=4, program=53, voice="zh", lyrics="")
+    ev = backend.until({"melodies_done", "error"})
+    assert ev[-1]["type"] == "error" and "Lyrics" in ev[-1]["text"]
+
+
 def hybrid_available():
     import text2music
     hub = Path(os.environ.get("HF_HUB_CACHE") or Path.home() / ".cache/huggingface/hub")

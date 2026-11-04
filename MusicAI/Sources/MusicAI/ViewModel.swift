@@ -141,7 +141,9 @@ final class ViewModel: ObservableObject {
     }
     func surpriseMoods() { moods = Set(Self.moodChips.shuffled().prefix(2)) }
     @Published var bars = 4.0
-    @Published var instrument = Instrument.all[0]
+    @Published var instrument = Instrument.all[0] {
+        didSet { expandInstrument = instrument }      // step 2 carries on with the motif's instrument unless told otherwise
+    }
     @Published var sig = "4/4"
     static let timeSigs = ["4/4", "3/4", "2/4", "6/8", "5/4", "7/8", "12/8"]
     @Published var bpmText = "80"
@@ -183,6 +185,8 @@ final class ViewModel: ObservableObject {
     @Published var expandCount = 3.0
     @Published var expandDirection = ""            // anything else to say about the new bars (optional)
     @Published var expandMoves: Set<String> = []
+    @Published var expandInstrument = Instrument.all[0]   // the instrument the new bars are written for
+    @Published var expandVoice = "en"                      // ... and, for the Voice instrument, who sings them
     /// What each "what should the new bars do" chip tells the engine. The second one only means something to the LLM.
     static let moves: [(label: String, text: String)] = [
         ("continue", "Continue the melody naturally."), ("answer the motif", "Answer the opening motif, like a reply to it."),
@@ -368,8 +372,9 @@ final class ViewModel: ObservableObject {
             if !items.isEmpty {
                 let added = items.first { item in !voiceChoices.contains { $0.key == item.key } }
                 voiceChoices = items.map { ($0.key, Self.shortVoiceName($0.name)) }
-                if let added { voice = added.key; status = "Voice “\(added.name)” is ready." }
+                if let added { voice = added.key; expandVoice = added.key; status = "Voice “\(added.name)” is ready." }
                 if !voiceChoices.contains(where: { $0.key == voice }) { voice = "en" }
+                if !voiceChoices.contains(where: { $0.key == expandVoice }) { expandVoice = "en" }
             }
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
@@ -485,7 +490,7 @@ final class ViewModel: ObservableObject {
     @Published var showLyrics = false
     @Published var vocalURL: URL?
     @Published var vocalPlaying = false
-    @Published var voice = "en"                  // which reference singer: "en" or "zh"
+    @Published var voice = "en"                  // who sings the motif (each extension has its own: expandVoice)
     @Published var voiceChoices: [(key: String, name: String)] = [("en", "Singer A"), ("zh", "Singer B")]
     @Published var showAddVoice = false
 
@@ -525,7 +530,7 @@ final class ViewModel: ObservableObject {
         busy = true
         status = "Singing the chosen melody (about 15 seconds per line)…"
         var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": voice]
-        if let o = orchestration { req["backing_midi"] = o.full.path }   // sing with the accompaniment added so far
+        req["backing_midi"] = (orchestration?.full ?? c.url).path   // the accompaniment so far, and any part of the melody for another instrument
         send(req)
     }
 
@@ -671,7 +676,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": lyrics,
+            "sliders": sliderValues, "lyrics": lyrics, "voice": voice,
         ])
     }
 
@@ -768,7 +773,7 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": phrasing,
-            "lyrics": lyrics,
+            "lyrics": lyrics, "program": expandInstrument.program, "voice": expandVoice,
         ])
     }
 

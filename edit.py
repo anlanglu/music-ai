@@ -13,7 +13,7 @@ from pathlib import Path
 import lyrics
 import plan
 import text2music as t
-from expand import read_melody
+from expand import program_at, read_melody, read_programs
 from llmjson import extract_json
 
 GRID = 0.25     # edited notes are put on a sixteenth-note grid
@@ -181,7 +181,8 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
     agreed to after a question) are the bars exactly; only when none are given are they read from the instruction
     ('measure 2 and 3'), by code and not by the model. Returns the list of option infos."""
     src = Path(source_midi)
-    notes, tempo, sig, program, total = read_melody(src)
+    notes, tempo, sig, _first, total = read_melody(src)
+    programs = read_programs(src)
     if not notes:
         raise RuntimeError("There is no melody in that file to edit")
     bb = t.bar_beats(sig)
@@ -193,6 +194,7 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
     shown = ", ".join(f"{a}" if a == b else f"{a}–{b}" for a, b in _runs(targets))
     log(f"  ▸ Changing bar{'s' if len(targets) > 1 else ''} {shown} only; every other bar is kept exactly as it is.")
     key = t.key_for_file(src) or t.estimate_key(notes)
+    program = program_at(programs, (targets[0] - 1) * bb)      # the instrument at the first bar being changed
     span = t.limits(program)[:2]
     folder = t.ensure_session()
     name = time.strftime("%H%M%S") + "-edit"
@@ -239,7 +241,7 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         if any(new == _read(o["path"]) for o in out):
             continue
         k = len(out) + 1
-        path = _write(folder, name, k, new, tempo, program, sig, total_beats)
+        path = _write(folder, name, k, new, tempo, programs, sig, total_beats)
         lyrics.carry(src, path)
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig,
                 "score": t.melody_score(new, total_beats, t.COMPLEXITY[complexity][1])[0]}
@@ -262,7 +264,8 @@ def _read(path):
 def save_edit(source_midi, notes, log=print, on_candidate=None):
     """Write the melody as the user edited it by hand. `notes` is [[pitch, start_beat, duration_beats], ...]."""
     src = Path(source_midi)
-    old, tempo, sig, program, total = read_melody(src)
+    old, tempo, sig, _first, total = read_melody(src)
+    programs = read_programs(src)
     bb = t.bar_beats(sig)
     total_beats = max(bar_count(total, bb) * bb, 0)
     clean, seen = [], set()
@@ -277,7 +280,7 @@ def save_edit(source_midi, notes, log=print, on_candidate=None):
     clean = [(p, s, min(d, clean[i + 1][1] - s) if i + 1 < len(clean) else d) for i, (p, s, d) in enumerate(clean)]
     total_beats = max(total_beats, bar_count(clean[-1][1] + clean[-1][2], bb) * bb)
     folder = t.ensure_session()
-    path = _write(folder, time.strftime("%H%M%S") + "-hand", 1, clean, tempo, program, sig, total_beats)
+    path = _write(folder, time.strftime("%H%M%S") + "-hand", 1, clean, tempo, programs, sig, total_beats)
     lyrics.carry(src, path)
     changed = [b for b in range(1, bar_count(total_beats, bb) + 1)
                if [n for n in old if bar_of(n[1], bb) == b] != [n for n in clean if bar_of(n[1], bb) == b]]

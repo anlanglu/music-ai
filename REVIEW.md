@@ -507,3 +507,22 @@ take `shape`, `form` and `knobs` (the review scripts and tests call them).
 - **Deleted.** The Anthropic API-key route: the `anthropic` package, `claude_llm.complete/check/set_key`, the backend
   `claude_key` command, the Keychain code and the key sheet. Claude is reached only through the `claude` command-line tool.
 - **Not verified:** none of the Swift UI has been clicked through; `make app` builds, the 151 Python tests pass.
+
+
+## An instrument and a singer for every extension (feature/segment-voices)
+
+- **One melody line, passed between instruments.** `text2music.write_melody_midi` takes a program or `[(beat, program)]`; the
+  changes are `program_change` events on the melody's one channel. `expand.read_programs`/`program_at` read them back, and
+  `expand_melody(program=...)`, `edit` and `save_edit` write the whole list again, so nothing is lost. Expanding with no
+  program keeps the last instrument. The Anticipation model handles the mid-file changes (checked with the real model: a
+  flute melody extended for violin, then a cello part added; the orchestrated file puts each melody instrument on its own track).
+- **A singer per part.** Every lyric line in `*.lyrics.json` stores its `voice`. `lyric_motifs`/`lyric_extend` take `voice`;
+  the backend `expand` takes `program` (53 = Voice) and `voice`. `sing_midi` runs SoulX once per singer on that singer's lines
+  only (the output is a full timeline, so the passes line up) and adds the parts into `<melody>.voices.wav`; one singer gives
+  `<melody>.wav` as before. Lines from before singers were stored use the request's `voice`.
+- **The backing track** (`lyrics.backing`) drops only the stretches where the Voice program is in force, so parts of the
+  melody for other instruments are mixed in with the singing, even without any accompaniment.
+- **Changed:** a Voice extension with no lyric lines left is now an error, not a silent wordless extension (those notes were
+  never sung). A non-Voice extension of a lyric melody keeps the lines (`lyrics.carry`), which it used not to.
+- **Not verified:** the new pickers on screen; singing with two different singers (the test fakes SoulX; each single-singer
+  run was verified earlier); the sheet music for a melody that changes instrument shows the first instrument's name and clef.
