@@ -418,8 +418,40 @@ def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, lo
     return notes, meta, cursor
 
 
-def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, log=print, on_candidate=None, voice="en"):
-    """Step 1 written to the lyrics: `count_` options, each the first lines that fit in `bars` bars, to be sung by `voice`."""
+HARMONY_STEPS = [0, 2, -2, 4]       # scale steps from the lead: the lead, a third above, a third below, a fifth above
+MAX_SINGERS = len(HARMONY_STEPS)
+
+
+def singers_of(voice, voices=None):
+    """The lead first, then the others, each once, at most MAX_SINGERS."""
+    out = []
+    for v in [voice] + list(voices or []):
+        if v and v not in out:
+            out.append(v)
+    return out[:MAX_SINGERS]
+
+
+def harmonize(notes, key, steps):
+    """The notes moved `steps` steps along the key's scale (a third is 2 steps): a harmony part that stays in the key.
+    A note outside the scale is first taken to the nearest scale note."""
+    pcs = t.scale_pcs(key)
+    scale = [p for p in range(128) if p % 12 in pcs]
+    out = []
+    for p, s, d in notes:
+        i = min(range(len(scale)), key=lambda k: abs(scale[k] - p))
+        out.append((scale[max(0, min(len(scale) - 1, i + steps))], s, d))
+    return out
+
+
+def line_singers(ln, fallback="en"):
+    """([singers], harmonize?) stored with a lyric line. Lines from before choirs have just "voice", or nothing."""
+    return singers_of(ln.get("voice") or fallback, ln.get("voices")), bool(ln.get("harmony"))
+
+
+def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, log=print, on_candidate=None, voice="en", voices=None, harmony=False):
+    """Step 1 written to the lyrics: `count_` options, each the first lines that fit in `bars` bars, sung by `voice` and any
+    `voices` with it: the same notes, or (`harmony`) a part each."""
+    singers = singers_of(voice, voices)
     raws = raw_lines(text)
     if not raws:
         raise ValueError("No lyrics found.")
@@ -437,7 +469,7 @@ def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, l
         k = len(out) + 1
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, bpm, notes, program, sig, total)
-        sidecar(path).write_text(json.dumps({"lines": [dict(m, voice=voice) for m in meta]}))
+        sidecar(path).write_text(json.dumps({"lines": [dict(m, voice=singers[0], voices=singers, harmony=harmony) for m in meta]}))
         info = {"index": k, "path": path, "tempo": bpm, "sig": sig, "score": None}
         out.append(info)
         log(f"      option {k}: {len(notes)} notes to {len(meta)} lyric line(s) of {len(raws)}")
@@ -448,10 +480,11 @@ def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, l
     return out
 
 
-def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=print, on_candidate=None, voice="en"):
+def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=print, on_candidate=None, voice="en", voices=None, harmony=False):
     """Step 2 written to the lyrics: the next lines that fit in `add_bars` bars are added after the melody, as a part for
-    the Voice instrument sung by `voice` (the melody may have been another instrument until now). Returns the options,
-    or None when the melody already used all the lyrics."""
+    the Voice instrument sung by `voice` and any `voices` with it (the same notes, or `harmony`); the melody may have been
+    another instrument until now. Returns the options, or None when the melody already used all the lyrics."""
+    singers = singers_of(voice, voices)
     import expand
 
     src = Path(source_midi)
@@ -485,7 +518,7 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
         path = folder / f"{name}-opt{k}.mid"
         t.write_melody_midi(path, tempo, old + [(p, s + old_beats, d) for p, s, d in new],
                             [(old_beats if b is None else b, pr) for b, pr in programs], sig, old_beats + length)
-        sidecar(path).write_text(json.dumps({"lines": done + [dict(m, start_beat=m["start_beat"] + old_beats, voice=voice) for m in meta]}))
+        sidecar(path).write_text(json.dumps({"lines": done + [dict(m, start_beat=m["start_beat"] + old_beats, voice=singers[0], voices=singers, harmony=harmony) for m in meta]}))
         info = {"index": k, "path": path, "tempo": tempo, "sig": sig, "score": None}
         out.append(info)
         log(f"      option {k}: lyric lines {len(done) + 1}-{len(done) + len(meta)}")
@@ -557,8 +590,9 @@ def _mix_wavs(parts, dest):
 
 
 def sing_midi(source_midi, log=print, voice="en"):
-    """Sing the lyric lines a melody was written to, each line in the singer it was written for (`voice` is only for lines
-    from before singers were stored). Needs one note per syllable, as written (an edit may have broken that)."""
+    """Sing the lyric lines a melody was written to, each line by the singers it was written for (`voice` is only for lines
+    from before singers were stored). With several singers they sing the same notes, or each a harmony part (a third above,
+    a third below...). Needs one note per syllable, as written (an edit may have broken that)."""
     import expand
 
     src = Path(source_midi)
@@ -566,19 +600,22 @@ def sing_midi(source_midi, log=print, voice="en"):
     if not lines:
         raise RuntimeError("This melody was not written to lyrics (choose the Voice instrument when generating).")
     notes, tempo, sig, _program, _total = expand.read_melody(src)
+    key = t.key_for_file(src) or t.estimate_key(notes)
     bb = t.bar_beats(sig)
     groups = {}                                   # singer -> (parsed lines, melodies, starts)
     for i, ln in enumerate(lines, 1):
-        who = ln.get("voice") or voice
-        if voice_base(who) is None:
-            raise RuntimeError(f"Line {i} is for the voice {who!r}, which is not there any more.")
+        who_all, harmony = line_singers(ln, voice)
         words = parse_line(ln["text"])
         s0, bars = ln["start_beat"], ln["bars"]
         mine = [(p, s - s0, d) for p, s, d in notes if s0 - 1e-6 <= s < s0 + bars * bb - 1e-6]
         if len(mine) != count(words):
             raise RuntimeError(f"Line {i} has {len(mine)} notes for {count(words)} syllables (was the melody edited?), so it can't be sung.")
-        g = groups.setdefault(who, ([], [], []))
-        g[0].append(words); g[1].append((mine, bars)); g[2].append(s0)
+        for k, who in enumerate(who_all):
+            if voice_base(who) is None:
+                raise RuntimeError(f"Line {i} is for the voice {who!r}, which is not there any more.")
+            part = harmonize(mine, key, HARMONY_STEPS[k]) if harmony and k else mine
+            g = groups.setdefault(who, ([], [], []))
+            g[0].append(words); g[1].append((part, bars)); g[2].append(s0)
     log("Singing it (SoulX-Singer)" + (f", {len(groups)} singers" if len(groups) > 1 else "") + "...")
     if len(groups) == 1:
         who = next(iter(groups))
@@ -587,7 +624,7 @@ def sing_midi(source_midi, log=print, voice="en"):
     else:
         parts = []
         for who, (parsed, melodies, starts) in groups.items():
-            log(f"  ▸ {len(parsed)} line(s) in {dict(voice_list()).get(who, who)}")
+            log(f"  \u25b8 {len(parsed)} line(s) in {dict(voice_list()).get(who, who)}")
             parts.append(sing(metadata(parsed, melodies, tempo, sig, starts), src.with_suffix(f".{who}.part.wav"), log, voice=who))
         wav = src.with_suffix(".voices.wav")
         _mix_wavs(parts, wav)

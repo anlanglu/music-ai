@@ -210,3 +210,47 @@ def test_singing_runs_once_per_singer_and_joins_them(fake_lines, monkeypatch):
     calls.clear()
     L.sing_midi(first, log=lambda *_: None)
     assert [c[0] for c in calls] == ["en"], "one singer: one pass, as before"
+
+
+# ---- duets and choirs: the same notes, or a harmony part each
+
+def test_harmony_parts_move_along_the_scale_and_stay_in_the_key():
+    import text2music as t
+    key = (0, "major")
+    notes = [(60, 0, 1), (62, 1, 1), (64, 2, 1), (71, 3, 1)]
+    assert [n[0] for n in L.harmonize(notes, key, 2)] == [64, 65, 67, 74], "a third above, in the scale: E F G D"
+    assert [n[0] for n in L.harmonize(notes, key, -2)] == [57, 59, 60, 67]
+    assert L.harmonize(notes, key, 0) == notes
+    assert all(p % 12 in t.scale_pcs(key) for p, _, _ in L.harmonize([(61, 0, 1)], key, 2)), "an out-of-scale note is taken into the key"
+    assert [n[1:] for n in L.harmonize(notes, key, 4)] == [n[1:] for n in notes], "only the pitches move"
+
+
+def test_singers_are_listed_once_lead_first_and_capped():
+    assert L.singers_of("en", ["zh", "en", "u-a", "u-b", "u-c"]) == ["en", "zh", "u-a", "u-b"]
+    assert L.line_singers({"voice": "zh"}) == (["zh"], False)
+    assert L.line_singers({}, "en") == (["en"], False)
+
+
+def test_a_duet_sings_the_same_notes_or_a_harmony_and_the_choice_is_stored(fake_lines, monkeypatch):
+    import wave
+
+    import numpy as np
+    made = L.lyric_motifs(TEXT, 1, 53, "4/4", 90, (0, "major"), "7B", 3, "", 1, voice="en", voices=["zh"], harmony=True)[0]["path"]
+    ln = L.used_lines(made)[0]
+    assert ln["voices"] == ["en", "zh"] and ln["harmony"] is True and ln["voice"] == "en"
+    calls = {}
+
+    def fake_sing(segments, out_wav, log=print, n_steps=32, voice="en"):
+        calls[voice] = [int(x) for x in segments[0]["note_pitch"].split() if int(x)]
+        with wave.open(str(out_wav), "wb") as f:
+            f.setnchannels(1); f.setsampwidth(2); f.setframerate(8000)
+            f.writeframes(np.zeros(800, dtype=np.int16).tobytes())
+        return out_wav
+    monkeypatch.setattr(L, "sing", fake_sing)
+    L.sing_midi(made, log=lambda *_: None)
+    lead, high = calls["en"], calls["zh"]
+    assert len(lead) == len(high) == 3 and all(h > l for l, h in zip(lead, high)), "the second singer is above the lead"
+    same = L.lyric_motifs(TEXT, 1, 53, "4/4", 90, (0, "major"), "7B", 3, "", 1, voice="en", voices=["zh"], harmony=False)[0]["path"]
+    calls.clear()
+    L.sing_midi(same, log=lambda *_: None)
+    assert calls["en"] == calls["zh"], "unticked: the same notes"

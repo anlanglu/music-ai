@@ -78,6 +78,13 @@ struct EditNote: Identifiable, Equatable {
 }
 
 /// The editing model's question: "bars N would have to change as well; may I?"
+/// Who sings a part: a lead, optionally others with them (a duet or choir of up to four), the same notes or a harmony each.
+struct Singers: Equatable {
+    var lead = "en"
+    var extras: Set<String> = []
+    var harmonize = false
+}
+
 struct EditSuggestion {
     let bars: [Int]
     let reason: String
@@ -186,7 +193,7 @@ final class ViewModel: ObservableObject {
     @Published var expandDirection = ""            // anything else to say about the new bars (optional)
     @Published var expandMoves: Set<String> = []
     @Published var expandInstrument = Instrument.all[0]   // the instrument the new bars are written for
-    @Published var expandVoice = "en"                      // ... and, for the Voice instrument, who sings them
+    @Published var expandSingers = Singers()               // ... and, for the Voice instrument, who sings them
     /// What each "what should the new bars do" chip tells the engine. The second one only means something to the LLM.
     static let moves: [(label: String, text: String)] = [
         ("continue", "Continue the melody naturally."), ("answer the motif", "Answer the opening motif, like a reply to it."),
@@ -372,9 +379,12 @@ final class ViewModel: ObservableObject {
             if !items.isEmpty {
                 let added = items.first { item in !voiceChoices.contains { $0.key == item.key } }
                 voiceChoices = items.map { ($0.key, Self.shortVoiceName($0.name)) }
-                if let added { voice = added.key; expandVoice = added.key; status = "Voice “\(added.name)” is ready." }
-                if !voiceChoices.contains(where: { $0.key == voice }) { voice = "en" }
-                if !voiceChoices.contains(where: { $0.key == expandVoice }) { expandVoice = "en" }
+                if let added { singers.lead = added.key; expandSingers.lead = added.key; status = "Voice “\(added.name)” is ready." }
+                for which in [\ViewModel.singers, \ViewModel.expandSingers] {
+                    let keys = Set(voiceChoices.map(\.key))
+                    if !keys.contains(self[keyPath: which].lead) { self[keyPath: which].lead = "en" }
+                    self[keyPath: which].extras.formIntersection(keys)
+                }
             }
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
@@ -490,7 +500,11 @@ final class ViewModel: ObservableObject {
     @Published var showLyrics = false
     @Published var vocalURL: URL?
     @Published var vocalPlaying = false
-    @Published var voice = "en"                  // who sings the motif (each extension has its own: expandVoice)
+    @Published var singers = Singers()           // who sings the motif (each extension has its own: expandSingers)
+    /// What the backend is told about who sings: the lead, any others (in the order of the list), and how.
+    func singerFields(_ s: Singers) -> [String: Any] {
+        ["voice": s.lead, "voices": voiceChoices.map(\.key).filter { s.extras.contains($0) && $0 != s.lead }, "harmony": s.harmonize]
+    }
     @Published var voiceChoices: [(key: String, name: String)] = [("en", "Singer A"), ("zh", "Singer B")]
     @Published var showAddVoice = false
 
@@ -529,7 +543,7 @@ final class ViewModel: ObservableObject {
         vocalURL = nil
         busy = true
         status = "Singing the chosen melody (about 15 seconds per line)…"
-        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": voice]
+        var req: [String: Any] = ["cmd": "lyrics_sing", "source_midi": c.url.path, "voice": singers.lead]
         req["backing_midi"] = (orchestration?.full ?? c.url).path   // the accompaniment so far, and any part of the melody for another instrument
         send(req)
     }
@@ -676,8 +690,8 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": lyrics, "voice": voice,
-        ])
+            "sliders": sliderValues, "lyrics": lyrics,
+        ].merging(singerFields(singers)) { $1 })
     }
 
     func importMIDI() {
@@ -773,8 +787,8 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": phrasing,
-            "lyrics": lyrics, "program": expandInstrument.program, "voice": expandVoice,
-        ])
+            "lyrics": lyrics, "program": expandInstrument.program,
+        ].merging(singerFields(expandSingers)) { $1 })
     }
 
     /// Go back to the options (and the choice) from before the last expansion.
@@ -1120,3 +1134,5 @@ final class ViewModel: ObservableObject {
         if let url = displayURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 }
+
+enum Lyrics { static let maxSingers = 4 }      // lyrics.MAX_SINGERS

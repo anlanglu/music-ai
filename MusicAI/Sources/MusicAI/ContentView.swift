@@ -229,16 +229,31 @@ struct ContentView: View {
         }
     }
 
-    /// Who sings: the built-in singers and the voices added from recordings.
-    private func singerPicker(_ selection: Binding<String>) -> some View {
-        HStack {
-            Picker("Singer", selection: selection) {
-                ForEach(vm.voiceChoices, id: \.key) { Text($0.name).tag($0.key) }
+    /// Who sings: a lead from the built-in singers and the voices added from recordings, and optionally others with the
+    /// lead (a duet or choir), singing the same notes or harmonizing.
+    private func singerPicker(_ who: Binding<Singers>) -> some View {
+        let others = vm.voiceChoices.filter { $0.key != who.wrappedValue.lead }
+        let names = Binding<Set<String>>(
+            get: { Set(others.filter { who.wrappedValue.extras.contains($0.key) }.map(\.name)) },
+            set: { chosen in who.wrappedValue.extras = Set(others.filter { chosen.contains($0.name) }.map(\.key)) })
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Picker("Singer", selection: who.lead) {
+                    ForEach(vm.voiceChoices, id: \.key) { Text($0.name).tag($0.key) }
+                }
+                .help("Who sings these bars. Singers A and B are the two reference voices that come with SoulX-Singer.")
+                Button("Add voice…") { vm.showAddVoice = true }
+                    .disabled(vm.busy || !vm.ready)
+                    .help("Make a new singer from a recording of a voice singing alone")
             }
-            .help("Who sings these bars. Singers A and B are the two reference voices that come with SoulX-Singer. Each Extend step can have its own singer.")
-            Button("Add voice…") { vm.showAddVoice = true }
-                .disabled(vm.busy || !vm.ready)
-                .help("Make a new singer from a recording of a voice singing alone")
+            if !others.isEmpty {
+                Text("Also sung by (a duet or choir, up to four voices)").font(.caption).foregroundStyle(.secondary)
+                ChipPicker(items: others.map(\.name), selection: names, limit: Lyrics.maxSingers - 1)
+                if !who.wrappedValue.extras.isEmpty {
+                    Toggle("Harmonize (a third above, a third below, a fifth above)", isOn: who.harmonize)
+                        .help("Ticked: each extra singer takes a harmony part, in the key. Unticked: they all sing the same notes. Every extra singer adds the same singing time again.")
+                }
+            }
         }
     }
 
@@ -400,7 +415,7 @@ struct ContentView: View {
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
             }
-            if vm.instrument.program == lyricsVoiceProgram { singerPicker($vm.voice) }
+            if vm.instrument.program == lyricsVoiceProgram { singerPicker($vm.singers) }
             Picker("Time signature", selection: $vm.sig) {
                 ForEach(ViewModel.timeSigs, id: \.self) { Text($0).tag($0) }
             }
@@ -490,7 +505,7 @@ struct ContentView: View {
             }
             .help("The instrument these new bars are written for. Pick another one and the melody is passed to it from here on; with the Voice instrument the bars are written to the next lyric lines.")
             if vm.expandInstrument.program == lyricsVoiceProgram {
-                singerPicker($vm.expandVoice)
+                singerPicker($vm.expandSingers)
                 Text("These bars are written to the next lines of your lyrics (Lyrics button) and sung by this singer; the moves and sliders below do not apply.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }

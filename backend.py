@@ -15,7 +15,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
   {"cmd":"lyrics_sing", "source_midi", "backing_midi"?, "voice"?: "en"|"zh"|"u-<name>"}  ->  vocal{path,backing} (the lyric lines sung, each in the singer stored with it, a .wav next to the melody; "voice" is only for lines from before singers were stored; backing = the piece without the stretches played by the Voice instrument)
   "melodies" with the Voice instrument (program 53), and "expand" with "program": 53, take "lyrics" (the whole text) and "voice"
-  (the singer of those bars) and write the melody to as many lines as fit; expand carries on with the next line. "expand" with
+  (the singer of those bars), "voices" (further singers with them: a duet or choir of up to 4) and "harmony" (true: each further singer a harmony part, false: the same notes) and write the melody to as many lines as fit; expand carries on with the next line. "expand" with
   any other "program" passes the melody to that instrument for the new bars; without "program" the melody's last instrument goes on
 Any request may also carry "seed": <int> to make that run repeatable.
 Events:   ready{sliders} | voices{items:[{key,name}]} | lyrics_info{text,ok} | log{text} | candidate{index,path,tempo,sig,score,notes} | melodies_done |
@@ -183,7 +183,7 @@ def handle(r):
             ly.lyric_motifs(r["lyrics"], int(r.get("bars", 4)), ly.VOICE_PROGRAM, r.get("sig", "4/4"),
                             max(40, min(int(r.get("bpm", 80)), 220)), chosen_key(r) or (0, "major"), r.get("llm", "7B"),
                             int(r.get("complexity", 3)), r["prompt"], int(r.get("count", 4)), log=log, on_candidate=candidate_event,
-                            voice=r.get("voice", "en"))
+                            voice=r.get("voice", "en"), voices=r.get("voices"), harmony=bool(r.get("harmony")))
             send(type="melodies_done")
             return
         make_melodies(
@@ -208,7 +208,8 @@ def handle(r):
                 raise RuntimeError("The Voice instrument sings your lyrics: add them with the Lyrics button first.")
             made = ly.lyric_extend(r["source_midi"], r["lyrics"], max(2, min(16, int(r.get("bars", 4)))), r.get("llm", "7B"),
                                    int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
-                                   on_candidate=candidate_event, voice=r.get("voice", "en"))
+                                   on_candidate=candidate_event, voice=r.get("voice", "en"), voices=r.get("voices"),
+                                   harmony=bool(r.get("harmony")))
             if made is None:
                 raise RuntimeError("This melody has already used all the lyrics. Add more lines in the Lyrics box, "
                                    "or write the new bars for another instrument.")

@@ -526,3 +526,18 @@ take `shape`, `form` and `knobs` (the review scripts and tests call them).
   never sung). A non-Voice extension of a lyric melody keeps the lines (`lyrics.carry`), which it used not to.
 - **Not verified:** the new pickers on screen; singing with two different singers (the test fakes SoulX; each single-singer
   run was verified earlier); the sheet music for a melody that changes instrument shows the first instrument's name and clef.
+
+
+## Duets and choirs (feature/choir)
+
+- Every lyric line in `*.lyrics.json` now stores `voices` (lead first, up to `MAX_SINGERS` = 4) and `harmony`, besides `voice`.
+  `lyrics.harmonize` moves the notes along the key's scale (`HARMONY_STEPS` = lead, +2, -2, +4 scale steps: a third above, a
+  third below, a fifth above), so a harmony part cannot leave the key; rhythm and words are the lead's. Unticked, every singer
+  gets the lead's notes. The backend takes `voices` and `harmony` on `melodies` and `expand` (Voice).
+- `sing_midi` runs SoulX once per distinct singer over all that singer's lines and adds the parts (as for per-segment singers),
+  so each extra singer costs the same singing time again.
+- Checked with the real model: "Twinkle twinkle little star" sung by Singer A and Singer B with Harmonize on came out as
+  C C G G A G (lead) and E E B B C B (second singer), measured with pyin on the two parts. Not listened to; the second
+  voice came out at about 45 % of the lead's RMS (the voices are not level-matched).
+- App: `Singers` (lead, extras, harmonize) replaces the single voice, in the Motif step and in each Extend step; extras are
+  chips of the other voices. Not verified on screen.
