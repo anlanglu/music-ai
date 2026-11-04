@@ -140,7 +140,7 @@ def _direction_for_sampler(d, grid, q, top_p, lo, hi):
 
 
 def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small", llm="7B", complexity=3, sliders=None,
-                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None, program=None, progression=None):
+                  direction="", resolve=True, phrasing=1, log=print, on_candidate=None, program=None, progression=None, modes=None):
     """Write `count` options, each the source melody plus `add_bars` more bars, to the session folder. Returns the list of
     {index, path, tempo, sig, score}; on_candidate(info) is called as each one is ready. `program` is the instrument the
     new bars are written for (default: the one the melody ends on); if it differs, the melody is passed to it. `progression`
@@ -171,7 +171,9 @@ def expand_melody(source_midi, add_bars=4, engine="hybrid", count=3, size="small
         key = t.estimate_key(notes)
         log(f"  ▸ The melody has no stored key; continuing in {t.key_label(key)}, the best fit for its notes.")
     whole, section = plan.extend(t.plan_for_file(src), key, sig, old_bars, add_bars, notes, level=complexity,
-                                 progression=progression)
+                                 progression=progression, modes=modes)
+    if modes:
+        log(f"  ▸ Mode by bar for the new bars: {' '.join(m or '-' for m in section['modes'])}")
     if progression:
         log(f"  ▸ Chords for the new bars: {' | '.join(' '.join(b) for b in section['harmony'])}")
     form = max(mine["form"], int((meta.get("plan") or {}).get("form", 0) or 0))
@@ -294,6 +296,9 @@ def _hybrid_section(notes, tempo, sig, program, key, section, add_bars, old_bars
     pool = {"allowed": [program], "balance": 0, "ranges": {program: (lo, hi)}}
     if plan.clean_sliders(sl)["strict"] >= 6:       # a relaxed scale lets the sampler wander; finish_melody then limits it
         pool["pitch_classes"] = t.scale_pcs(key) | (plan.plan_harmony_pcs(section) or set())    # a written chord's own notes too
+        regions = plan.scale_regions(section, tempo, start_tick)
+        if regions:
+            pool["scale_regions"] = regions                                                       # ... and each bar's own mode
     weights = plan.form_weights(form, kn)
     bias = plan.shape_weights(plan.from_sliders(sl)["shape"], kn)
     # A busy line with a strong pull to the motif has few pitches to choose from and repeats one; penalise that more.

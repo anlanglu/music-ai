@@ -112,3 +112,60 @@ def test_the_motif_is_given_the_chords_and_keeps_them(backend):
     backend.send(cmd="chords", source_midi=chosen["path"])
     ev = backend.until({"chords", "error"})[-1]
     assert [b[0]["symbol"] for b in ev["bars"]] == ["Cm7", "Fm7", "G7", "Cm"]
+
+
+def test_modes_by_bar_are_read_from_text():
+    assert h.parse_modes("major*3 lydian", plan.MODE_ORDER) == ["major", "major", "major", "lydian"]
+    assert h.parse_modes("- lydian", plan.MODE_ORDER) == ["", "lydian"]
+    with pytest.raises(ValueError, match="isn't a mode"):
+        h.parse_modes("majr", plan.MODE_ORDER)
+
+
+def test_a_bar_with_its_own_mode_has_its_own_scale_and_chord_check():
+    p = plan.build_plan(4, "4/4", (0, "major"))
+    plan.set_modes(p, ["", "", "", "lydian"])
+    assert plan.bar_modes(p) == ["major", "major", "major", "lydian"]
+    at = plan.scale_pcs_at(p)
+    assert 6 not in at(0.0) and 6 in at(13.0), "F# only in the lydian bar"
+    plan.set_harmony(p, [["C"], ["C"], ["C"], ["D"]])
+    assert plan.chord_fit(p)[3] == [[]], "D major (F#) belongs in lydian"
+    plan.set_modes(p, [])
+    assert plan.scale_pcs_at(p) is None and plan.chord_fit(p)[3] == [["F#"]], "... and not in C major"
+
+
+def test_the_raised_fourth_stays_out_of_the_major_bars_and_is_brought_into_the_lydian_one():
+    p = plan.build_plan(4, "4/4", (0, "major"))
+    plan.set_modes(p, ["", "", "", "lydian"])
+    notes = [(66 if i in (1, 5, 9) else 64, float(i), 1.0) for i in range(16)]          # F# in the first three bars, E in the last
+    out = t.finish_melody(notes, 4, "4/4", 0, (0, "major"), False, 0, {"flavor": 10, "strict": 10}, p)
+    assert all(pitch % 12 != 6 for pitch, s, _ in out if s < 12), "bars 1-3 are C major"
+    assert any(pitch % 12 == 6 for pitch, s, _ in out if s >= 12), "bar 4 gets its raised 4th"
+
+
+def test_the_sampler_is_given_each_bars_scale():
+    p = plan.build_plan(4, "4/4", (0, "major"))
+    assert plan.scale_regions(p, 120) is None
+    plan.set_modes(p, ["", "", "", "lydian"])
+    r = plan.scale_regions(p, 120)
+    assert len(r) == 4 and 6 not in r[0][2] and 6 in r[3][2] and r[0][1] == r[1][0]
+
+
+def test_set_modes_is_kept_and_shown_and_extend_adds_modes_for_the_new_bars(backend):
+    backend.send(**{**MELODY, "bars": 4, "count": 1, "key": [0, "major"], "mode": "major", "modes": "major*3 lydian",
+                    "progression": "C | C | C | D"})
+    chosen = [e for e in backend.until({"melodies_done", "error"}) if e["type"] == "candidate"][0]
+    backend.send(cmd="chords", source_midi=chosen["path"])
+    ev = backend.until({"chords", "error"})[-1]
+    assert ev["modes"] == ["major", "major", "major", "lydian"] and ev["labels"][3] == "C lydian"
+    assert all(c["outside"] == [] for b in ev["bars"] for c in b), "D is in C lydian"
+    backend.send(cmd="set_modes", source_midi=chosen["path"], modes="")
+    cleared = backend.until({"chords", "error"})[-1]
+    assert cleared["modes"] == ["", "", "", ""] and cleared["bars"][3][0]["outside"] == ["F#"]
+    backend.send(cmd="set_modes", source_midi=chosen["path"], bar_modes=["", "", "", "dorian"])
+    assert backend.until({"chords", "error"})[-1]["labels"][3] == "C dorian"
+    backend.send(cmd="expand", source_midi=chosen["path"], bars=4, count=1, engine="llm", seed=2, modes="- - lydian -")
+    done = backend.until({"melodies_done", "error"})
+    assert done[-1]["type"] == "melodies_done", done[-1]
+    cand = [e for e in done if e["type"] == "candidate"][0]
+    backend.send(cmd="chords", source_midi=cand["path"])
+    assert backend.until({"chords", "error"})[-1]["modes"] == ["", "", "", "dorian", "", "", "lydian", ""]

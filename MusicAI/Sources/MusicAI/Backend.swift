@@ -84,7 +84,7 @@ enum BackendEvent {
     case voices([(key: String, name: String)])
     case lyricsInfo(text: String, ok: Bool)
     /// The chords of each bar of a melody (one, or two for a change at the half bar), with the notes the mode lacks.
-    case chords(path: URL, key: String, bars: [[ChordCell]])
+    case chords(path: URL, key: String, bars: [[ChordCell]], modes: [String], labels: [String], modeNames: [String])
     case error(String)
 }
 
@@ -239,7 +239,9 @@ final class Backend {
                 bar.map { ChordCell(symbol: $0["symbol"] as? String ?? "", notes: $0["notes"] as? String ?? "",
                                     outside: $0["outside"] as? [String] ?? [], remark: $0["remark"] as? String ?? "") }
             }
-            return .chords(path: URL(fileURLWithPath: obj["path"] as? String ?? ""), key: obj["key"] as? String ?? "", bars: bars)
+            return .chords(path: URL(fileURLWithPath: obj["path"] as? String ?? ""), key: obj["key"] as? String ?? "", bars: bars,
+                           modes: obj["modes"] as? [String] ?? [], labels: obj["labels"] as? [String] ?? [],
+                           modeNames: obj["mode_names"] as? [String] ?? [])
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone

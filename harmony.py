@@ -197,3 +197,20 @@ def parse_progression(text):
 def fit(chord, scale_pcs):
     """The names of the chord's notes that are not in the key's scale; empty when it sits in the key."""
     return [NOTE_NAMES[p] for p in chord.pcs if p not in scale_pcs]
+
+
+def parse_modes(text, valid):
+    """'major*3 lydian' -> ['major', 'major', 'major', 'lydian']: one mode per bar, `*3` repeating it. `-` or `key` is a bar in the
+    piece's own mode (stored as ''). `valid` is the mode names that exist. Raises ValueError for a name that isn't one."""
+    out = []
+    for word in text.replace(",", " ").split():
+        name, _, times = word.partition("*")
+        name = name.lower()
+        if name in ("-", "key", "same"):
+            name = ""
+        elif name not in valid:
+            raise ValueError(f"'{name}' isn't a mode I know ({', '.join(valid)}); use - for the piece's own mode")
+        if times and not times.isdigit():
+            raise ValueError(f"'{word}': what follows * must be a number of bars")
+        out += [name] * (int(times) if times else 1)
+    return out

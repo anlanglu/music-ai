@@ -7,6 +7,8 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies"|"expand", ..., "progression": "Dm7 G7 | Cmaj7 | Am7 D7"}   (the chords the new bars follow: bars split by |, up to two chords in a bar, see harmony.py)
   {"cmd":"chords", "source_midi"}  ->  chords{path,key,written,bars:[[{symbol,notes,outside,remark}]]}   (the chords of each bar; "outside" = notes the mode lacks)
   {"cmd":"set_chords", "source_midi", "progression" | "bars_chords": [[symbol,...] per bar]}  ->  chords{...}   (written into the session's plan; later steps follow them)
+  {"cmd":"melodies"|"expand", ..., "modes": "major*3 lydian"}   (a mode of its own for some bars: names from plan.MODES, *N repeats, - is the piece's mode; bars after the list keep the piece's)
+  {"cmd":"set_modes", "source_midi", "modes" | "bar_modes": ["", "lydian", ...]}  ->  chords{...}   (the chords event also carries modes, labels and mode_names per bar)
   {"cmd":"repeat", "source_midi", "from_bar", "to_bar", "times"?: 1..4}  (bars copied onto the end: melody, instruments, sung line and its lyrics, accompaniment)
   {"cmd":"sing_part", "source_midi", "lyrics", "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
@@ -152,6 +154,14 @@ def progression_of(r):
     return harmony.parse_progression(text) if text else None
 
 
+def modes_of(r):
+    """The mode of each bar the request asks for, as ['major', 'major', '', 'lydian'] ('' = the piece's own), or None."""
+    if r.get("bar_modes") is not None:
+        return [str(m) for m in r["bar_modes"]]
+    text = (r.get("modes") or "").strip()
+    return harmony.parse_modes(text, plan.MODE_ORDER) if text else None
+
+
 def chords_event(path):
     """The chords of a melody's bars for the app's chord strip: each chord's notes, and the notes that the key's mode doesn't
     have (the strip shows those bars in another colour). The plan's chords, else the ones the melody's notes suggest."""
@@ -166,15 +176,19 @@ def chords_event(path):
     chords = list(base.get("chords", []))[:bars]
     if len(chords) < bars:
         chords += plan.infer_chords(notes, key, sig, bars)[len(chords):]
-    view = {"key": key, "chords": chords, "harmony": list(base.get("harmony") or [])[:bars] or None}
+    view = {"key": key, "chords": chords, "harmony": list(base.get("harmony") or [])[:bars] or None,
+            "modes": (list(base.get("modes") or []) + [""] * bars)[:bars]}
     out = []
     for bar, miss in zip(plan.bar_chords(view), plan.chord_fit(view)):
         out.append([{"symbol": c.symbol, "notes": c.notes(), "outside": m, "remark": c.remark} for c, m in zip(bar, miss)])
-    send(type="chords", path=str(src), key=t.key_label(key), written=bool(base.get("harmony")), bars=out)
+    send(type="chords", path=str(src), key=t.key_label(key), written=bool(base.get("harmony")), bars=out,
+         modes=view["modes"], labels=[t.key_label((key[0], m)) for m in plan.bar_modes(view)],
+         mode_names=plan.MODE_ORDER)
 
 
-def write_chords(path, progression):
-    """Keep chords the user wrote in the session's plan: they are what later steps (Extend, accompaniment, singing) follow."""
+def write_chords(path, progression=None, modes=None):
+    """Keep chords (and a mode for some bars) the user wrote in the session's plan: they are what later steps (Extend,
+    accompaniment, singing) follow. Whichever is None is left as it was."""
     import math
     import text2music as t
     from expand import read_melody
@@ -188,7 +202,10 @@ def write_chords(path, progression):
     form = int((meta.get("plan") or {}).get("form", t.DEFAULT_FORM) or t.DEFAULT_FORM)
     theplan = base if base and len(base["chords"]) >= bars else plan.build_plan(bars, sig, key)
     theplan["key"] = tuple(key)
-    plan.set_harmony(theplan, progression)
+    if progression:
+        plan.set_harmony(theplan, progression)
+    if modes is not None:
+        plan.set_modes(theplan, modes)
     t._write_meta(folder, key=list(key), plan=t.plan_json(theplan, form), form=form)
 
 
@@ -251,7 +268,7 @@ def handle(r):
             log=log, on_candidate=candidate_event,
             key=chosen_key(r), mode=chosen_mode(r),
             bpm=max(40, min(int(r.get("bpm", 80)), 220)), resolve=bool(r.get("resolve", True)), phrasing=int(r.get("phrasing", 1)),
-            sliders=r.get("sliders"), progression=progression_of(r),
+            sliders=r.get("sliders"), progression=progression_of(r), modes=modes_of(r),
         )
         send(type="melodies_done")
     elif cmd == "chords":  # the chords of the bars of a melody, for the chord strip
@@ -261,6 +278,12 @@ def handle(r):
         if not prog:
             raise RuntimeError("There are no chords to write.")
         write_chords(r["source_midi"], prog)
+        chords_event(r["source_midi"])
+    elif cmd == "set_modes":  # give some bars a mode of their own ("modes" text like "major*3 lydian", or "bar_modes" list)
+        modes = modes_of(r)
+        if modes is None:
+            modes = []
+        write_chords(r["source_midi"], None, modes)
         chords_event(r["source_midi"])
     elif cmd == "expand":  # step 2: add bars to the chosen melody, as several options
         begin()
@@ -292,7 +315,7 @@ def handle(r):
             r["source_midi"], max(2, min(16, int(r.get("bars", 4)))), r.get("engine", "hybrid"), int(r.get("count", 3)),
             r.get("size", "small"), r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("sliders"),
             r.get("direction", ""), bool(r.get("resolve", True)), int(r.get("phrasing", 1)), log=log,
-            on_candidate=candidate_event, program=program, progression=progression_of(r),
+            on_candidate=candidate_event, program=program, progression=progression_of(r), modes=modes_of(r),
         )
         send(type="melodies_done")
     elif cmd == "repeat":  # step 2: copy bars of the melody (with its singing, lyrics and accompaniment) onto the end

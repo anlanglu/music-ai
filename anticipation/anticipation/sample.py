@@ -149,9 +149,15 @@ def _pool_mask(pool, device):
 _SCALE_CACHE = {}
 
 
-def _key_mask(pool, device):
-    """Bool tensor [instrument, pitch]: the pitch classes of the key the part may use. Drums are exempt."""
+def _key_mask(pool, device, onset=None):
+    """Bool tensor [instrument, pitch]: the pitch classes of the key the part may use. Drums are exempt. When the pool has
+    'scale_regions' (a scale for each stretch of time: bars with a mode of their own), the one at `onset` is used."""
     pcs = pool.get('pitch_classes')
+    if onset is not None:
+        for start, end, p in pool.get('scale_regions') or ():
+            if start <= onset < end:
+                pcs = p
+                break
     if not pcs:
         return None
     key = (str(device), tuple(sorted(pcs)))
@@ -237,7 +243,7 @@ def steer_instruments(logits, tokens, pool, onset=None):
 
     notes = logits[NOTE_OFFSET:NOTE_OFFSET+MAX_NOTE].view(MAX_INSTR, MAX_PITCH)
     base = _pool_mask(pool, logits.device)
-    keymask = _key_mask(pool, logits.device)
+    keymask = _key_mask(pool, logits.device, onset)
     chord = _chord_bonus(pool, onset, logits.device, pool.get('chord_weight', 0.0))
     scored = notes + bonus[:, None]
     if chord is not None:

@@ -74,21 +74,54 @@ struct ChordStrip: View {
             let w = duration > 0 ? secondsPerBar / duration * geo.size.width : 0
             ZStack(alignment: .topLeading) {
                 ForEach(bars.indices, id: \.self) { i in
-                    cell(i)
-                        .frame(width: max(w - 2, 4), height: geo.size.height)
-                        .offset(x: Double(i) * w + 1)
+                    VStack(spacing: 2) {
+                        cell(i).frame(height: 28)
+                        modeCell(i).frame(height: 14)
+                    }
+                    .frame(width: max(w - 2, 4), height: geo.size.height)
+                    .offset(x: Double(i) * w + 1)
                 }
             }
         }
-        .frame(height: 30)
+        .frame(height: 46)
+    }
+
+    private func label(_ i: Int) -> String { i < vm.chordLabels.count ? vm.chordLabels[i] : key }
+    private func own(_ i: Int) -> String { i < vm.chordModes.count ? vm.chordModes[i] : "" }
+
+    /// The row under the chords: the bar's own mode when it has one, else a faint dot; click to choose.
+    private func modeCell(_ i: Int) -> some View {
+        let mine = own(i)
+        return Text(mine.isEmpty ? "·" : String(mine.prefix(5)))
+            .font(.system(size: 9, weight: .semibold)).lineLimit(1)
+            .foregroundStyle(mine.isEmpty ? Color.secondary.opacity(0.5) : Color.teal)
+            .frame(maxWidth: .infinity)
+            .background(mine.isEmpty ? Color.clear : Color.teal.opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+            .contentShape(Rectangle())
+            .help("Bar \(i + 1) is in \(label(i)). Click to give this bar a mode of its own.")
+            .onTapGesture { vm.modeEditing = i }
+            .popover(isPresented: Binding(get: { vm.modeEditing == i }, set: { if !$0 { vm.modeEditing = nil } })) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Bar \(i + 1) mode").font(.headline)
+                    Button("The piece's mode (\(key))") { vm.setMode(bar: i, mode: ""); vm.modeEditing = nil }
+                        .buttonStyle(.plain).foregroundStyle(mine.isEmpty ? Color.accentColor : Color.primary)
+                    ForEach(vm.modeNames, id: \.self) { m in
+                        Button(m.capitalized) { vm.setMode(bar: i, mode: m); vm.modeEditing = nil }
+                            .buttonStyle(.plain).foregroundStyle(mine == m ? Color.accentColor : Color.primary)
+                    }
+                    Text("Notes and chords in this bar are held to this mode.").font(.caption).foregroundStyle(.secondary)
+                        .frame(width: 200, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+            }
     }
 
     private func mismatch(_ bar: [ChordCell]) -> [ChordCell] { bar.filter { !$0.outside.isEmpty } }
 
-    private func help(_ bar: [ChordCell]) -> String {
+    private func help(_ i: Int, _ bar: [ChordCell]) -> String {
         var lines = bar.map { "\($0.symbol): \($0.notes)" }
         for c in bar where !c.outside.isEmpty {
-            lines.append("\(c.symbol) has \(c.outside.joined(separator: ", ")), which \(key) doesn't have.")
+            lines.append("\(c.symbol) has \(c.outside.joined(separator: ", ")), which \(label(i)) doesn't have.")
         }
         lines += bar.map(\.remark).filter { !$0.isEmpty }
         return lines.joined(separator: "\n") + "\nClick to change."
@@ -108,7 +141,7 @@ struct ChordStrip: View {
         .background((off ? Color.orange.opacity(0.28) : Color(white: 0.16)), in: RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(off ? Color.orange : Color.clear, lineWidth: 1))
         .contentShape(Rectangle())
-        .help(help(bar))
+        .help(help(i, bar))
         .onTapGesture { vm.chordEditText = bar.map(\.symbol).joined(separator: " "); vm.chordEditing = i }
         .popover(isPresented: Binding(get: { vm.chordEditing == i }, set: { if !$0 { vm.chordEditing = nil } })) {
             VStack(alignment: .leading, spacing: 8) {
@@ -574,7 +607,7 @@ struct ContentView: View {
             }
             describeBox("Anything else? (optional)", text: $vm.prompt, height: 54,
                         example: "e.g. like a music box, rising slowly then settling")
-            progressionBox($vm.motifProgression)
+            progressionBox($vm.motifProgression, modes: $vm.motifModes)
             barsRow("Bars", $vm.bars, range: 1...4, help: "How long the motif is, in bars (measures), at most 4. At 4/4 and 80 bpm, 4 bars last about 12 seconds.")
 
             Picker("Instrument", selection: $vm.instrument) {
@@ -649,13 +682,16 @@ struct ContentView: View {
 
     /// Step 2: add bars to the chosen melody. The same controls as step 1, with its own values.
     /// Chords to write the melody to, typed as a progression. Empty: the app picks chords that fit the key.
-    private func progressionBox(_ text: Binding<String>) -> some View {
+    private func progressionBox(_ text: Binding<String>, modes: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Chords (optional)").font(.caption).foregroundStyle(.secondary)
             TextField("e.g. Dm7 G7 | Cmaj7 | Am7 D7", text: text).textFieldStyle(.roundedBorder)
                 .help("Bars are separated by |; two chords in a bar change at the half bar. A short progression repeats to fill the bars. Leave it empty and the app picks chords in the key. Under the piano roll, each bar's chord can be changed afterwards.")
             Text("Bars separated by |, two chords in a bar for a half-bar change. Orange bars have notes the mode doesn't have.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Mode by bar (optional)").font(.caption).foregroundStyle(.secondary)
+            TextField("e.g. major*3 lydian", text: modes).textFieldStyle(.roundedBorder)
+                .help("A mode of its own for some bars, one per bar: major*3 lydian is three bars in major, then one in lydian. - is the piece's own mode; bars after the list keep it. Set the piece's mode (above) to the one most bars use.")
         }
     }
 
@@ -675,7 +711,7 @@ struct ContentView: View {
             describeBox("Anything else? (optional)", text: $vm.expandDirection, height: 54,
                         example: "e.g. build to a climax, then calm down")
                 .help("Free text for this expansion. The language model reads it as an instruction; the Anticipation model turns it into how busy, how high or low and how adventurous the new bars are.")
-            progressionBox($vm.expandProgression)
+            progressionBox($vm.expandProgression, modes: $vm.expandModes)
             barsRow("Bars to add", $vm.expandBars, help: "How many bars to add on the end of the chosen melody.")
             Picker("Instrument", selection: $vm.expandInstrument) {
                 ForEach(Instrument.extend) { Text($0.name).tag($0) }

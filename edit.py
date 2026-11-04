@@ -204,6 +204,8 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
     shown = ", ".join(f"{a}" if a == b else f"{a}–{b}" for a, b in _runs(targets))
     log(f"  ▸ Changing bar{'s' if len(targets) > 1 else ''} {shown} only; every other bar is kept exactly as it is.")
     key = t.key_for_file(src) or t.estimate_key(_melody)
+    theplan = t.plan_for_file(src)
+    own_modes = bool(theplan and theplan.get("modes") and any(theplan["modes"]))   # bars with a mode of their own
     program = t.VOCAL_PROGRAM if part == "vocal" else program_at(programs, (targets[0] - 1) * bb)   # the instrument at the first bar changed
     counts = {b: sum(1 for n in notes if bar_of(n[1], bb) == b) for b in targets} if part == "vocal" else {}
     extra = ""
@@ -235,7 +237,8 @@ def edit_melody(source_midi, instruction, bars=None, count=3, llm="7B", complexi
         for bar, items in repl.items():
             base = (bar - 1) * bb
             fit = [(t.fold_pitch(p, program), s_, d) for p, s_, d in items]
-            fit = t.limit_outside(fit, key, 10, span) if key and fit else fit
+            scale_at = (lambda _beat, pcs=plan.bar_scale(theplan, bar - 1): pcs) if own_modes else None   # keep to that bar's mode
+            fit = t.limit_outside(fit, key, 10, span, scale_at=scale_at) if key and fit else fit
             fitted[bar] = fit
         thin = None if re.search(r"rest|sparse|silen|pause|breath|fewer|simpl|empty|thin|space", instruction, re.I) else \
             next((b for b, items in fitted.items() if sum(d for _p, _s, d in items) < 0.6 * bb

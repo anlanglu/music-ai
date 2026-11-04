@@ -468,33 +468,35 @@ def scale_pcs(key):
     return plan.key_pcs(key[0], key[1])
 
 
-def snap_to_key(notes, key, span=(0, 127), chord_at=None):
+def snap_to_key(notes, key, span=(0, 127), chord_at=None, scale_at=None):
     """Move every out-of-key note to the nearest note of the scale (the lower one on a tie), staying inside `span`
     (the instrument's playable range; always inside MIDI's 0..127). `chord_at(beat)`, when given, is the pitch classes of
-    the chord sounding then: a note that belongs to that chord stays, even if the key lacks it."""
+    the chord sounding then: a note that belongs to that chord stays, even if the key lacks it. `scale_at(beat)`, when given,
+    is the scale in force at that beat (bars with a mode of their own), in place of the key's."""
     pcs = scale_pcs(key)
     lo, hi = max(span[0], 0), min(span[1], 127)
     out = []
     for p, s_, d in notes:
-        if p % 12 not in pcs and not (chord_at and p % 12 in chord_at(s_)):
-            near = [x for x in range(p - 2, p + 3) if lo <= x <= hi and x % 12 in pcs] or \
-                   [x for x in range(p - 6, p + 7) if lo <= x <= hi and x % 12 in pcs]
+        here = scale_at(s_) if scale_at else pcs
+        if p % 12 not in here and not (chord_at and p % 12 in chord_at(s_)):
+            near = [x for x in range(p - 2, p + 3) if lo <= x <= hi and x % 12 in here] or \
+                   [x for x in range(p - 6, p + 7) if lo <= x <= hi and x % 12 in here]
             if near:
                 p = min(near, key=lambda x: (abs(x - p), x))
         out.append((p, s_, d))
     return out
 
 
-def limit_outside(notes, key, strict=10.0, span=(0, 127), chord_at=None):
+def limit_outside(notes, key, strict=10.0, span=(0, 127), chord_at=None, scale_at=None):
     """Bring a melody into its key, as strictly as asked. strict 10: every note outside the scale moves to the nearest
     scale note. Lower: that many fewer move, up to a quarter of the notes at 0, so chromatic passing notes survive. The
     ones that stay are the least harmful: short notes, off the beat, never the first or the last note."""
-    snapped = snap_to_key(notes, key, span, chord_at)
+    snapped = snap_to_key(notes, key, span, chord_at, scale_at)
     allowed = round(len(notes) * (10 - max(0.0, min(10.0, strict))) / 10 * 0.25)
     if allowed <= 0:
         return snapped
     pcs = scale_pcs(key)
-    outside = [i for i in range(1, len(notes) - 1) if notes[i][0] % 12 not in pcs
+    outside = [i for i in range(1, len(notes) - 1) if notes[i][0] % 12 not in (scale_at(notes[i][1]) if scale_at else pcs)
                and not (chord_at and notes[i][0] % 12 in chord_at(notes[i][1]))]
     outside.sort(key=lambda i: notes[i][2] + (1.0 if abs(notes[i][1] % 1) < 1e-6 else 0.0))   # short, weak first
     keep = set(outside[:allowed])
@@ -537,6 +539,7 @@ def plan_json(theplan, form=DEFAULT_FORM):
     return {"key": list(theplan["key"]), "bars": theplan["bars"], "sig": theplan["sig"], "bb": theplan["bb"],
             "level": theplan["level"], "form": int(form), "chords": list(theplan["chords"]),
             **({"harmony": [list(b) for b in theplan["harmony"]]} if theplan.get("harmony") else {}),
+            **({"modes": list(theplan["modes"])} if theplan.get("modes") else {}),
             "phrases": theplan["phrases"], "cadences": theplan["cadences"],
             "boundaries": [list(b) for b in theplan["boundaries"]]}
 
@@ -1096,19 +1099,23 @@ def finish_melody(notes, bars, sig, program, enforce, resolve, phrasing, sliders
     notes, _ = conform_melody(notes, bars, sig)
     notes = [(fold_pitch(p, program), s_, d) for p, s_, d in notes]
     if enforce:
-        notes = limit_outside(notes, enforce, sl["strict"], span, plan.chord_pcs_at(theplan))
-        if plan.is_modal(enforce[1]):
+        notes = limit_outside(notes, enforce, sl["strict"], span, plan.chord_pcs_at(theplan), plan.scale_pcs_at(theplan))
+        if theplan is not None and plan.scale_pcs_at(theplan):
+            pass                                                              # the bars with modes of their own: below, after the cadences
+        elif plan.is_modal(enforce[1]):
             notes = plan.flavor_notes(notes, enforce, sl["flavor"], span)    # bring in the note that gives the mode its sound
     notes = apply_breaths(notes, bars, sig, phrasing)
     if enforce and theplan is not None and sl["endings"] > 0:
         notes = plan.resolve_phrase_endings(notes, theplan, enforce, span)
     if resolve:
         notes = resolve_ending(notes, bars, sig, enforce, span)
+    if enforce and theplan is not None and plan.scale_pcs_at(theplan):
+        notes = plan.flavor_by_bar(notes, theplan, sl["flavor"], span)       # the note that gives each bar's mode its sound
     return notes
 
 
 def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=None, resolve=True, key=None,
-                      phrasing=1, sliders=None, theplan=None, mode=None, progression=None):
+                      phrasing=1, sliders=None, theplan=None, mode=None, progression=None, modes=None):
     """Yield `count` melodies as dicts {notes, tempo, score}, each written in full by the language model.
     The key is the one given, else one named in the prompt, else one the LLM picks for the whole batch. `mode` (a name
     from plan.MODES) overrides the mode of whichever key that is."""
@@ -1125,8 +1132,11 @@ def melody_candidates(prompt, bars, sig, level, llm, program, count, log, bpm=No
         log(f"  ▸ Mode: {key_label(enforce)}.")
     log(f"  ▸ Allowed notes in {key_label(enforce)}: {scale_names(enforce)}"
         + ("." if sl["strict"] >= 10 else f" (relaxed: up to {round((10 - sl['strict']) * 2.5)}% of the notes may be outside)."))
-    if theplan is None and (progression or plan.from_sliders(sl)["form"] > 0):
+    if theplan is None and (progression or modes or plan.from_sliders(sl)["form"] > 0):
         theplan = plan.build_plan(bars, sig, enforce)
+        if modes:
+            plan.set_modes(theplan, modes)
+            log(f"  ▸ Mode by bar: {' '.join(m or '-' for m in theplan['modes'])}")
         if progression:
             plan.set_harmony(theplan, progression)
             log(f"  ▸ Chords: {' | '.join(' '.join(b) for b in theplan['harmony'])}")
@@ -1156,7 +1166,7 @@ def best_melody(prompt, bars, sig, level, llm, program, candidates, tempo_hint, 
 
 def make_melodies(prompt, bars=8, program=0, sig="4/4", complexity=3, llm="7B", count=4, name=None, log=print,
                   on_candidate=None, bpm=None, resolve=True, key=None, phrasing=1, sliders=None, mode=None,
-                  progression=None):
+                  progression=None, modes=None):
     """Stage 1: write `count` melody options to output/<name>-optN.mid. Returns a list of dicts
     {index, path, tempo, sig, score}; on_candidate(dict) is called as each one is ready."""
     folder = ensure_session(prompt)
@@ -1165,7 +1175,7 @@ def make_melodies(prompt, bars=8, program=0, sig="4/4", complexity=3, llm="7B", 
     out = []
     log(f"Composing {count} melody options...")
     for c in melody_candidates(prompt, bars, sig, complexity, llm, program, count, log, bpm, resolve, key, phrasing, sliders,
-                               mode=mode, progression=progression):
+                               mode=mode, progression=progression, modes=modes):
         if not out:    # the first one has chosen the key and the plan, which the accompaniment will follow
             _write_meta(folder, key=list(c["key"]), prompt=prompt, level=complexity,
                         plan=plan_json(c["plan"], plan.from_sliders(sliders)["form"]) if c["plan"] else None,
@@ -1378,6 +1388,8 @@ def add_part_options(source_midi, program, count=3, size="small", playable=True,
     if theplan is not None and program != DRUMS:
         if pool.get("pitch_classes") and plan.plan_harmony_pcs(theplan):
             pool["pitch_classes"] = set(pool["pitch_classes"]) | plan.plan_harmony_pcs(theplan)   # the written chords' own notes
+        if pool.get("pitch_classes") and plan.scale_regions(theplan, tempo):
+            pool["scale_regions"] = plan.scale_regions(theplan, tempo)                          # each bar's own scale
         w = plan.form_weights(theplan.get("form", DEFAULT_FORM))
         if w.get("chord"):
             pool["regions"] = plan.plan_regions(theplan, tempo)   # ... and on the melody's own chords
@@ -1641,6 +1653,8 @@ def make_music(
     if theplan is not None and pool is not None:
         if pool.get("pitch_classes") and plan.plan_harmony_pcs(theplan):
             pool["pitch_classes"] = set(pool["pitch_classes"]) | plan.plan_harmony_pcs(theplan)   # the written chords' own notes
+        if pool.get("pitch_classes") and plan.scale_regions(theplan, tempo):
+            pool["scale_regions"] = plan.scale_regions(theplan, tempo)                          # each bar's own scale
         w = plan.form_weights(theplan.get("form", DEFAULT_FORM))
         if w.get("chord"):
             pool["regions"] = plan.plan_regions(theplan, tempo)   # ... and on the melody's own chords

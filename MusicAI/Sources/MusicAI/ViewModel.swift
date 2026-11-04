@@ -163,6 +163,13 @@ final class ViewModel: ObservableObject {
     @Published var chordBars: [[ChordCell]] = []
     @Published var chordsFor: URL?
     @Published var chordKey = ""
+    /// A mode of its own for some bars ("" = the piece's), what each bar is called (e.g. "C lydian"), and the modes to pick from.
+    @Published var chordModes: [String] = []
+    @Published var chordLabels: [String] = []
+    @Published var modeNames: [String] = []
+    @Published var modeEditing: Int?
+    @Published var motifModes = ""
+    @Published var expandModes = ""
     @Published var chordEditing: Int?          // the bar whose chords are being typed in the strip
     @Published var chordEditText = ""
     @Published var instrument = Instrument.all[0] {
@@ -444,10 +451,13 @@ final class ViewModel: ObservableObject {
                     self[keyPath: which].extras.formIntersection(keys)
                 }
             }
-        case .chords(let path, let key, let bars):
+        case .chords(let path, let key, let bars, let modes, let labels, let modeNames):
             chordsFor = path
             chordKey = key
             chordBars = bars
+            chordModes = modes
+            chordLabels = labels
+            self.modeNames = modeNames
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
             lyricsOK = ok
@@ -765,7 +775,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": lyrics, "progression": motifProgression,
+            "sliders": sliderValues, "lyrics": lyrics, "progression": motifProgression, "modes": motifModes,
         ].merging(singerFields(singers)) { $1 })
     }
 
@@ -859,7 +869,7 @@ final class ViewModel: ObservableObject {
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
             "lyrics": lyrics, "program": expandInstrument.program, "chords": expandInstrument.chords,
-            "progression": expandProgression,
+            "progression": expandProgression, "modes": expandModes,
         ].merging(singerFields(expandSingers)) { $1 })
     }
 
@@ -876,6 +886,14 @@ final class ViewModel: ObservableObject {
         all[bar] = text.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
         if all[bar].isEmpty { return }
         send(["cmd": "set_chords", "source_midi": url.path, "bars_chords": all])
+    }
+
+    /// Give one bar a mode of its own ("" = back to the piece's mode).
+    func setMode(bar: Int, mode: String) {
+        guard let url = displayURL, bar < chordBars.count else { return }
+        var all = chordModes + Array(repeating: "", count: max(0, chordBars.count - chordModes.count))
+        all[bar] = mode
+        send(["cmd": "set_modes", "source_midi": url.path, "bar_modes": all])
     }
 
     /// Copy bars of the melody (with its singing, lyrics and accompaniment) onto the end.
