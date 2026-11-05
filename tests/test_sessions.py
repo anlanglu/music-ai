@@ -38,7 +38,7 @@ def test_two_sessions_with_one_name_get_distinct_folders(out_dir):
     assert a != b
 
 
-def test_approved_pieces_are_numbered_and_restore_picks_the_latest(out_dir, monkeypatch):
+def test_approved_pieces_are_numbered_and_restore_sends_them_in_the_history(out_dir, monkeypatch):
     s = t.new_session("pieces")
     cand = out_dir / "cand.mid"
     cand.write_bytes(b"MThd")
@@ -52,7 +52,9 @@ def test_approved_pieces_are_numbered_and_restore_picks_the_latest(out_dir, monk
     monkeypatch.setattr(backend, "notes_of", lambda p: [])
     monkeypatch.setattr(backend, "programs_of", lambda p: {})
     monkeypatch.setattr(backend, "midi_info", lambda p: (90, "4/4", 1.0))
+    monkeypatch.setattr(backend, "layers_of", lambda p: [])
     backend.restore(s)
-    done = [e for e in sent if e["type"] == "done"]
-    assert done, "a saved session with approved pieces must re-emit its latest piece"
-    assert done[-1]["full"].endswith(second.name)
+    history = [e for e in sent if e["type"] == "history"]
+    assert history, "a saved session with approved pieces must send them in its history"
+    entries = history[0]["data"]["entries"]
+    assert entries[-1]["snapshot"]["candidates"][0]["path"].endswith(second.name) and entries[-1]["id"] == history[0]["data"]["current"]

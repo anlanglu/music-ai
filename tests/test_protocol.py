@@ -112,9 +112,11 @@ def test_round_trip_create_approve_rename_reopen(backend):
     ev += backend.until({"sessions"})[:-1]
     kinds = [e["type"] for e in ev]
     assert "error" not in kinds
-    assert kinds.count("candidate") == 3, "the melody options come back"
-    done = [e for e in ev if e["type"] == "done"]
-    assert done and "piece01-" in done[-1]["full"], "the approved piece comes back"
+    h = [e for e in ev if e["type"] == "history"][0]            # an old session: its history is rebuilt from the file names
+    steps = {e["title"]: e["snapshot"]["candidates"] for e in h["data"]["entries"]}
+    assert len(steps["Motifs"]) == 3, "the melody options come back"
+    assert any(t.startswith("Piece01") for t in steps), "the approved piece comes back"
+    assert all(p in h["files"] for e in h["data"]["entries"] for c in e["snapshot"]["candidates"] for p in [c["path"]])
 
 
 def test_a_mode_can_be_asked_for_with_or_without_a_tonic(backend):

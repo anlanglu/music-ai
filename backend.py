@@ -18,6 +18,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"clear_bars", "source_midi", "from_bar"?, "to_bar"?, "programs"?: [..]}  ->  part_approved{path,notes,programs,layers}  (the accompaniment taken out of those bars)
   A part is an accompaniment layer kept in the melody's own file, for the bars asked for (default: all); candidate, part_candidate, part_approved and done events carry layers:[{program,channel,from_bar,to_bar,notes}]
   {"cmd":"notation", "path":..., "title":..., "paged":false}
+  {"cmd":"history_save", "data":{current, discarded, entries}}   (written to the session's history.json; session_open answers with history{data, files{path: {tempo,sig,notes,programs,layers}}})
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
@@ -42,7 +43,6 @@ sys.stdout = sys.stderr
 
 import mido  # noqa: E402
 
-import re
 import time
 from pathlib import Path
 
@@ -52,6 +52,7 @@ from parts import add_part_options, approve_part  # noqa: E402
 from sessions import current_session, ensure_session, list_sessions, new_session, open_session, rename_session, reset_session, seed_everything, session_info  # noqa: E402
 from text2music import make_melodies, make_music  # noqa: E402
 import harmony  # noqa: E402
+import journal  # noqa: E402
 import mixer  # noqa: E402
 import plan  # noqa: E402
 from expand import expand_melody  # noqa: E402
@@ -120,30 +121,33 @@ def begin(prompt=""):
         announce()
 
 
+def file_info(path):
+    """What the app needs to show a file as an option: its tempo, time signature, notes, instruments and layers."""
+    tempo, sig, _ = midi_info(path)
+    return {"tempo": tempo, "sig": sig, "notes": notes_of(path), "programs": list(programs_of(path)), "layers": layers_of(path)}
+
+
 def restore(path):
-    """Re-emit what a saved session contains: its latest batch of melody options and its latest full piece."""
+    """Re-emit what a saved session contains. With a history (saved by the app, or rebuilt from the file names), the whole
+    history goes to the app, with the facts about every file it mentions. Otherwise: the latest options and finished piece."""
     folder = Path(path)
-    batches = {}
-    for f in sorted(folder.glob("*-opt*.mid")):
-        m = re.match(r"(.+)-opt(\d+)\.mid$", f.name)
-        if m:
-            batches.setdefault(m.group(1), []).append((int(m.group(2)), f))
-    if batches:
-        latest = sorted(batches)[-1]
-        for k, f in sorted(batches[latest]):
-            tempo, sig, _ = midi_info(f)
-            candidate_event({"index": k, "path": f, "tempo": tempo, "sig": sig, "score": None})
-    else:
-        imports = sorted(folder.glob("*-import.mid"))
-        if imports:
-            tempo, sig, _ = midi_info(imports[-1])
-            candidate_event({"index": 1, "path": imports[-1], "tempo": tempo, "sig": sig, "score": None})
+    data = journal.load(folder) or journal.reconstruct(folder)
+    if data:
+        files = {}
+        for p in journal.paths_in(data):
+            if p not in files and Path(p).exists():
+                try:
+                    files[p] = file_info(p)
+                except Exception:      # a file that cannot be read is left out; its option does not come back
+                    pass
+        send(type="history", data=data, files=files)
+        send(type="melodies_done")
+        return
+    imports = sorted(folder.glob("*-import.mid"))
+    if imports:
+        tempo, sig, _ = midi_info(imports[-1])
+        candidate_event({"index": 1, "path": imports[-1], "tempo": tempo, "sig": sig, "score": None})
     send(type="melodies_done")
-    # the latest finished piece: an automatic orchestration (*-full.mid) or the newest approved version (pieceNN-*.mid)
-    finals = list(folder.glob("*-full.mid")) + list(folder.glob("piece*.mid"))
-    if finals:
-        latest = max(finals, key=lambda f: (f.stat().st_mtime, f.name))
-        send(type="done", melody=str(latest), full=str(latest), notes=notes_of(latest), programs=list(programs_of(latest)))
 
 
 def progression_of(r):
@@ -242,6 +246,10 @@ def handle(r):
         else:
             old, _ = rename_session(r["name"])
             announce(old)
+    elif cmd == "history_save":    # the app's history of steps, kept with the session so that it comes back when it is opened
+        folder = current_session()
+        if folder is not None and r.get("data"):
+            journal.save(folder, r["data"])
     elif cmd == "session_open":
         open_session(r["path"])
         announce()
