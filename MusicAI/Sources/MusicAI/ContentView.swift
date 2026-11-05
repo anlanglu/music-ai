@@ -12,6 +12,9 @@ struct PianoRoll: View {
     var secondsPerBar: Double? = nil
     var chosen: Set<Int> = []
     var toggle: ((Int) -> Void)? = nil
+    /// Where playing starts (seconds), drawn as a green marker; clicking the bar numbers calls `setPlayFrom` with that bar.
+    var playFrom: Double? = nil
+    var setPlayFrom: ((Int) -> Void)? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -43,6 +46,14 @@ struct PianoRoll: View {
                     ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: rowH * 0.85), cornerRadius: 2),
                              with: .color(color.opacity(highlight == nil || n.channel == highlight ? 0.85 : 0.25)))
                 }
+                if let from = playFrom, from >= 0, from < duration {
+                    let x = from / duration * size.width
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 1.5, height: size.height)), with: .color(.green.opacity(0.9)))
+                    var flag = Path()
+                    flag.move(to: CGPoint(x: x, y: 1)); flag.addLine(to: CGPoint(x: x + 9, y: 1 + max(top, 10) / 2 - 1))
+                    flag.addLine(to: CGPoint(x: x, y: max(top, 10) - 1)); flag.closeSubpath()
+                    ctx.fill(flag, with: .color(.green))
+                }
                 if playhead > 0 {
                     let x = playhead / duration * size.width
                     ctx.fill(Path(CGRect(x: x, y: 0, width: 1.5, height: size.height)), with: .color(.white))
@@ -50,9 +61,11 @@ struct PianoRoll: View {
             }
             .contentShape(Rectangle())
             .gesture(SpatialTapGesture().onEnded { tap in
-                guard let spb = secondsPerBar, spb > 0, duration > 0, let toggle else { return }
+                guard let spb = secondsPerBar, spb > 0, duration > 0 else { return }
                 let bar = Int(Double(tap.location.x / geo.size.width) * duration / spb) + 1
-                if bar >= 1, Double(bar - 1) * spb < duration { toggle(bar) }
+                guard bar >= 1, Double(bar - 1) * spb < duration else { return }
+                if tap.location.y < 16, let setPlayFrom { setPlayFrom(bar) }      // the bar numbers: where to start playing
+                else if let toggle { toggle(bar) }
             })
         }
         .background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 8))
@@ -1067,8 +1080,10 @@ struct ContentView: View {
                     PianoRoll(notes: vm.displayNotes, duration: vm.displayDuration,
                               playhead: vm.playingURL == vm.displayURL ? vm.playhead : 0, highlight: vm.highlightChannel,
                               secondsPerBar: vm.barsShown ? vm.secondsPerBar : nil, chosen: vm.chosenBars,
-                              toggle: vm.canEdit ? { vm.clickBar($0) } : nil)
-                        .help(vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded." : "")
+                              toggle: vm.canEdit ? { vm.clickBar($0) } : nil,
+                              playFrom: vm.playFromBar > 0 && vm.barsShown ? vm.playStartSeconds : nil,
+                              setPlayFrom: vm.barsShown ? { vm.setPlayFrom($0) } : nil)
+                        .help((vm.canEdit ? "Click a bar to choose it for the LLM edit (step 3). Chosen bars are shaded. " : "") + (vm.barsShown ? "Click a bar number along the top to start playing from that bar (click it again to clear)." : ""))
                     if vm.barsShown, vm.chordsFor == vm.displayURL, !vm.chordBars.isEmpty {
                         ChordStrip(bars: vm.chordBars, key: vm.chordKey, duration: vm.displayDuration,
                                    secondsPerBar: vm.secondsPerBar, edit: { vm.setChord(bar: $0, text: $1) }, vm: vm)
@@ -1082,9 +1097,14 @@ struct ContentView: View {
     private var transport: some View {
         HStack {
             Button(vm.playingURL == vm.displayURL && vm.playingURL != nil ? "Stop" : "Play") {
-                if let url = vm.displayURL { vm.playingURL == url ? vm.stop() : vm.play(url) }
+                if let url = vm.displayURL { vm.playingURL == url ? vm.stop() : vm.play(url, from: vm.playStartSeconds) }
             }
             .disabled(vm.displayURL == nil)
+            if vm.playFromBar > 0 && vm.barsShown {
+                Button { vm.setPlayFrom(0) } label: { Label("from bar \(vm.playFromBar)", systemImage: "xmark.circle.fill") }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.green)
+                    .help("Play starts at this bar. Click to play from the beginning again.")
+            }
             if vm.displayURL.map({ vm.sungAudio[$0] != nil }) ?? false {
                 Toggle("Sung", isOn: $vm.playSung)
                     .toggleStyle(.checkbox)
@@ -1159,7 +1179,8 @@ struct ContentView: View {
         let isPlaying = vm.playingURL == c.url
         let duration = c.notes.map(\.end).max() ?? 0
         return VStack(alignment: .leading, spacing: 6) {
-            PianoRoll(notes: c.notes, duration: duration, playhead: isPlaying ? vm.playhead : 0, highlight: c.channel)
+            PianoRoll(notes: c.notes, duration: duration, playhead: isPlaying ? vm.playhead : 0, highlight: c.channel,
+                      playFrom: vm.playFromBar > 0 ? vm.playStartSeconds : nil)
                 .frame(height: 70)
             HStack {
                 Text(c.label.isEmpty ? "Option \(c.index)" : "\(c.index) · \(c.label)")
@@ -1168,7 +1189,7 @@ struct ContentView: View {
                 Text("\(c.added) notes").font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Button(isPlaying ? "Stop" : "Play") { isPlaying ? vm.stop() : vm.play(c.url) }
+                Button(isPlaying ? "Stop" : "Play") { isPlaying ? vm.stop() : vm.play(c.url, from: vm.playStartSeconds) }
                     .controlSize(.small)
                 Spacer()
                 if isSelected { Label("Selected", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.tint) }
@@ -1186,7 +1207,8 @@ struct ContentView: View {
         let isSelected = vm.selectedID == c.id
         let isPlaying = vm.playingURL == c.url
         return VStack(alignment: .leading, spacing: 6) {
-            PianoRoll(notes: c.notes, duration: c.duration, playhead: isPlaying ? vm.playhead : 0)
+            PianoRoll(notes: c.notes, duration: c.duration, playhead: isPlaying ? vm.playhead : 0,
+                      playFrom: vm.playFromBar > 0 ? vm.playStartSeconds(tempo: c.tempo) : nil)
                 .frame(height: 70)
             HStack {
                 Text("Option \(c.index)").font(.subheadline.bold())
@@ -1194,7 +1216,7 @@ struct ContentView: View {
                 Text("\(c.tempo) bpm").font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Button(isPlaying ? "Stop" : "Play") { isPlaying ? vm.stop() : vm.play(c.url) }
+                Button(isPlaying ? "Stop" : "Play") { isPlaying ? vm.stop() : vm.play(c.url, from: vm.playStartSeconds(tempo: c.tempo)) }
                     .controlSize(.small)
                 Spacer()
                 if isSelected { Label("Selected", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.tint) }

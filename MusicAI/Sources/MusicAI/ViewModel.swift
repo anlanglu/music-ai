@@ -728,6 +728,7 @@ final class ViewModel: ObservableObject {
 
     private func clearWork() {
         stop()
+        playFromBar = 0
         chordBars = []
         chordsFor = nil
         editing = false
@@ -994,6 +995,21 @@ final class ViewModel: ObservableObject {
     /// Bar lines are drawn while a single melody is shown (not the accompanied piece or a part audition).
     var barsShown: Bool { selected != nil && selectedPart == nil }
     var secondsPerBar: Double { beatsPerBar * 60 / Double(max(selected?.tempo ?? 120, 1)) }
+
+    /// The bar playing starts from (1-based; 0 = the beginning). Kept as a bar, not a time, so it stays put when a change
+    /// makes a new file, and across options with other tempi. Set by clicking a bar number in the roll.
+    @Published var playFromBar = 0
+
+    func playStartSeconds(tempo: Int) -> Double {
+        playFromBar > 0 ? Double(playFromBar - 1) * beatsPerBar * 60 / Double(max(tempo, 1)) : 0
+    }
+    var playStartSeconds: Double { playStartSeconds(tempo: selected?.tempo ?? 120) }
+
+    /// Click a bar number: start playing from that bar; the same bar again (or 0) clears it. While playing, jumps there.
+    func setPlayFrom(_ bar: Int) {
+        playFromBar = bar == playFromBar ? 0 : max(bar, 0)
+        if let url = playingURL, url == displayURL { play(url, from: playStartSeconds) }
+    }
     var chosenBars: Set<Int> { step == 4 ? singChosen : Set(barsFromText(editBarsText)) }
 
     /// Step 4: the bars to sing, picked in the roll (one run of neighbouring bars).
