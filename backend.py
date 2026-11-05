@@ -19,6 +19,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
   A part is an accompaniment layer kept in the melody's own file, for the bars asked for (default: all); candidate, part_candidate, part_approved and done events carry layers:[{program,channel,from_bar,to_bar,notes}]
   {"cmd":"notation", "path":..., "title":..., "paged":false}
   {"cmd":"history_save", "data":{current, discarded, entries}}   (written to the session's history.json; session_open answers with history{data, files{path: {tempo,sig,notes,programs,layers}}})
+  {"cmd":"delete_files", "paths":[...]}   (discarded options: the .mid and the files named like it in the session folder are deleted)
   {"cmd":"session_list"} | {"cmd":"session_new"} | {"cmd":"session_rename", "name":...} | {"cmd":"session_open", "path":...}
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
@@ -250,6 +251,11 @@ def handle(r):
         folder = current_session()
         if folder is not None and r.get("data"):
             journal.save(folder, r["data"])
+    elif cmd == "delete_files":    # discarded options: each one's file, and the files made from it, are removed from the session folder
+        folder = current_session()
+        if folder is not None:
+            for p in r.get("paths", []):
+                journal.delete_option(folder, p)
     elif cmd == "session_open":
         open_session(r["path"])
         announce()

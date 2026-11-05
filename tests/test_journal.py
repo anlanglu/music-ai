@@ -63,3 +63,20 @@ def test_opening_a_session_sends_its_history_with_the_facts_about_each_file(back
     assert h["data"]["entries"][0]["title"] == "Motifs" and h["data"]["entries"][0]["snapshot"]["selected"] == first["path"]
     info = h["files"][first["path"]]
     assert info["notes"] and info["tempo"] and info["sig"] == "4/4"
+
+
+def test_discarding_deletes_the_option_and_what_was_made_from_it_but_nothing_else(tmp_path):
+    f = tmp_path / "s"
+    (f / "parts").mkdir(parents=True)
+    keep = ["101010-opt10.mid", "101010-opt2.mid", "history.json", "session.json"]
+    gone = ["101010-opt1.mid", "101010-opt1.html", "101010-opt1.musicxml", "101010-opt1.lyrics.json", "101010-opt1-backing.mid",
+            "101010-opt1.u-ann.wav"]
+    for n in keep + gone:
+        (f / n).write_bytes(b"x")
+    outside = tmp_path / "outside-opt1.mid"
+    outside.write_bytes(b"x")
+    assert journal.delete_option(f, outside) == [] and outside.exists()                    # not in the session
+    assert journal.delete_option(f, f / "history.json") == [] and (f / "history.json").exists()      # not a melody file
+    assert sorted(journal.delete_option(f, f / "101010-opt1.mid")) == sorted(gone)
+    assert sorted(p.name for p in f.iterdir() if p.is_file()) == sorted(keep)
+    assert journal.delete_option(f, f / "101010-opt1.mid") == []                           # already gone

@@ -949,7 +949,7 @@ struct ContentView: View {
     private var historyPane: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("History").font(.headline)
-            Text("Click a step to go back to it, with its options and settings, and carry on from there. Nothing is deleted: what you do next is added to the list. The history is saved with the session. Discard an option to remove it for good.")
+            Text("Click a step to go back to it, with its options and settings, and carry on from there. Nothing is deleted: what you do next is added to the list. The history is saved with the session. Discard an option to delete it for good.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if vm.history.isEmpty {
                 Text("Your steps will appear here.").font(.caption).foregroundStyle(.tertiary).padding(.top, 6)
@@ -1192,7 +1192,7 @@ struct ContentView: View {
                 Button(isPlaying ? "Stop" : "Play") { isPlaying ? vm.stop() : vm.play(c.url, from: vm.playStartSeconds) }
                     .controlSize(.small)
                 Button("Discard") { vm.discardPart(c) }.controlSize(.small).disabled(vm.busy)
-                    .help("Throw this option away. It disappears from the list and from History; the file stays in the session folder.")
+                    .help("Delete this option. It disappears from the list and from History, and its files are deleted from the session folder.")
                 Spacer()
                 if isSelected { Label("Selected", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.tint) }
             }
@@ -1221,7 +1221,7 @@ struct ContentView: View {
                 Button(isPlaying ? "Stop" : "Play") { isPlaying ? vm.stop() : vm.play(c.url, from: vm.playStartSeconds(tempo: c.tempo)) }
                     .controlSize(.small)
                 Button("Discard") { vm.discard(c) }.controlSize(.small).disabled(vm.busy)
-                    .help("Throw this option away. It disappears from the list and from History; the file stays in the session folder. Options you don't discard stay available, here and in History.")
+                    .help("Delete this option. It disappears from the list and from History, and its files are deleted from the session folder. Options you don't discard stay available, here and in History.")
                 Spacer()
                 if isSelected { Label("Selected", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.tint) }
             }

@@ -108,3 +108,17 @@ def reconstruct(folder):
     for i, e in enumerate(entries, 1):
         e["id"] = f"rebuilt-{i}"
     return {"version": VERSION, "current": entries[-1]["id"], "discarded": [], "entries": entries, "rebuilt": True}
+
+
+def delete_option(folder, path):
+    """Delete an option's MIDI file and the files made from it (sheet music, lyrics, sung audio, backing...): everything in its
+    folder named like it. Only files inside the session folder are touched. Returns the names removed."""
+    folder, path = Path(folder).resolve(), Path(path).resolve()
+    if path.suffix != ".mid" or folder not in path.parents or not path.exists():
+        return []
+    removed = []
+    for f in path.parent.iterdir():
+        if f.is_file() and (f == path or (f.name.startswith(path.stem) and len(f.name) > len(path.stem) and f.name[len(path.stem)] in ".-")):
+            f.unlink()
+            removed.append(f.name)
+    return removed

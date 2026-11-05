@@ -1,7 +1,7 @@
 import Foundation
 
 /// A session's history, kept with the session (history.json, written by the backend) so that opening it brings back every
-/// step, the options each one offered and the settings behind it. Options the user discards are hidden for good (the files stay).
+/// step, the options each one offered and the settings behind it. Options the user discards are deleted, files and all.
 extension ViewModel {
     // MARK: Writing
 
@@ -117,7 +117,7 @@ extension ViewModel {
 
     // MARK: Discarding
 
-    /// Throws an option away: it disappears from the list and from every step of the history. The file stays on disk.
+    /// Throws an option away: it disappears from the list and from every step of the history, and its files are deleted.
     func discard(_ c: Candidate) {
         guard !busy else { return }
         if playingURL == c.url { stop() }
@@ -126,17 +126,20 @@ extension ViewModel {
         candidates.removeAll { !keep($0) }
         if selectedID == c.id { selectedID = nil }
         expansionHistory = expansionHistory.map { (candidates: $0.candidates.filter(keep), selectedID: $0.selectedID) }
+        partHistory.removeAll { !keep($0.before) }          // an undo that would bring back a deleted file is gone too
         history = history.map { e in
             var e = e
             e.snapshot.candidates.removeAll { !keep($0) }
+            e.snapshot.partHistory.removeAll { !keep($0.before) }
             e.snapshot.expansionHistory = e.snapshot.expansionHistory.map { (candidates: $0.candidates.filter(keep), selectedID: $0.selectedID) }
             if e.snapshot.selectedID == c.id { e.snapshot.selectedID = nil }
             return e
         }
         history.removeAll { $0.snapshot.candidates.isEmpty && $0.snapshot.partOptions.isEmpty }
         if let id = currentEntryID, !history.contains(where: { $0.id == id }) { currentEntryID = history.last?.id }
-        status = "Option \(c.index) discarded (the file stays in the session folder)."
+        status = "Option \(c.index) discarded and its files deleted."
         saveHistory()
+        send(["cmd": "delete_files", "paths": [c.url.path]])
     }
 
     func discardPart(_ p: PartCandidate) {
@@ -150,8 +153,9 @@ extension ViewModel {
             e.snapshot.partOptions.removeAll { $0.url == p.url }
             return e
         }
-        status = "Option \(p.index) discarded (the file stays in the session folder)."
+        status = "Option \(p.index) discarded and its files deleted."
         saveHistory()
+        send(["cmd": "delete_files", "paths": [p.url.path]])
     }
 
     // MARK: Settings
