@@ -41,6 +41,7 @@ Melody LLM menu (see below).
 5. **Enrich (optional).** The Anticipation model adds a whole ensemble (up to 16 instruments) around the piece so far,
    including the parts approved in step 4, which stay exactly as they are. It always covers the whole piece. Press again to re-roll it, or undo it.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
+6b. **Play from a bar.** Click a bar number along the top of the piano roll to put a green marker there; Play (and the Play button of every option and part) then starts from that bar, so a change can be checked without hearing the piece from the beginning. Click the same number again, or the green "from bar N" label next to Play, to clear it. The marker is a bar, not a time, so it stays when a change makes a new file; clicking a number while playing jumps there.
 7. **Lyrics (demo).** The **Lyrics** button keeps your words apart from the melody (put in as many lines as you like; it checks
    that every word can be pronounced, and shows each line's syllables and the bars it will get). **How long a line is:** the
    **Each lyric line takes** setting is Automatic (about four syllables a bar) or 1 to 4 bars for every line; write `[2]` after a
