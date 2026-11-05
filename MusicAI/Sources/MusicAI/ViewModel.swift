@@ -461,7 +461,7 @@ final class ViewModel: ObservableObject {
         case .lyricsInfo(let text, let ok):
             lyricsInfo = text
             lyricsOK = ok
-            busy = false
+            if lyricsCheckBusy { busy = false; lyricsCheckBusy = false }
         case .vocal(let url, let backing):
             vocalURL = url
             if let backing { mixVocal(url, with: backing) } else { if let m = singingFor { sungAudio[m] = url }; playVocal() }
@@ -614,11 +614,30 @@ final class ViewModel: ObservableObject {
     @Published var lyricsOK = false
     var hasLyrics: Bool { !lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+    /// How many bars each lyric line takes: 0 is automatic (about four syllables a bar); "[2]" after a line overrides it.
+    @Published var lineBars = 0
+    private var lyricsCheckBusy = false          // the Check lyrics button is waiting for its answer
+    private var lyricsCheckWork: DispatchWorkItem?
+
     func checkLyrics() {
         guard ready, !busy, hasLyrics else { return }
         busy = true
+        lyricsCheckBusy = true
         lyricsInfo = "Checking…"
-        send(["cmd": "lyrics_check", "lyrics": lyrics])
+        send(["cmd": "lyrics_check", "lyrics": lyrics, "line_bars": lineBars])
+    }
+
+    /// Re-checks the lyrics a moment after typing stops (or the bars setting changes), so the box shows each line's syllables
+    /// and the bars it will get. Skipped while something is being generated.
+    func scheduleLyricsCheck() {
+        lyricsCheckWork?.cancel()
+        guard hasLyrics else { lyricsInfo = ""; return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.ready, !self.busy, self.hasLyrics else { return }
+            self.send(["cmd": "lyrics_check", "lyrics": self.lyrics, "line_bars": self.lineBars])
+        }
+        lyricsCheckWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
     }
 
     /// Sings the lyric lines the chosen melody was written to.
@@ -775,7 +794,7 @@ final class ViewModel: ObservableObject {
             "sig": sig, "bpm": bpm, "resolve": resolveEnding, "phrasing": phrasing,
             "key": keyChoice.map { [$0.tonic, keyMode] as [Any] } ?? [], "mode": keyMode, "complexity": Int(complexity), "llm": llm,
             "count": Int(optionCount), "session_name": sessionName,
-            "sliders": sliderValues, "lyrics": lyrics, "progression": motifProgression, "modes": motifModes,
+            "sliders": sliderValues, "lyrics": lyrics, "line_bars": lineBars, "progression": motifProgression, "modes": motifModes,
         ].merging(singerFields(singers)) { $1 })
     }
 
@@ -868,7 +887,7 @@ final class ViewModel: ObservableObject {
             "cmd": "expand", "source_midi": c.url.path, "bars": Int(expandBars), "engine": expandEngine,
             "count": Int(expandCount), "size": size, "llm": llm, "complexity": Int(expandComplexity),
             "sliders": expandSliderValues, "direction": effectiveDirection, "resolve": expandResolve, "phrasing": expandPhrasing,
-            "lyrics": lyrics, "program": expandInstrument.program, "chords": expandInstrument.chords,
+            "lyrics": lyrics, "line_bars": lineBars, "program": expandInstrument.program, "chords": expandInstrument.chords,
             "progression": expandProgression, "modes": expandModes,
         ].merging(singerFields(expandSingers)) { $1 })
     }
@@ -1040,7 +1059,7 @@ final class ViewModel: ObservableObject {
         busy = true
         status = "Writing the singing…"
         send([
-            "cmd": "sing_part", "source_midi": c.url.path, "lyrics": lyrics,
+            "cmd": "sing_part", "source_midi": c.url.path, "lyrics": lyrics, "line_bars": lineBars,
             "bars": singRange.map { $0.to - $0.from + 1 } ?? Int(singBars), "start_bar": singRange?.from ?? Int(singStart),
             "count": Int(singCount), "llm": llm, "complexity": Int(complexity),
         ].merging(singerFields(singSingers)) { $1 })

@@ -10,7 +10,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"melodies"|"expand", ..., "modes": "major*3 lydian"}   (a mode of its own for some bars: names from plan.MODES, *N repeats, - is the piece's mode; bars after the list keep the piece's)
   {"cmd":"set_modes", "source_midi", "modes" | "bar_modes": ["", "lydian", ...]}  ->  chords{...}   (the chords event also carries modes, labels and mode_names per bar)
   {"cmd":"repeat", "source_midi", "from_bar", "to_bar", "times"?: 1..4}  (bars copied onto the end: melody, instruments, sung line and its lyrics, accompaniment)
-  {"cmd":"sing_part", "source_midi", "lyrics", "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
+  {"cmd":"sing_part", "source_midi", "lyrics", "line_bars"?: 0 auto | 1..4 (bars each lyric line takes; "[2]" after a line overrides, a blank line ends a verse), "start_bar"?, "bars", voice, voices, harmony, llm, complexity, direction, count}  (a sung line over the melody: the next lyric lines in those bars; melody and earlier singing kept)
   {"cmd":"edit", "source_midi":..., "instruction":..., "bars":[...], "part"?: "melody"|"vocal", count, llm, complexity}   (only the bars named in the instruction, else "bars", change)
   {"cmd":"save_edit", "source_midi":..., "notes":[[pitch, start_beat, duration_beats],...]}   (the melody as edited by hand)
   {"cmd":"import", "path":...}
@@ -22,7 +22,7 @@ Requests (one JSON object per line, "cmd" selects the stage):
   {"cmd":"orchestrate", "source_midi":..., ensemble, playable, size, dynamics 0..10}
   {"cmd":"mix_info", "path":...} | {"cmd":"set_volume", "path":..., "channel":..., "volume": 0..127}  ->  mix{path, channels:[{channel, program, name, volume, notes}]}
   {"cmd":"voice_add", "path":"a recording of a voice singing alone", "name", "language":"English"|"Mandarin"}  ->  voices{items:[{key,name}]}, melodies_done
-  {"cmd":"lyrics_check", "lyrics"}  ->  lyrics_info{text}
+  {"cmd":"lyrics_check", "lyrics", "line_bars"?: 0 auto | 1..4}  ->  lyrics_info{text}
   {"cmd":"lyrics_sing", "source_midi", "backing_midi"?, "voice"?: "en"|"zh"|"u-<name>"}  ->  vocal{path,backing} (the lyric lines sung, each in the singer stored with it, a .wav next to the melody; "voice" is only for lines from before singers were stored; backing = the piece without the stretches played by the Voice instrument)
   "melodies" with the Voice instrument (program 53), and "expand" with "program": 53, take "lyrics" (the whole text) and "voice"
   (the singer of those bars), "voices" (further singers with them: a duet or choir of up to 4) and "harmony" (true: each further singer a harmony part, false: the same notes) and write the melody to as many lines as fit; expand carries on with the next line. "expand" with
@@ -258,7 +258,8 @@ def handle(r):
             ly.lyric_motifs(r["lyrics"], int(r.get("bars", 4)), ly.VOICE_PROGRAM, r.get("sig", "4/4"),
                             max(40, min(int(r.get("bpm", 80)), 220)), chosen_key(r) or (0, "major"), r.get("llm", "7B"),
                             int(r.get("complexity", 3)), r["prompt"], int(r.get("count", 4)), log=log, on_candidate=candidate_event,
-                            voice=r.get("voice", "en"), voices=r.get("voices"), harmony=bool(r.get("harmony")))
+                            voice=r.get("voice", "en"), voices=r.get("voices"), harmony=bool(r.get("harmony")),
+                            line_bars=int(r.get("line_bars") or 0))
             send(type="melodies_done")
             return
         make_melodies(
@@ -298,7 +299,7 @@ def handle(r):
             made = ly.lyric_extend(r["source_midi"], r["lyrics"], max(2, min(16, int(r.get("bars", 4)))), r.get("llm", "7B"),
                                    int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
                                    on_candidate=candidate_event, voice=r.get("voice", "en"), voices=r.get("voices"),
-                                   harmony=bool(r.get("harmony")))
+                                   harmony=bool(r.get("harmony")), line_bars=int(r.get("line_bars") or 0))
             if made is None:
                 raise RuntimeError("This melody has already used all the lyrics. Add more lines in the Lyrics box, "
                                    "or write the new bars for another instrument.")
@@ -332,7 +333,7 @@ def handle(r):
         ly.sing_part(r["source_midi"], r["lyrics"], r.get("start_bar") or None, max(1, min(16, int(r.get("bars", 4)))),
                      r.get("llm", "7B"), int(r.get("complexity", 3)), r.get("direction", ""), int(r.get("count", 3)), log=log,
                      on_candidate=candidate_event, voice=r.get("voice", "en"), voices=r.get("voices"),
-                     harmony=bool(r.get("harmony")))
+                     harmony=bool(r.get("harmony")), line_bars=int(r.get("line_bars") or 0))
         send(type="melodies_done")
     elif cmd == "voice_add":  # a new singer from a recording of a voice singing alone
         import lyrics as ly
@@ -341,11 +342,16 @@ def handle(r):
         send(type="melodies_done")
     elif cmd == "lyrics_check":  # the lyrics box: how many lines and syllables, and any word it cannot pronounce
         import lyrics as ly
-        rows, unknown = ly.check(r.get("lyrics", ""))
-        text = f"{len(rows)} line(s), {sum(n or 0 for _, n in rows)} syllables."
-        if unknown:
-            text += " I can't pronounce: " + ", ".join(unknown) + ". Respell them (for example phonetically)."
-        send(type="lyrics_info", text=text, ok=not unknown and bool(rows))
+        rows = ly.describe(r.get("lyrics", ""), int(r.get("line_bars") or 0))
+        lines = [x for x in rows if x["text"]]
+        lines_text = []
+        for i, x in enumerate(lines, 1):
+            where = "?" if x["syllables"] is None else f"{x['syllables']} syl \u2192 {x['bars']} bar(s)" if x["bars"] else f"{x['syllables']} syl"
+            short = x["text"] if len(x["text"]) <= 34 else x["text"][:33] + "\u2026"
+            lines_text.append(f"{i}. {short}  ({where})" + (f"  \u26a0 {x['note']}" if x["note"] else ""))
+        text = f"{len(lines)} line(s), {sum(x['syllables'] or 0 for x in lines)} syllables.\n" + "\n".join(lines_text)
+        warned = any(x["note"] for x in lines)
+        send(type="lyrics_info", text=text, ok=not warned and bool(lines))
     elif cmd == "lyrics_sing":  # sing the lyric lines the chosen melody was written to
         import lyrics as ly
         ok, why = ly.ready()
