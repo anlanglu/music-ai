@@ -70,9 +70,46 @@ def is_zh(raw):
     return re.search(CJK, raw) is not None
 
 
+MAX_SYL_PER_BAR = 8                             # more than this to a bar cannot be sung clearly
+LINE_BARS = re.compile(r"\s*\[\s*([1-4])\s*(?:bars?)?\s*\]\s*$", re.I)    # "Walking home [2]": this line takes 2 bars
+
+
+class Line(str):
+    """One lyric line (the words only). `bars` is the length written after it as [2] (None when it says nothing) and
+    `ends_stanza` whether a blank line, or the end of the lyrics, comes after it."""
+    bars = None
+    ends_stanza = False
+
+
 def raw_lines(text):
-    """The lyric lines that have words in them."""
-    return [l.strip() for l in text.splitlines() if re.search(r"[A-Za-z]|" + CJK, l)]
+    """The lyric lines that have words in them, as Line objects. A blank line ends a verse; "[2]" after a line sets how many
+    bars it takes (1 to 4)."""
+    out = []
+    for l in text.splitlines():
+        if re.search(r"[A-Za-z]|" + CJK, l):
+            m = LINE_BARS.search(l)
+            line = Line(LINE_BARS.sub("", l).strip())
+            line.bars = int(m.group(1)) if m else None
+            out.append(line)
+        elif not l.strip() and out:
+            out[-1].ends_stanza = True
+    if out:
+        out[-1].ends_stanza = True
+    return out
+
+
+def span_of(raw, syllables, line_bars=None):
+    """(bars, fixed): how many bars a line takes. The length written after the line wins, then `line_bars` (the setting for all
+    lines, 0 or None for auto); otherwise about SYL_PER_BAR syllables to a bar. Raises ValueError when a fixed length is too
+    short to sing the line."""
+    fixed = getattr(raw, "bars", None) or line_bars or None
+    if not fixed:
+        return max(1, math.ceil(syllables / SYL_PER_BAR)), False
+    if syllables > MAX_SYL_PER_BAR * fixed:
+        need = math.ceil(syllables / MAX_SYL_PER_BAR)
+        raise ValueError(f"\u201c{raw}\u201d has {syllables} syllables, too many for {fixed} bar(s) (about {MAX_SYL_PER_BAR} a bar at "
+                         f"most). Shorten it, or give it more bars: write [{min(need, 4)}] after it.")
+    return fixed, True
 
 
 def zh_token(pinyin):
@@ -490,11 +527,13 @@ def check(text):
     return rows, sorted(set(unknown))
 
 
-def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, log, chords=None, piano=None, scales=None):
-    """Melody for the next lyric lines that fit in room_bars (always at least one, never more than the lyrics hold).
+def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, log, chords=None, piano=None, scales=None,
+                  line_bars=None):
+    """Melody for the next lyric lines that fit in room_bars (always at least one, never more than the lyrics hold). Each line
+    takes the bars `span_of` gives it. The section stops at the end of a verse when it can, so a verse is not split.
     Returns (notes in the section's own beats, [{"text", "start_beat", "bars"}], section length in beats)."""
     bb = t.bar_beats(sig)
-    picks, used = [], 0
+    picks, used, base, fixed, cut = [], 0, [], [], False
     for raw in raws[start:]:
         try:
             parsed = parse_line(raw)
@@ -502,18 +541,26 @@ def write_section(raws, start, room_bars, sig, key, llm, level, mood, before, lo
             if not picks:
                 raise
             break
-        bars = max(1, math.ceil(count(parsed) / SYL_PER_BAR))
+        bars, is_fixed = span_of(raw, count(parsed), line_bars)
         if picks and used + bars > room_bars:
+            cut = True
             break
         picks.append((raw, parsed))
+        base.append(bars)
+        fixed.append(is_fixed)
         used += bars
-    base = [max(1, math.ceil(count(p) / SYL_PER_BAR)) for _, p in picks]
+    if cut and not picks[-1][0].ends_stanza:      # stop where a verse ends, if one ended before
+        ends = [i for i, (raw, _) in enumerate(picks) if raw.ends_stanza]
+        if ends:
+            keep = ends[-1] + 1
+            picks, base, fixed = picks[:keep], base[:keep], fixed[:keep]
     sizes, spare = list(base), room_bars - sum(base)
+    order = sorted(range(len(sizes)), key=lambda i: not picks[i][0].ends_stanza)    # verse endings first
     grew = True
-    while spare > 0 and grew:        # bars left over: give them to the lines as slower, longer notes (by up to half again)
+    while spare > 0 and grew:        # bars left over: give them to lines left on auto as slower, longer notes (by up to half again)
         grew = False
-        for i in range(len(sizes)):
-            if spare > 0 and sizes[i] < base[i] + max(1, base[i] // 2):
+        for i in order:
+            if spare > 0 and not fixed[i] and sizes[i] < base[i] + max(1, base[i] // 2):
                 sizes[i] += 1
                 spare -= 1
                 grew = True
@@ -558,12 +605,35 @@ def harmonize(notes, key, steps):
     return out
 
 
+def describe(text, line_bars=None):
+    """What the lyrics box shows for each line: [{"text", "syllables", "bars", "note"}], "syllables" None when a word is not known,
+    "note" a warning (or ""). Blank lines between verses show up as {"text": ""}."""
+    rows = []
+    for raw in raw_lines(text):
+        bad = unknown_words(raw)
+        if bad:
+            rows.append({"text": str(raw), "syllables": None, "bars": None, "note": "I can't pronounce: " + ", ".join(sorted(set(bad)))})
+        else:
+            n = count(parse_line(raw))
+            try:
+                bars, fixed = span_of(raw, n, line_bars)
+                note = f"only {n} syllable(s) for {bars} bars: long held notes" if fixed and n < bars else ""
+            except ValueError:
+                bars = getattr(raw, "bars", None) or line_bars
+                note = f"too many syllables for {bars} bar(s): shorten it, or write [{min(math.ceil(n / MAX_SYL_PER_BAR), 4)}] after it"
+            rows.append({"text": str(raw), "syllables": n, "bars": bars, "note": note})
+        if raw.ends_stanza:
+            rows.append({"text": ""})
+    return rows[:-1] if rows and rows[-1] == {"text": ""} else rows
+
+
 def line_singers(ln, fallback="en"):
     """([singers], harmonize?) stored with a lyric line. Lines from before choirs have just "voice", or nothing."""
     return singers_of(ln.get("voice") or fallback, ln.get("voices")), bool(ln.get("harmony"))
 
 
-def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, log=print, on_candidate=None, voice="en", voices=None, harmony=False):
+def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, log=print, on_candidate=None, voice="en", voices=None, harmony=False,
+                 line_bars=None):
     """Step 1 written to the lyrics: `count_` options, each the first lines that fit in `bars` bars, sung by `voice` and any
     `voices` with it: the same notes, or (`harmony`) a part each."""
     singers = singers_of(voice, voices)
@@ -576,7 +646,7 @@ def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, l
     out, fails = [], 0
     while len(out) < count_ and fails < t.MAX_FAILED_ATTEMPTS:
         try:
-            notes, meta, total = write_section(raws, 0, bars, sig, key, llm, level, mood, None, log)
+            notes, meta, total = write_section(raws, 0, bars, sig, key, llm, level, mood, None, log, line_bars=line_bars)
         except (RuntimeError, KeyError, TypeError) as e:
             fails += 1
             log(f"      (attempt unusable, retrying: {str(e).splitlines()[0][:70]})")
@@ -595,7 +665,8 @@ def lyric_motifs(text, bars, program, sig, bpm, key, llm, level, mood, count_, l
     return out
 
 
-def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=print, on_candidate=None, voice="en", voices=None, harmony=False):
+def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=print, on_candidate=None, voice="en", voices=None, harmony=False,
+                 line_bars=None):
     """Step 2 written to the lyrics: the next lines that fit in `add_bars` bars are added after the melody, as a part for
     the Voice instrument sung by `voice` and any `voices` with it (the same notes, or `harmony`); the melody may have been
     another instrument until now. Returns the options, or None when the melody already used all the lyrics."""
@@ -622,7 +693,7 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
     log(f"  \u25b8 Writing lyric lines {len(done) + 1} onward (of {len(raws)}) in {t.key_label(key)}.")
     while len(out) < count_ and fails < t.MAX_FAILED_ATTEMPTS:
         try:
-            new, meta, length = write_section(raws, len(done), add_bars, sig, key, llm, level, mood, tail or None, log)
+            new, meta, length = write_section(raws, len(done), add_bars, sig, key, llm, level, mood, tail or None, log, line_bars=line_bars)
         except (RuntimeError, KeyError, TypeError) as e:
             fails += 1
             log(f"      (attempt unusable, retrying: {str(e).splitlines()[0][:70]})")
@@ -647,7 +718,7 @@ def lyric_extend(source_midi, text, add_bars, llm, level, mood, count_, log=prin
 
 
 def sing_part(source_midi, text, start_bar=None, bars=4, llm="7B", level=3, mood="", count_=3, log=print, on_candidate=None,
-              voice="en", voices=None, harmony=False):
+              voice="en", voices=None, harmony=False, line_bars=None):
     """Add a sung line over a melody (step 4): the next lyric lines that fit in `bars` bars, starting at bar `start_bar`
     (default: after the last sung bar), written to the melody's key and chords and sung by `voice` and any `voices` with it.
     The melody and the bars already sung are kept exactly. Returns the options."""
@@ -695,7 +766,7 @@ def sing_part(source_midi, text, start_bar=None, bars=4, llm="7B", level=3, mood
     while len(out) < count_ and fails < t.MAX_FAILED_ATTEMPTS:
         try:
             new, meta, length = write_section(raws, len(sung), room, sig, key, llm, level, mood, tail, log, chords=chords, piano=piano,
-                                              scales=scales)
+                                              scales=scales, line_bars=line_bars)
         except (RuntimeError, KeyError, TypeError) as e:
             fails += 1
             log(f"      (attempt unusable, retrying: {str(e).splitlines()[0][:70]})")

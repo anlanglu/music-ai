@@ -42,7 +42,10 @@ Melody LLM menu (see below).
    including the parts approved in step 4, which stay exactly as they are. It always covers the whole piece. Press again to re-roll it, or undo it.
 6. **Sessions.** One folder per project under `output/`, nameable, renamable, reopenable.
 7. **Lyrics (demo).** The **Lyrics** button keeps your words apart from the melody (put in as many lines as you like; it checks
-   that every word can be pronounced). Choose the **Voice** instrument in the Motif step and the melody is written with
+   that every word can be pronounced, and shows each line's syllables and the bars it will get). **How long a line is:** the
+   **Each lyric line takes** setting is Automatic (about four syllables a bar) or 1 to 4 bars for every line; write `[2]` after a
+   line to give just that line 2 bars (1 to 4); a blank line ends a verse, and a sung section stops at the end of a verse when it
+   can. A line with too many syllables for its bars is refused with the length to write instead. Choose the **Voice** instrument in the Motif step and the melody is written with
    one note per syllable to as many lines as fit the bars you asked for; each extension of a Voice melody carries on with the next
    line, and never has to use them all. The lines a melody was written to are stored beside it (`*.lyrics.json`). **Sing the chosen
    melody** has SoulX-Singer, a local singing-voice model (setup: DEPLOY.md 4b), sing those lines into a .wav, in the written key, in the singer chosen for each part: the Motif step and every Extend step have their own **Singer**, and can add more singers with them for a duet or choir (up to four voices: all on the same notes, or ticking **Harmonize** gives each extra singer a part, a third above, a third below and a fifth above, always in the key) (the two reference singers that come with SoulX, or voices you add; a voice is copied from a short recording, so more voices need more recordings). If accompaniment has been added (steps 4–5), the voice and the accompaniment are mixed into one `*.mix.wav`, rendered offline with the same Apple sound bank as playback. English and Mandarin (Chinese

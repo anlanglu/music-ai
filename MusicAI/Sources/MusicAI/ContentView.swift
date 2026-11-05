@@ -419,6 +419,7 @@ struct ContentView: View {
                 .help("Which bar the singing starts on. Auto starts right after the bars already sung, or at bar 1.")
                 barsRow("Bars to sing", $vm.singBars, range: 1...16, help: "How many bars of singing to write in one go. The next lyric lines that fit are used; the melody is not changed. Press \"Add more singing\" again to carry on from where the singing stopped.")
             }
+            LineBarsPicker(vm: vm)
             optionsRow($vm.singCount)
             HStack {
                 Button { vm.generateSinging() } label: {
@@ -613,7 +614,7 @@ struct ContentView: View {
             Picker("Instrument", selection: $vm.instrument) {
                 ForEach(Instrument.all) { Text($0.name).tag($0) }
             }
-            if vm.instrument.program == lyricsVoiceProgram { singerPicker($vm.singers) }
+            if vm.instrument.program == lyricsVoiceProgram { singerPicker($vm.singers); LineBarsPicker(vm: vm) }
             Picker("Time signature", selection: $vm.sig) {
                 ForEach(ViewModel.timeSigs, id: \.self) { Text($0).tag($0) }
             }
@@ -723,6 +724,7 @@ struct ContentView: View {
             }
             if vm.expandInstrument.program == lyricsVoiceProgram {
                 singerPicker($vm.expandSingers)
+                LineBarsPicker(vm: vm)
                 Text("These bars are written to the next lines of your lyrics (Lyrics button) and sung by this singer; the moves and sliders below do not apply.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }

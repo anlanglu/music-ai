@@ -270,3 +270,69 @@ def test_a_sung_line_is_moved_off_the_pianos_clashes_but_keeps_its_rhythm():
     def clashes(line):
         return sum(1 for p, s, d in line for q, qs, qd in piano if min(s + d, qs + qd) > max(s, qs) and abs(p - q) % 12 in bad)
     assert clashes(out) < clashes(sung) and clashes(out) == 0, (clashes(sung), clashes(out), out)
+
+
+# ---- how many bars a lyric line takes: automatic, one setting for all lines, or "[2]" after a line; blank lines end verses
+
+def test_a_length_after_a_line_and_blank_lines_are_read():
+    lines = L.raw_lines("Little star [2]\nHow I wonder\n\nUp above the world [ 4 bars ]\n\n\nLike a diamond")
+    assert [str(l) for l in lines] == ["Little star", "How I wonder", "Up above the world", "Like a diamond"]
+    assert [l.bars for l in lines] == [2, None, 4, None]
+    assert [l.ends_stanza for l in lines] == [False, True, True, True]
+
+
+def test_the_bars_a_line_takes():
+    l1, l2 = L.raw_lines("Little star [3]\nHow I wonder what you are")
+    assert L.span_of(l1, 3) == (3, True)                       # its own length wins ...
+    assert L.span_of(l2, 9) == (3, False)                      # ... else about four syllables a bar
+    assert L.span_of(l2, 9, 2) == (2, True)                    # ... or the setting for all lines
+    assert L.span_of(l1, 3, 2) == (3, True)
+    with pytest.raises(ValueError, match=r"too many for 1 bar.*\[2\]"):
+        L.span_of(l2, 12, 1)
+
+
+def test_a_setting_for_all_lines_fixes_their_length(fake_lines):
+    first = L.lyric_motifs(TEXT, 4, 0, "4/4", 90, (0, "major"), "7B", 3, "", 1, line_bars=2)[0]["path"]
+    lines = L.used_lines(first)
+    assert [(u["text"], u["bars"]) for u in lines] == [("Little star", 2), ("How I wonder what you are", 2)]
+    assert lines[1]["start_beat"] == 8.0
+
+
+def test_a_line_that_cannot_fit_its_bars_is_refused_with_advice(fake_lines):
+    with pytest.raises(ValueError, match="too many"):
+        L.lyric_motifs("one two three four five six seven eight nine ten eleven twelve", 4, 0, "4/4", 90, (0, "major"), "7B", 3, "", 1,
+                       line_bars=1)
+
+
+def test_spare_bars_stretch_only_lines_left_on_auto(fake_lines):
+    notes, meta, length = L.write_section(L.raw_lines("Little star [1]\nHow I wonder"), 0, 6, "4/4", (0, "major"), "7B", 3, "", None,
+                                          lambda s: None)
+    assert [m["bars"] for m in meta] == [1, 2] and length == 12.0       # the [1] line stays; the auto line grows by up to half again
+
+
+def test_a_section_stops_at_the_end_of_a_verse(fake_lines):
+    raws = L.raw_lines("Little star\nHow I wonder\n\nUp above the world so high\nLike a diamond in the sky")
+    _, meta, _ = L.write_section(raws, 0, 5, "4/4", (0, "major"), "7B", 3, "", None, lambda s: None)
+    assert [m["text"] for m in meta] == ["Little star", "How I wonder"]       # room for a third line, but it starts the next verse
+
+
+def test_the_lyrics_box_shows_each_lines_bars_and_warns(fake_lines):
+    rows = L.describe("Little star\nHow I wonder what you are\n\none two three four five six seven eight nine ten", 1)
+    lines = [r for r in rows if r["text"]]
+    assert [r["bars"] for r in lines[:2]] == [1, 1] and lines[0]["note"] == "" and "[2]" in lines[2]["note"]
+    assert {"text": ""} in rows                                              # the blank line between verses
+    auto = L.describe("Little star\nHow I wonder what you are")
+    assert [r["bars"] for r in auto] == [1, 2]
+
+
+def test_the_lyrics_check_event_lists_each_line_with_its_bars():
+    import backend
+    sent = []
+    backend.send = lambda **ev: sent.append(ev)
+    backend.handle({"cmd": "lyrics_check", "lyrics": "Little star\nHow I wonder what you are [2]\n\nUp above", "line_bars": 1})
+    info = [e for e in sent if e["type"] == "lyrics_info"][-1]
+    assert info["ok"] and "1. Little star" in info["text"] and "2. How I wonder what you are  (7 syl → 2 bar(s))" in info["text"]
+    sent.clear()
+    backend.handle({"cmd": "lyrics_check", "lyrics": "one two three four five six seven eight nine ten", "line_bars": 1})
+    info = [e for e in sent if e["type"] == "lyrics_info"][-1]
+    assert not info["ok"] and "[2]" in info["text"]

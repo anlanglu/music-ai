@@ -94,6 +94,20 @@ final class VoiceForm: ObservableObject {
 }
 
 
+/// How many bars each lyric line takes. Shared by the Lyrics sheet and the singing controls.
+struct LineBarsPicker: View {
+    @ObservedObject var vm: ViewModel
+
+    var body: some View {
+        Picker("Each lyric line takes", selection: $vm.lineBars) {
+            Text("Automatic").tag(0)
+            ForEach(1...4, id: \.self) { Text($0 == 1 ? "1 bar" : "\($0) bars").tag($0) }
+        }
+        .help("How many bars one line of lyrics is sung over. Automatic uses about four syllables a bar, so one extra syllable can change a line's length. A number fixes it for every line: the words are spread over those bars. Write [2] after a line to give just that line its own length.")
+        .onChange(of: vm.lineBars) { _, _ in vm.scheduleLyricsCheck() }
+    }
+}
+
 /// The lyrics, kept apart from the melody. Nothing is composed here: with the Voice instrument, the Motif and Extend steps
 /// take as many lines as fit the bars asked for and carry on with the next line each time.
 struct LyricsSheet: View {
@@ -102,16 +116,22 @@ struct LyricsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Lyrics").font(.title3).bold()
-            Text("Put in as many lines as you like, one line of text per musical phrase. They are only kept here. Choose the Voice instrument in the Motif step and the melody takes as many lines as fit the bars you ask for; each extension of that melody carries on with the next line, and it never has to use them all.")
+            Text("Put in as many lines as you like, one line of text per musical phrase; a blank line ends a verse (a sung section stops at the end of a verse when it can). Write [2] after a line to give it 2 bars (1 to 4). They are only kept here. Choose the Voice instrument in the Motif step and the melody takes as many lines as fit the bars you ask for; each extension of that melody carries on with the next line, and it never has to use them all.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $vm.lyrics)
                 .font(.body)
                 .frame(minHeight: 180)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                .onChange(of: vm.lyrics) { _, _ in vm.lyricsInfo = "" }
-            Text(vm.lyricsInfo.isEmpty ? " " : vm.lyricsInfo).font(.callout)
-                .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
-                .lineLimit(3)
+                .onChange(of: vm.lyrics) { _, _ in vm.scheduleLyricsCheck() }
+                .onAppear { vm.scheduleLyricsCheck() }
+            LineBarsPicker(vm: vm)
+            ScrollView {
+                Text(vm.lyricsInfo.isEmpty ? " " : vm.lyricsInfo).font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(vm.lyricsInfo.isEmpty || vm.lyricsOK ? Color.secondary : Color.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(minHeight: 40, maxHeight: 130)
             Divider()
             Text("Singing (demo): a local voice model (SoulX-Singer) sings the lyric lines of the melody chosen on the right: the singing added in step 4, or a melody for the Voice instrument, each in the singers chosen for it. Parts of the melody for other instruments, and any accompaniment you added (steps 4–5), are mixed in. About 15 seconds a line.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
