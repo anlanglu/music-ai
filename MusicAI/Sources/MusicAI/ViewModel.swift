@@ -65,11 +65,12 @@ struct Snapshot {
 
 /// One step in the history pane: what was done, and the state it left behind.
 struct HistoryEntry: Identifiable {
-    let id = UUID()
+    var id = UUID()
     let title: String
     let detail: String
     let time: Date
     var snapshot: Snapshot
+    var panel: [String: Any] = [:]       // the settings in the panels when the step finished, to put back when it is returned to
 }
 
 /// A note in the hand editor, in beats (not seconds), so it lines up with the bars.
@@ -236,7 +237,7 @@ final class ViewModel: ObservableObject {
     @Published var expandResolve = true
     @Published var expandPhrasing = 1               // 0 flowing, 1 balanced, 2 spacious: rests between the ideas and phrases of the new bars
     @Published var expansionHistory: [(candidates: [Candidate], selectedID: UUID?)] = []   // the options before each expansion
-    private var expandJustRan = false
+    var expandJustRan = false
     private var lastExpandBars = 4.0
     private var lastExpandLabel = ""
     /// Copy bars of the melody onto its end: from (1 = the start) to (0 = the last bar), this many times.
@@ -506,9 +507,13 @@ final class ViewModel: ObservableObject {
                 pdfJob = nil
                 status = "PDF export failed: \(text)"
             }
+        case .history(let data, let files):
+            restoreHistory(data, files)
         case .melodiesDone:
             busy = false
-            if let label = editLabel {
+            if restoringHistory {          // opening a saved session: its history was just put back, no new step
+                restoringHistory = false
+            } else if let label = editLabel {
                 editLabel = nil
                 selectedID = candidates.first?.id
                 record(label, "\(candidates.count) option\(candidates.count == 1 ? "" : "s")")
@@ -692,7 +697,7 @@ final class ViewModel: ObservableObject {
 
     func stopVocal() { vocalPlayer?.stop(); vocalPlaying = false }
 
-    private func send(_ request: [String: Any]) {
+    func send(_ request: [String: Any]) {
         do { try backend.send(request) } catch {
             busy = false
             status = "Failed to send request: \(error.localizedDescription)"
@@ -827,27 +832,32 @@ final class ViewModel: ObservableObject {
 
     // MARK: History: every step taken in this session, each one a place to go back to
 
+    @Published var discarded: Set<String> = []       // options thrown away: hidden everywhere, the files stay in the session folder
+    var restoringHistory = false
     @Published var history: [HistoryEntry] = []
     @Published var currentEntryID: UUID?
 
-    private func snapshot() -> Snapshot {
+    func snapshot() -> Snapshot {
         Snapshot(candidates: candidates, selectedID: selectedID, partOptions: partOptions,
                  selectedPartID: selectedPartID, partHistory: partHistory, expansionHistory: expansionHistory)
     }
 
     private func record(_ title: String, _ detail: String = "") {
-        let e = HistoryEntry(title: title, detail: detail, time: Date(), snapshot: snapshot())
+        let e = HistoryEntry(title: title, detail: detail, time: Date(), snapshot: snapshot(), panel: panelState())
         history.append(e)
         currentEntryID = e.id
+        saveHistory()
     }
 
     /// Choosing an option is not a step of its own, but the step it happened in should remember it.
     private func refreshCurrentEntry() {
         guard let id = currentEntryID, let i = history.firstIndex(where: { $0.id == id }) else { return }
         history[i].snapshot = snapshot()
+        saveHistory()
     }
 
     private func resetHistory() {
+        discarded = []
         history = []
         currentEntryID = nil
     }
@@ -867,8 +877,10 @@ final class ViewModel: ObservableObject {
         expansionHistory = s.expansionHistory
         expandJustRan = false
         currentEntryID = entry.id
+        applyPanel(entry.panel)
         status = "Back to: \(entry.title). Carry on from here."
         ensureSheet()
+        saveHistory()
     }
 
     // MARK: Stage 2: expand the melody

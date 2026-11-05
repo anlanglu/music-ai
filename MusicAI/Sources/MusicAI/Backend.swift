@@ -68,6 +68,7 @@ enum BackendEvent {
     case log(String)
     case candidate(Candidate)
     case melodiesDone
+    case history(data: [String: Any], files: [String: [String: Any]])   // a saved session's steps, and the facts about each file
     case done(melody: URL, full: URL?, notes: [Note], programs: [Int], layers: [Layer])
     case partCandidate(PartCandidate)
     case partsDone
@@ -207,13 +208,13 @@ final class Backend {
         DispatchQueue.main.async { self.onEvent?(ev) }
     }
 
-    private static func layers(_ raw: Any?) -> [Layer] {
+    static func layers(_ raw: Any?) -> [Layer] {
         (raw as? [[String: Any]] ?? []).map {
             Layer(program: $0["program"] as? Int ?? 0, from: $0["from_bar"] as? Int ?? 1, to: $0["to_bar"] as? Int ?? 1)
         }
     }
 
-    private static func notes(_ raw: Any?) -> [Note] {
+    static func notes(_ raw: Any?) -> [Note] {
         (raw as? [[Double]] ?? []).filter { $0.count == 4 }.map {
             Note(channel: Int($0[0]), pitch: Int($0[1]), start: $0[2], end: $0[3])
         }
@@ -245,6 +246,7 @@ final class Backend {
         case "log": return .log(obj["text"] as? String ?? "")
         case "error": return .error(obj["text"] as? String ?? "Unknown error")
         case "melodies_done": return .melodiesDone
+        case "history": return .history(data: obj["data"] as? [String: Any] ?? [:], files: obj["files"] as? [String: [String: Any]] ?? [:])
         case "parts_done": return .partsDone
         case "edit_suggestion":
             return .editSuggestion(bars: obj["bars"] as? [Int] ?? [], reason: obj["reason"] as? String ?? "",
