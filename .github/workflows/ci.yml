@@ -8,8 +8,8 @@ jobs:
   test:
     runs-on: macos-14   # Apple silicon: mlx needs it
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -27,6 +27,6 @@ jobs:
     runs-on: macos-14
     continue-on-error: true   # not yet seen to pass on a hosted runner
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the app
         run: zsh MusicAI/build_app.sh
