@@ -3,7 +3,7 @@ import Network
 
 /// Hands the option being looked at to the Composer plugin in Logic Pro. The plugin runs in Logic's process and
 /// cannot read this app's files, so it connects here (127.0.0.1 only) and is sent one JSON line per change:
-/// {"name": …, "tempo": …, "file": MIDI file to drag out, "notes": [[channel, pitch, startBeat, lengthBeats], …]}
+/// {"name": …, "tempo": …, "notes": [[channel, pitch, startBeat, lengthBeats], …]}
 final class LogicLink {
     static let port = NWEndpoint.Port(rawValue: 47321)!
     private var listener: NWListener?
@@ -32,10 +32,10 @@ final class LogicLink {
         c.start(queue: .main)
     }
 
-    func publish(name: String, tempo: Int, notes: [Note], file: URL) {
+    func publish(name: String, tempo: Int, notes: [Note]) {
         let perSecond = Double(tempo) / 60
         let rows = notes.map { [Double($0.channel), Double($0.pitch), $0.start * perSecond, ($0.end - $0.start) * perSecond] }
-        let body: [String: Any] = ["name": name, "tempo": tempo, "notes": rows, "file": file.path]
+        let body: [String: Any] = ["name": name, "tempo": tempo, "notes": rows]
         guard var data = try? JSONSerialization.data(withJSONObject: body) else { return }
         data.append(10)
         last = data

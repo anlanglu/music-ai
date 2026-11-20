@@ -350,8 +350,7 @@ final class ViewModel: ObservableObject {
         guard key != linkSent else { return }
         linkSent = key
         let name = displayTitle.isEmpty ? sessionName : "\(sessionName) – \(displayTitle)"
-        logicLink.publish(name: name, tempo: displayTempo, notes: displayNotes,
-                          file: dragFile(for: url, label: displayTitle.isEmpty ? "Option" : displayTitle))
+        logicLink.publish(name: name, tempo: displayTempo, notes: displayNotes)
     }
     @Published var sessions: [SessionInfo] = []
     private var pdfJob: (midi: URL, destination: URL)?

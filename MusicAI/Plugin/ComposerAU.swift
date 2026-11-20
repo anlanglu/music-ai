@@ -107,7 +107,7 @@ final class ComposerLink: ObservableObject {
     @Published var piece = ""
     @Published var noteCount = 0
     @Published var startBar = 1
-    @Published var file: URL?
+    @Published var file: URL?               // the option as a MIDI file in the plugin's own folder, to drag out
     var onScore: ((Score) -> Void)?
     private var connection: NWConnection?
     private var buffer = Data()
@@ -152,6 +152,18 @@ final class ComposerLink: ObservableObject {
         }
     }
 
+    private func write(_ notes: [PlayNote], tempo: Int, name: String) -> URL? {
+        let bad = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+        let clean = name.components(separatedBy: bad).joined(separator: "-").trimmingCharacters(in: .whitespaces)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("composer", isDirectory: true)
+        let url = dir.appendingPathComponent((clean.isEmpty ? "Composer" : clean) + ".mid")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try MidiWriter.data(notes: notes, tempo: tempo).write(to: url)
+            return url
+        } catch { return nil }
+    }
+
     private func drain() {
         while let nl = buffer.firstIndex(of: 10) {
             let line = buffer[buffer.startIndex..<nl]
@@ -165,7 +177,7 @@ final class ComposerLink: ObservableObject {
             onScore?(Score(notes))
             piece = obj["name"] as? String ?? ""
             noteCount = notes.count
-            file = (obj["file"] as? String).map { URL(fileURLWithPath: $0) }
+            file = write(notes, tempo: obj["tempo"] as? Int ?? 120, name: piece)
             status = "Connected"
         }
     }
@@ -189,7 +201,7 @@ struct PluginView: View {
                 Label("Drag onto a track to edit the notes", systemImage: "arrow.down.doc")
                     .font(.callout).padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.quaternary, in: Capsule())
-                    .onDrag { NSItemProvider(object: file as NSURL) }
+                    .onDrag { NSItemProvider(contentsOf: file) ?? NSItemProvider() }
                     .help("Drop it on a track in Logic: it becomes a MIDI region you can edit. Then bypass this plugin so it isn't played twice.")
             }
             Text(link.status).font(.caption2).foregroundStyle(.tertiary)
