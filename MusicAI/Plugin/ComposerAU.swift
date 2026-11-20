@@ -1,6 +1,7 @@
 import AudioToolbox
 import AVFoundation
 import CoreAudioKit
+import Network
 import SwiftUI
 
 /// One note to play, in beats from the start of the piece.
@@ -18,8 +19,16 @@ final class Score {
 
 /// A MIDI effect: it sends the chosen option's notes to the instrument on its track, in step with Logic's transport.
 final class ComposerAudioUnit: AUAudioUnit {
-    var score = Score.empty            // set from the main thread
-    var originBeat = 0.0               // where the piece starts in the project, in beats
+    private var lock = os_unfair_lock()
+    private var shared = Score.empty
+    private var score = Score.empty           // the render thread's own reference
+    var startBar = 1                          // the bar of the project where the piece starts
+    private var barBeats = 4.0                // quarter notes per bar, as last reported by the host
+
+    /// Called from any thread; the render thread picks the new score up at its next block.
+    func load(_ s: Score) {
+        os_unfair_lock_lock(&lock); shared = s; os_unfair_lock_unlock(&lock)
+    }
     private var held: [(pitch: UInt8, channel: UInt8)] = []
     private var lastEnd = -1.0
     private var wasPlaying = false
@@ -55,7 +64,11 @@ final class ComposerAudioUnit: AUAudioUnit {
         let now = AUEventSampleTime(timestamp.mSampleTime)
         var flags = AUHostTransportStateFlags()
         var tempo = 120.0, beat = 0.0
-        musicalContextBlock?(&tempo, nil, nil, &beat, nil, nil)
+        var num = 4.0, den = 4
+        musicalContextBlock?(&tempo, &num, &den, &beat, nil, nil)
+        barBeats = num * 4 / Double(max(den, 1))
+        let originBeat = Double(startBar - 1) * barBeats
+        if os_unfair_lock_trylock(&lock) { score = shared; os_unfair_lock_unlock(&lock) }
         transportStateBlock?(&flags, nil, nil, nil)
         let playing = flags.contains(.moving)
         guard playing else {
@@ -88,20 +101,113 @@ final class ComposerAudioUnit: AUAudioUnit {
     }
 }
 
+/// The connection to Composer.app (127.0.0.1 only): it receives the option the app is showing.
+final class ComposerLink: ObservableObject {
+    @Published var status = "Looking for Composer…"
+    @Published var piece = ""
+    @Published var noteCount = 0
+    @Published var startBar = 1
+    var onScore: ((Score) -> Void)?
+    private var connection: NWConnection?
+    private var buffer = Data()
+    private var timer: Timer?
+
+    func start() {
+        connect()
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            if self?.connection == nil { self?.connect() }
+        }
+    }
+
+    func stop() { timer?.invalidate(); connection?.cancel(); connection = nil }
+
+    private func connect() {
+        let c = NWConnection(host: "127.0.0.1", port: 47321, using: .tcp)
+        c.stateUpdateHandler = { [weak self, weak c] state in
+            DispatchQueue.main.async {
+                guard let self, self.connection === c else { return }
+                switch state {
+                case .ready: self.status = self.piece.isEmpty ? "Connected. Pick an option in Composer." : "Connected"
+                case .failed, .cancelled:
+                    self.connection = nil
+                    self.status = "Composer is not running. Open Composer.app."
+                case .waiting:
+                    self.connection?.cancel()
+                default: break
+                }
+            }
+        }
+        connection = c
+        c.start(queue: .main)
+        read(c)
+    }
+
+    private func read(_ c: NWConnection) {
+        c.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, done, error in
+            guard let self, self.connection === c else { return }
+            if let data { self.buffer.append(data); self.drain() }
+            if done || error != nil { c.cancel(); self.connection = nil; self.status = "Composer is not running. Open Composer.app." }
+            else { self.read(c) }
+        }
+    }
+
+    private func drain() {
+        while let nl = buffer.firstIndex(of: 10) {
+            let line = buffer[buffer.startIndex..<nl]
+            buffer.removeSubrange(buffer.startIndex...nl)
+            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let rows = obj["notes"] as? [[Double]] else { continue }
+            let notes = rows.filter { $0.count == 4 }.map {
+                PlayNote(start: $0[2], length: $0[3], pitch: UInt8(max(0, min(127, $0[1]))), velocity: 90,
+                         channel: UInt8(max(0, min(15, $0[0]))))
+            }
+            onScore?(Score(notes))
+            piece = obj["name"] as? String ?? ""
+            noteCount = notes.count
+            status = "Connected"
+        }
+    }
+}
+
+struct PluginView: View {
+    @ObservedObject var link: ComposerLink
+    let au: () -> ComposerAudioUnit?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Composer").font(.title2.bold())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(link.piece.isEmpty ? "No option yet" : link.piece).font(.headline).lineLimit(2)
+                Text(link.noteCount > 0 ? "\(link.noteCount) notes · plays when Logic plays" : link.status)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Stepper("Starts at bar \(link.startBar)",
+                    value: Binding(get: { link.startBar }, set: { link.startBar = $0; au()?.startBar = $0 }), in: 1...999)
+            Text(link.status).font(.caption2).foregroundStyle(.tertiary)
+            Spacer()
+        }
+        .padding(16)
+        .frame(width: 380, height: 220)
+    }
+}
+
 @objc(AudioUnitViewController)
 public final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
     var audioUnit: ComposerAudioUnit?
+    let link = ComposerLink()
 
     public func createAudioUnit(with description: AudioComponentDescription) throws -> AUAudioUnit {
         let au = try ComposerAudioUnit(componentDescription: description, options: [])
-        au.score = Score((0..<8).map { PlayNote(start: Double($0), length: 0.9, pitch: UInt8(60 + [0, 2, 4, 5, 7, 9, 11, 12][$0]), velocity: 90, channel: 0) })
+        au.load(Score((0..<8).map { PlayNote(start: Double($0), length: 0.9, pitch: UInt8(60 + [0, 2, 4, 5, 7, 9, 11, 12][$0]), velocity: 90, channel: 0) }))
+        link.onScore = { [weak au] in au?.load($0) }
         audioUnit = au
         return au
     }
 
     public override func loadView() {
-        let host = NSHostingView(rootView: Text("Composer").padding())
-        host.frame = NSRect(x: 0, y: 0, width: 420, height: 300)
+        link.start()
+        let host = NSHostingView(rootView: PluginView(link: link, au: { [weak self] in self?.audioUnit }))
+        host.frame = NSRect(x: 0, y: 0, width: 380, height: 220)
         view = host
         preferredContentSize = host.frame.size
     }

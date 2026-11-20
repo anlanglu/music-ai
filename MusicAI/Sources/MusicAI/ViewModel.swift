@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -333,6 +334,24 @@ final class ViewModel: ObservableObject {
     // Sessions: one folder per project holding every file it produces
     @Published var sessionName = ViewModel.defaultSessionName()
     @Published var sessionURL: URL?
+    private let logicLink = LogicLink()
+    private var linkWatch: AnyCancellable?
+    private var linkSent = ""
+
+    init() {
+        linkWatch = objectWillChange.debounce(for: .milliseconds(150), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.sendToLogic() }
+    }
+
+    /// The plugin in Logic plays whatever option is showing; send it again only when that changes.
+    private func sendToLogic() {
+        guard let url = displayURL else { return }
+        let key = "\(url.path)|\(displayTempo)"
+        guard key != linkSent else { return }
+        linkSent = key
+        let name = displayTitle.isEmpty ? sessionName : "\(sessionName) – \(displayTitle)"
+        logicLink.publish(name: name, tempo: displayTempo, notes: displayNotes)
+    }
     @Published var sessions: [SessionInfo] = []
     private var pdfJob: (midi: URL, destination: URL)?
     /// How the backend's direction report starts (see direction.describe); the app shows that line under the box.
@@ -353,6 +372,7 @@ final class ViewModel: ObservableObject {
     var selectedPart: PartCandidate? { partOptions.first { $0.id == selectedPartID } }
     /// What the main view shows: a part option being auditioned (the whole piece with it), else the piece so far.
     var displayNotes: [Note] { selectedPart?.notes ?? (selected ?? candidates.first)?.notes ?? [] }
+    var displayTempo: Int { (selected ?? candidates.first)?.tempo ?? 90 }
     var displayURL: URL? { selectedPart?.url ?? (selected ?? candidates.first)?.url }
     var highlightChannel: Int? { selectedPart.map(\.channel) }
     /// The piece the next instrument will be added to: the chosen option, with whatever it has so far.
