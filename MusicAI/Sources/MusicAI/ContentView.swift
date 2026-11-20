@@ -1126,8 +1126,8 @@ struct ContentView: View {
                 Label(url.lastPathComponent, systemImage: "music.note")
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(.quaternary, in: Capsule())
-                    .help("Drag into Logic Pro")
-                    .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
+                    .help("Drag onto a Logic Pro track (each instrument becomes its own track). Every option card can be dragged too.")
+                    .onDrag { vm.dragProvider(for: url, label: "Selected") }
             }
             Spacer()
         }
@@ -1203,6 +1203,8 @@ struct ContentView: View {
                                                            lineWidth: isSelected ? 2 : 1))
         .contentShape(Rectangle())
         .onTapGesture { vm.selectPart(c) }
+        .onDrag { vm.dragProvider(for: c.url, label: c.label.isEmpty ? "Option \(c.index)" : c.label) }
+        .help("Drag onto a Logic Pro track")
     }
 
     private func optionCard(_ c: Candidate) -> some View {
@@ -1232,5 +1234,7 @@ struct ContentView: View {
                                                            lineWidth: isSelected ? 2 : 1))
         .contentShape(Rectangle())
         .onTapGesture { vm.select(c) }
+        .onDrag { vm.dragProvider(for: c.url, label: "Option \(c.index)") }
+        .help("Drag onto a Logic Pro track")
     }
 }

@@ -1363,6 +1363,23 @@ final class ViewModel: ObservableObject {
     func reveal() {
         if let url = displayURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
+
+    /// What a drag out of the app carries: a copy of the MIDI file named after the session and the option
+    /// ("My song – Option 2.mid"), because Logic names the region after the file.
+    func dragProvider(for url: URL, label: String) -> NSItemProvider {
+        let bad = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+        let clean = { (s: String) in s.components(separatedBy: bad).joined(separator: "-").trimmingCharacters(in: .whitespaces) }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("composer-drag", isDirectory: true)
+        let copy = dir.appendingPathComponent("\(clean(sessionName)) – \(clean(label)).mid")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: copy)
+            try FileManager.default.copyItem(at: url, to: copy)
+            return NSItemProvider(contentsOf: copy) ?? NSItemProvider()
+        } catch {
+            return NSItemProvider(contentsOf: url) ?? NSItemProvider()
+        }
+    }
 }
 
 enum Lyrics { static let maxSingers = 4 }      // lyrics.MAX_SINGERS
