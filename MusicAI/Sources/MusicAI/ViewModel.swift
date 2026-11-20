@@ -350,7 +350,8 @@ final class ViewModel: ObservableObject {
         guard key != linkSent else { return }
         linkSent = key
         let name = displayTitle.isEmpty ? sessionName : "\(sessionName) – \(displayTitle)"
-        logicLink.publish(name: name, tempo: displayTempo, notes: displayNotes)
+        logicLink.publish(name: name, tempo: displayTempo, notes: displayNotes,
+                          file: dragFile(for: url, label: displayTitle.isEmpty ? "Option" : displayTitle))
     }
     @Published var sessions: [SessionInfo] = []
     private var pdfJob: (midi: URL, destination: URL)?
@@ -1384,9 +1385,9 @@ final class ViewModel: ObservableObject {
         if let url = displayURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
-    /// What a drag out of the app carries: a copy of the MIDI file named after the session and the option
-    /// ("My song – Option 2.mid"), because Logic names the region after the file.
-    func dragProvider(for url: URL, label: String) -> NSItemProvider {
+    /// A copy of a MIDI file named after the session and the option ("My song – Option 2.mid"), because Logic names
+    /// the region after the file. Dragging it out of the app, or out of the plugin, gives a region that can be edited.
+    func dragFile(for url: URL, label: String) -> URL {
         let bad = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
         let clean = { (s: String) in s.components(separatedBy: bad).joined(separator: "-").trimmingCharacters(in: .whitespaces) }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("composer-drag", isDirectory: true)
@@ -1395,10 +1396,14 @@ final class ViewModel: ObservableObject {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: copy)
             try FileManager.default.copyItem(at: url, to: copy)
-            return NSItemProvider(contentsOf: copy) ?? NSItemProvider()
+            return copy
         } catch {
-            return NSItemProvider(contentsOf: url) ?? NSItemProvider()
+            return url
         }
+    }
+
+    func dragProvider(for url: URL, label: String) -> NSItemProvider {
+        NSItemProvider(contentsOf: dragFile(for: url, label: label)) ?? NSItemProvider()
     }
 }
 

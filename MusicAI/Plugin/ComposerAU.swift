@@ -107,6 +107,7 @@ final class ComposerLink: ObservableObject {
     @Published var piece = ""
     @Published var noteCount = 0
     @Published var startBar = 1
+    @Published var file: URL?
     var onScore: ((Score) -> Void)?
     private var connection: NWConnection?
     private var buffer = Data()
@@ -164,6 +165,7 @@ final class ComposerLink: ObservableObject {
             onScore?(Score(notes))
             piece = obj["name"] as? String ?? ""
             noteCount = notes.count
+            file = (obj["file"] as? String).map { URL(fileURLWithPath: $0) }
             status = "Connected"
         }
     }
@@ -183,11 +185,18 @@ struct PluginView: View {
             }
             Stepper("Starts at bar \(link.startBar)",
                     value: Binding(get: { link.startBar }, set: { link.startBar = $0; au()?.startBar = $0 }), in: 1...999)
+            if let file = link.file {
+                Label("Drag onto a track to edit the notes", systemImage: "arrow.down.doc")
+                    .font(.callout).padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.quaternary, in: Capsule())
+                    .onDrag { NSItemProvider(object: file as NSURL) }
+                    .help("Drop it on a track in Logic: it becomes a MIDI region you can edit. Then bypass this plugin so it isn't played twice.")
+            }
             Text(link.status).font(.caption2).foregroundStyle(.tertiary)
             Spacer()
         }
         .padding(16)
-        .frame(width: 380, height: 220)
+        .frame(width: 380, height: 260)
     }
 }
 
@@ -207,7 +216,7 @@ public final class AudioUnitViewController: AUViewController, AUAudioUnitFactory
     public override func loadView() {
         link.start()
         let host = NSHostingView(rootView: PluginView(link: link, au: { [weak self] in self?.audioUnit }))
-        host.frame = NSRect(x: 0, y: 0, width: 380, height: 220)
+        host.frame = NSRect(x: 0, y: 0, width: 380, height: 260)
         view = host
         preferredContentSize = host.frame.size
     }
