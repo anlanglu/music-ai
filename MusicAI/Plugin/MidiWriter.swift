@@ -4,7 +4,7 @@ import Foundation
 /// for each instrument of the piece. The plugin writes this itself, into its own folder, because a sandboxed
 /// plugin can only hand Logic a file it can read.
 enum MidiWriter {
-    static func data(notes: [PlayNote], tempo: Int) -> Data {
+    static func data(notes: [PlayNote], tempo: Int, names: [UInt8: String] = [:]) -> Data {
         let ppq = 480
         var out = Data("MThd".utf8)
         out += be32(6) + be16(1) + be16(UInt16(1 + Set(notes.map(\.channel)).count)) + be16(UInt16(ppq))
@@ -13,6 +13,7 @@ enum MidiWriter {
                       (0, [0xFF, 0x58, 0x04, 4, 2, 24, 8])])
         for ch in Set(notes.map(\.channel)).sorted() {
             var events: [(Int, Int, [UInt8])] = []          // tick, order (offs before ons), bytes
+            if let name = names[ch] { events.append((0, -1, [0xFF, 0x03, UInt8(min(name.utf8.count, 127))] + Array(name.utf8.prefix(127)))) }   // the track's name
             for n in notes where n.channel == ch {
                 let on = Int((n.start * Double(ppq)).rounded())
                 let off = max(on + 1, Int(((n.start + n.length) * Double(ppq)).rounded()))

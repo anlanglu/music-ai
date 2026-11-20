@@ -30,7 +30,7 @@ PLIST
 # The Logic Pro plugin: an Audio Unit extension inside the app (built by hand, no Xcode needed).
 AU="$APP/Contents/PlugIns/ComposerAU.appex"
 mkdir -p "$AU/Contents/MacOS"
-swiftc -O -parse-as-library -module-name ComposerAU -application-extension Plugin/ComposerAU.swift Plugin/MidiWriter.swift \
+swiftc -O -parse-as-library -module-name ComposerAU -application-extension Plugin/ComposerAU.swift Plugin/MidiWriter.swift Plugin/GMNames.swift \
     -o "$AU/Contents/MacOS/ComposerAU" -Xlinker -e -Xlinker _NSExtensionMain \
     -framework AudioToolbox -framework AVFoundation -framework CoreAudioKit -framework SwiftUI
 cp Plugin/Info.plist "$AU/Contents/Info.plist"

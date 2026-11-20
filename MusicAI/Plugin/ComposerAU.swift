@@ -23,6 +23,19 @@ final class ComposerAudioUnit: AUAudioUnit {
     private var shared = Score.empty
     private var score = Score.empty           // the render thread's own reference
     var startBar = 1                          // the bar of the project where the piece starts
+    var channel = -1                          // which instrument of the piece this track plays; -1 = all of them
+    var onStateRestored: (() -> Void)?
+
+    /// What Logic saves with the project, so a track still plays the same instrument when it is reopened.
+    override var fullState: [String: Any]? {
+        get { var d = super.fullState ?? [:]; d["composerStartBar"] = startBar; d["composerChannel"] = channel; return d }
+        set {
+            super.fullState = newValue
+            startBar = newValue?["composerStartBar"] as? Int ?? 1
+            channel = newValue?["composerChannel"] as? Int ?? -1
+            DispatchQueue.main.async { self.onStateRestored?() }
+        }
+    }
     private var barBeats = 4.0                // quarter notes per bar, as last reported by the host
 
     /// Called from any thread; the render thread picks the new score up at its next block.
@@ -108,6 +121,11 @@ final class ComposerLink: ObservableObject {
     @Published var noteCount = 0
     @Published var startBar = 1
     @Published var file: URL?               // the option as a MIDI file in the plugin's own folder, to drag out
+    @Published var channels: [Int] = []     // the instruments (MIDI channels) in the option
+    @Published var choice = -1              // the channel this track plays, -1 = all
+    private(set) var programs: [Int: Int] = [:]
+    private var allNotes: [PlayNote] = []
+    private var tempo = 120
     var onScore: ((Score) -> Void)?
     private var connection: NWConnection?
     private var buffer = Data()
@@ -152,6 +170,19 @@ final class ComposerLink: ObservableObject {
         }
     }
 
+    func instrument(_ channel: Int) -> String {
+        guard let p = programs[channel] else { return "Channel \(channel + 1)" }
+        return p == 128 ? "Drums" : (p < gmNames.count ? gmNames[p] : "Channel \(channel + 1)")
+    }
+
+    /// Plays and exports only this track's instrument, or everything when none is chosen.
+    func apply() {
+        let notes = choice < 0 ? allNotes : allNotes.filter { Int($0.channel) == choice }
+        onScore?(Score(notes))
+        noteCount = notes.count
+        file = write(notes, tempo: tempo, name: choice < 0 ? piece : "\(piece) – \(instrument(choice))")
+    }
+
     private func write(_ notes: [PlayNote], tempo: Int, name: String) -> URL? {
         let bad = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
         let clean = name.components(separatedBy: bad).joined(separator: "-").trimmingCharacters(in: .whitespaces)
@@ -159,7 +190,7 @@ final class ComposerLink: ObservableObject {
         let url = dir.appendingPathComponent((clean.isEmpty ? "Composer" : clean) + ".mid")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try MidiWriter.data(notes: notes, tempo: tempo).write(to: url)
+            try MidiWriter.data(notes: notes, tempo: tempo, names: Dictionary(uniqueKeysWithValues: Set(notes.map { Int($0.channel) }).map { (UInt8($0), instrument($0)) })).write(to: url)
             return url
         } catch { return nil }
     }
@@ -174,10 +205,13 @@ final class ComposerLink: ObservableObject {
                 PlayNote(start: $0[2], length: $0[3], pitch: UInt8(max(0, min(127, $0[1]))), velocity: 90,
                          channel: UInt8(max(0, min(15, $0[0]))))
             }
-            onScore?(Score(notes))
             piece = obj["name"] as? String ?? ""
-            noteCount = notes.count
-            file = write(notes, tempo: obj["tempo"] as? Int ?? 120, name: piece)
+            tempo = obj["tempo"] as? Int ?? 120
+            programs = (obj["programs"] as? [String: Int] ?? [:]).reduce(into: [:]) { if let k = Int($1.key) { $0[k] = $1.value } }
+            allNotes = notes
+            channels = Set(notes.map { Int($0.channel) }).sorted()
+            if !channels.contains(choice) { choice = -1 }
+            apply()
             status = "Connected"
         }
     }
@@ -195,10 +229,17 @@ struct PluginView: View {
                 Text(link.noteCount > 0 ? "\(link.noteCount) notes · plays when Logic plays" : link.status)
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if link.channels.count > 1 {
+                Picker("Plays", selection: Binding(get: { link.choice },
+                                                   set: { link.choice = $0; au()?.channel = $0; link.apply() })) {
+                    Text("All instruments").tag(-1)
+                    ForEach(link.channels, id: \.self) { Text(link.instrument($0)).tag($0) }
+                }
+            }
             Stepper("Starts at bar \(link.startBar)",
                     value: Binding(get: { link.startBar }, set: { link.startBar = $0; au()?.startBar = $0 }), in: 1...999)
             if let file = link.file {
-                Label("Drag onto a track to edit the notes", systemImage: "arrow.down.doc")
+                Label(link.choice < 0 && link.channels.count > 1 ? "Drag onto a track: one track per instrument" : "Drag onto a track to edit the notes", systemImage: "arrow.down.doc")
                     .font(.callout).padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.quaternary, in: Capsule())
                     .onDrag { NSItemProvider(contentsOf: file) ?? NSItemProvider() }
@@ -208,7 +249,7 @@ struct PluginView: View {
             Spacer()
         }
         .padding(16)
-        .frame(width: 380, height: 260)
+        .frame(width: 380, height: 300)
     }
 }
 
@@ -221,6 +262,12 @@ public final class AudioUnitViewController: AUViewController, AUAudioUnitFactory
         let au = try ComposerAudioUnit(componentDescription: description, options: [])
         au.load(Score((0..<8).map { PlayNote(start: Double($0), length: 0.9, pitch: UInt8(60 + [0, 2, 4, 5, 7, 9, 11, 12][$0]), velocity: 90, channel: 0) }))
         link.onScore = { [weak au] in au?.load($0) }
+        au.onStateRestored = { [weak self, weak au] in
+            guard let au else { return }
+            self?.link.startBar = au.startBar
+            self?.link.choice = au.channel
+            self?.link.apply()
+        }
         audioUnit = au
         return au
     }
@@ -228,7 +275,7 @@ public final class AudioUnitViewController: AUViewController, AUAudioUnitFactory
     public override func loadView() {
         link.start()
         let host = NSHostingView(rootView: PluginView(link: link, au: { [weak self] in self?.audioUnit }))
-        host.frame = NSRect(x: 0, y: 0, width: 380, height: 260)
+        host.frame = NSRect(x: 0, y: 0, width: 380, height: 300)
         view = host
         preferredContentSize = host.frame.size
     }
