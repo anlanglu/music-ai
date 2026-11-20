@@ -12,8 +12,8 @@ final class LogicLink {
 
     init() {
         let params = NWParameters.tcp
-        params.requiredInterfaceType = .loopback
-        guard let l = try? NWListener(using: params, on: Self.port) else { return }
+        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: Self.port)     // this Mac only
+        guard let l = try? NWListener(using: params) else { return }
         l.newConnectionHandler = { [weak self] c in self?.accept(c) }
         l.start(queue: .main)
         listener = l
