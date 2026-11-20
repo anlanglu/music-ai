@@ -26,5 +26,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>NSMicrophoneUsageDescription</key><string>Composer records your singing to make a new singing voice from it. The recording stays on this Mac.</string>
 </dict></plist>
 PLIST
+
+# The Logic Pro plugin: an Audio Unit extension inside the app (built by hand, no Xcode needed).
+AU="$APP/Contents/PlugIns/ComposerAU.appex"
+mkdir -p "$AU/Contents/MacOS"
+swiftc -O -parse-as-library -module-name ComposerAU -application-extension Plugin/ComposerAU.swift \
+    -o "$AU/Contents/MacOS/ComposerAU" -Xlinker -e -Xlinker _NSExtensionMain \
+    -framework AudioToolbox -framework AVFoundation -framework CoreAudioKit -framework SwiftUI
+cp Plugin/Info.plist "$AU/Contents/Info.plist"
+codesign --force --sign - --entitlements Plugin/ComposerAU.entitlements "$AU"
 codesign --force --sign - "$APP"
+pluginkit -a "$AU" 2>/dev/null || true
 echo "Built: $(cd .. && pwd)/Composer.app"
